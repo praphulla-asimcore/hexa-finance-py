@@ -52,13 +52,21 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 @app.get("/api/health")
 async def health():
     from fastapi.responses import JSONResponse
-    import os
-    return JSONResponse({
+    import os, traceback
+    result = {
         "status": "ok",
         "stack": "python-fastapi",
         "templates_dir": str(TEMPLATES_DIR),
         "templates_exists": TEMPLATES_DIR.exists(),
-        "file": __file__,
-        "cwd": os.getcwd(),
         "login_exists": (TEMPLATES_DIR / "login.html").exists(),
-    })
+    }
+    # Try rendering login.html to catch template errors
+    try:
+        from jinja2 import Environment, FileSystemLoader
+        env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)))
+        tmpl = env.get_template("login.html")
+        tmpl.render(request=None, error=None)
+        result["template_render"] = "ok"
+    except Exception as e:
+        result["template_error"] = traceback.format_exc()
+    return JSONResponse(result)
