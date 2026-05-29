@@ -211,7 +211,8 @@ async def upload_case(
     case_type: str = Form("CSI"),
     entity: str = Form(...),
     entity_name: str = Form(""),
-    period: str = Form(...),
+    period_ym: str = Form(...),
+    period_cycle: str = Form("01"),
     payment_date: str = Form(""),
     module: str = Form("csi"),
 ):
@@ -224,8 +225,14 @@ async def upload_case(
     if not file or not file.filename.endswith((".xlsx", ".xls")):
         return HTMLResponse('<div class="error-msg">Please upload an Excel file (.xlsx or .xls).</div>')
 
-    if not _re.match(r"^\d{6}-(0[1-4])$", period):
-        return HTMLResponse('<div class="error-msg">Period must be YYYYMM-01/02/03/04 (e.g. 202506-01).</div>')
+    # Combine and validate period: YYYYMM + cycle 01-04
+    period_ym = period_ym.strip()
+    period_cycle = period_cycle.strip().zfill(2)
+    if not _re.match(r"^\d{6}$", period_ym):
+        return HTMLResponse('<div class="error-msg">Period must be 6 digits YYYYMM (e.g. 202506).</div>')
+    if period_cycle not in ("01", "02", "03", "04"):
+        return HTMLResponse('<div class="error-msg">Cycle must be 01, 02, 03, or 04.</div>')
+    period = f"{period_ym}-{period_cycle}"
 
     content = await file.read()
     try:

@@ -71,17 +71,16 @@
         <div class="pf-form-section">
           <label class="label">Period <span class="req">*</span></label>
           <div style="display:flex;gap:8px;align-items:center">
-            <input class="input" id="period-ym" placeholder="202506" maxlength="6" style="flex:1"
-                   oninput="syncPeriod()"/>
-            <select class="input" id="period-cycle" style="width:80px" onchange="syncPeriod()">
+            <input class="input" name="period_ym" id="period-ym" placeholder="202506" maxlength="6"
+                   style="flex:1" required/>
+            <select class="input" name="period_cycle" id="period-cycle" style="width:80px">
               <option value="01">-01</option>
               <option value="02">-02</option>
               <option value="03">-03</option>
               <option value="04">-04</option>
             </select>
           </div>
-          <input type="hidden" name="period" id="period-input"/>
-          <span class="pf-hint">YYYYMM + cycle (01–04). Auto-detected from filename.</span>
+          <span class="pf-hint">YYYYMM + cycle (01–04 payment cycles). Auto-detected from filename.</span>
         </div>
         <div class="pf-form-section">
           <label class="label">Payment Date</label>
@@ -109,13 +108,6 @@
 <script>
 const ORGS = {{ orgs | tojson }};
 
-// Sync the hidden period field: YYYYMM + "-" + cycle (01-04)
-function syncPeriod() {
-  const ym = document.getElementById('period-ym').value.trim();
-  const cy = document.getElementById('period-cycle').value;
-  document.getElementById('period-input').value = ym && ym.length === 6 ? ym + '-' + cy : '';
-}
-
 function updateDropZone(input) {
   const file = input.files[0];
   if (!file) return;
@@ -125,7 +117,7 @@ function updateDropZone(input) {
   document.getElementById('drop-filesize').textContent = '(' + (file.size / 1024).toFixed(0) + ' KB)';
   document.getElementById('drop-zone').classList.add('pf-drop-zone-filled');
 
-  // Auto-detect YYYYMM from filename, leave cycle as user-selected
+  // Auto-detect YYYYMM from filename
   const name = file.name;
   const m1 = name.match(/\b(20\d{2})(0[1-9]|1[0-2])\b/);
   const m2 = name.match(/\b(20\d{2})[-_](0[1-9]|1[0-2])\b/);
@@ -135,15 +127,14 @@ function updateDropZone(input) {
     if (m1) ymInput.value = m1[1] + m1[2];
     else if (m2) ymInput.value = m2[1] + m2[2];
     else if (m3) ymInput.value = m3[2] + m3[1];
-    syncPeriod();
   }
 
   // Auto-detect entity from filename
   const upper = name.toUpperCase();
-  const select = document.getElementById('entity-select');
-  if (!select.value) {
+  const sel = document.getElementById('entity-select');
+  if (!sel.value) {
     for (const code of Object.keys(ORGS)) {
-      if (upper.includes(code)) { select.value = code; updateEntityHint(select); break; }
+      if (upper.includes(code)) { sel.value = code; updateEntityHint(sel); break; }
     }
   }
 }
@@ -161,16 +152,4 @@ function updateEntityHint(select) {
     nameHidden.value = '';
   }
 }
-
-// Ensure period hidden field is set before HTMX submits the form
-document.getElementById('upload-form').addEventListener('htmx:beforeRequest', function() {
-  syncPeriod();
-  const period = document.getElementById('period-input').value;
-  const entity = document.getElementById('entity-select').value;
-  if (!entity) { htmx.trigger(document.getElementById('upload-form'), 'htmx:abort'); alert('Please select an entity.'); return; }
-  if (!/^\d{6}-(0[1-4])$/.test(period)) { htmx.trigger(document.getElementById('upload-form'), 'htmx:abort'); alert('Please enter a valid period (YYYYMM) and select a cycle (01–04).'); return; }
-});
-
-// Init — set hidden field on page load
-syncPeriod();
 </script>
