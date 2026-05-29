@@ -78,8 +78,8 @@ async def dashboard(request: Request):
 
     ctx = {"request": request, "user": user, "section": "dashboard", "stats": stats, "posts": posts, "recent_cases": recent_cases}
     if request.headers.get("HX-Request"):
-        return templates.TemplateResponse("dashboard.html", ctx)
-    return templates.TemplateResponse("dashboard_page.html", ctx)
+        return templates.TemplateResponse(request, "dashboard.html", ctx)
+    return templates.TemplateResponse(request, "dashboard_page.html", ctx)
 
 
 @router.get("/consultants")
@@ -87,5 +87,5 @@ async def consultants_page(request: Request):
     user = get_current_user(request)
     ctx = {"request": request, "user": user, "section": "beneficiaries"}
     if request.headers.get("HX-Request"):
-        return templates.TemplateResponse("consultants/list.html", ctx)
-    return templates.TemplateResponse("consultants/list_page.html", ctx)
+        return templates.TemplateResponse(request, "consultants/list.html", ctx)
+    return templates.TemplateResponse(request, "consultants/list_page.html", ctx)

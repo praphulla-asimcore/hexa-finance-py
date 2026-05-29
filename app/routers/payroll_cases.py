@@ -184,8 +184,8 @@ async def cases_page(request: Request):
 
     ctx = {"request": request, "user": user, "cases": cases, "module": module, "case_type": case_type, "section": module}
     if request.headers.get("HX-Request"):
-        return templates.TemplateResponse("payroll/list.html", ctx)
-    return templates.TemplateResponse("payroll/list_page.html", ctx)
+        return templates.TemplateResponse(request, "payroll/list.html", ctx)
+    return templates.TemplateResponse(request, "payroll/list_page.html", ctx)
 
 
 # ─── New case form ────────────────────────────────────────────────────────────
@@ -198,8 +198,8 @@ async def new_case_page(request: Request):
     module = path
     ctx = {"request": request, "user": user, "module": module, "orgs": ORGS, "error": None, "section": module}
     if request.headers.get("HX-Request"):
-        return templates.TemplateResponse("payroll/new.html", ctx)
-    return templates.TemplateResponse("payroll/new_page.html", ctx)
+        return templates.TemplateResponse(request, "payroll/new.html", ctx)
+    return templates.TemplateResponse(request, "payroll/new_page.html", ctx)
 
 
 # ─── Step 1: Upload ───────────────────────────────────────────────────────────
@@ -290,8 +290,8 @@ async def case_detail_page(case_id: str, request: Request):
            "step_state": _step_state, "get_active_step": _get_active_step, "orgs": ORGS}
 
     if request.headers.get("HX-Request"):
-        return templates.TemplateResponse("payroll/detail.html", ctx)
-    return templates.TemplateResponse("payroll/detail_page.html", ctx)
+        return templates.TemplateResponse(request, "payroll/detail.html", ctx)
+    return templates.TemplateResponse(request, "payroll/detail_page.html", ctx)
 
 
 # ─── Step panel fragment ──────────────────────────────────────────────────────
@@ -325,7 +325,7 @@ async def step_panel(case_id: str, step_num: int, request: Request):
         raise HTTPException(404)
     ctx = {**_case_detail_ctx(kase, logs, step_num), "request": request, "user": user,
            "step_state": _step_state, "get_active_step": _get_active_step, "orgs": ORGS}
-    return templates.TemplateResponse(tmpl, ctx)
+    return templates.TemplateResponse(request, tmpl, ctx)
 
 
 # ─── Step 2: Generate check ───────────────────────────────────────────────────
@@ -921,7 +921,7 @@ async def delete_case(case_id: str, request: Request):
     cases = cases_resp.data or []
 
     ctx = {"request": request, "user": user, "cases": cases, "module": module, "case_type": case_type, "section": module}
-    return templates.TemplateResponse("payroll/list.html", ctx)
+    return templates.TemplateResponse(request, "payroll/list.html", ctx)
 
 
 # ─── Internal refresh helper ──────────────────────────────────────────────────
@@ -934,4 +934,4 @@ async def _refresh_detail(case_id: str, db, request: Request, user: dict, step: 
     module = "csi" if kase.get("type") == "CSI" else "payroll"
     ctx = {**_case_detail_ctx(kase, logs, step), "request": request, "user": user, "module": module, "section": module,
            "step_state": _step_state, "get_active_step": _get_active_step, "orgs": ORGS}
-    return templates.TemplateResponse("payroll/detail_inner.html", ctx)
+    return templates.TemplateResponse(request, "payroll/detail_inner.html", ctx)

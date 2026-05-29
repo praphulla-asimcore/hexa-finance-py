@@ -31,12 +31,7 @@ async def login_page(request: Request):
     user = try_get_user(request)
     if user:
         return RedirectResponse("/", status_code=302)
-    try:
-        return templates.TemplateResponse("login.html", {"request": request, "error": None})
-    except Exception as e:
-        import traceback
-        from fastapi.responses import PlainTextResponse
-        return PlainTextResponse(f"TEMPLATE ERROR:\n{traceback.format_exc()}", status_code=500)
+    return templates.TemplateResponse(request, "login.html", {"error": None})
 
 
 @router.post("/login")
@@ -65,7 +60,7 @@ async def login_submit(request: Request, email: str = Form(...), password: str =
     else:
         error = "Database not configured."
 
-    return templates.TemplateResponse("login.html", {"request": request, "error": error})
+    return templates.TemplateResponse(request, "login.html", {"error": error})
 
 
 @router.get("/logout")
@@ -77,7 +72,7 @@ async def logout(response: Response):
 
 @router.get("/accept-invite")
 async def accept_invite_page(request: Request, token: str = ""):
-    return templates.TemplateResponse("accept_invite.html", {"request": request, "token": token, "error": None})
+    return templates.TemplateResponse(request, "accept_invite.html", {"token": token, "error": None})
 
 
 @router.post("/accept-invite")
@@ -119,7 +114,7 @@ async def accept_invite_submit(
                 set_auth_cookie(redirect, jwt_token)
                 return redirect
 
-    return templates.TemplateResponse("accept_invite.html", {"request": request, "token": token, "error": error})
+    return templates.TemplateResponse(request, "accept_invite.html", {"token": token, "error": error})
 
 
 # JSON endpoint kept for JS admin panel compatibility
