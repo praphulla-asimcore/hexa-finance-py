@@ -52,4 +52,13 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 @app.get("/api/health")
 async def health():
     from fastapi.responses import JSONResponse
-    return JSONResponse({"status": "ok", "stack": "python-fastapi"})
+    import os
+    return JSONResponse({
+        "status": "ok",
+        "stack": "python-fastapi",
+        "templates_dir": str(TEMPLATES_DIR),
+        "templates_exists": TEMPLATES_DIR.exists(),
+        "file": __file__,
+        "cwd": os.getcwd(),
+        "login_exists": (TEMPLATES_DIR / "login.html").exists(),
+    })
