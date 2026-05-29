@@ -73,14 +73,14 @@
           <div style="display:flex;gap:8px;align-items:center">
             <input class="input" name="period_ym" id="period-ym" placeholder="202506" maxlength="6"
                    style="flex:1" required/>
-            <select class="input" name="period_cycle" id="period-cycle" style="width:80px">
-              <option value="01">-01</option>
-              <option value="02">-02</option>
-              <option value="03">-03</option>
-              <option value="04">-04</option>
+            <select class="input" name="period_cycle" id="period-cycle" style="width:130px">
+              <option value="25th">25th</option>
+              <option value="EOM">End of Month</option>
+              <option value="7th">7th</option>
+              <option value="15th">15th</option>
             </select>
           </div>
-          <span class="pf-hint">YYYYMM + cycle (01–04 payment cycles). Auto-detected from filename.</span>
+          <span class="pf-hint">YYYYMM + payment cycle. 7th/15th → Zoho date = prior month-end. Auto-detected from filename.</span>
         </div>
         <div class="pf-form-section">
           <label class="label">Payment Date</label>

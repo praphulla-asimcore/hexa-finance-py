@@ -1,7 +1,9 @@
 import secrets
 import hashlib
 import base64
-from datetime import datetime, timezone
+import calendar
+import re as _re
+from datetime import datetime, timezone, date
 from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse, HTMLResponse, Response, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -10,7 +12,7 @@ from app.config import TEMPLATES_DIR, APP_URL, APPROVERS, ORGS
 from app.deps import get_current_user
 from app.services.db import get_db
 from app.services.parser import parse_excel_buffer
-from app.services.zoho import post_journal_entry, create_expense, attach_journal_document
+from app.services.zoho import post_journal_entry, create_expense, attach_journal_document, fetch_accounts
 from app.services.bank_files import generate_and_store_bank_files
 from app.services.pdf import build_check_report_pdf, build_audit_package_pdf
 from app.services.email import (
@@ -98,6 +100,241 @@ def _build_check_data(entities: list[dict]) -> dict:
         "flagCount": len(flags), "flags": flags,
         "generatedAt": _now(), "generatedBy": "Hexa Check Engine v1.0",
     }
+
+
+# ─── Journal date from period cycle ─────────────────────────────────────────
+
+def _compute_journal_date(period_str: str) -> str:
+    """
+    period_str: e.g. '202506-25th' | '202506-EOM' | '202506-7th' | '202506-15th'
+    Returns ISO date string for Zoho.
+    """
+    parts = period_str.split("-", 1)
+    yyyymm = parts[0]
+    cycle  = parts[1] if len(parts) > 1 else "EOM"
+    try:
+        yr, mo = int(yyyymm[:4]), int(yyyymm[4:6])
+    except (ValueError, IndexError):
+        yr, mo = datetime.now().year, datetime.now().month
+
+    if cycle == "25th":
+        return f"{yr:04d}-{mo:02d}-25"
+    elif cycle == "EOM":
+        last = calendar.monthrange(yr, mo)[1]
+        return f"{yr:04d}-{mo:02d}-{last:02d}"
+    elif cycle in ("7th", "15th"):
+        # Last day of prior month
+        pm, py = (mo - 1, yr) if mo > 1 else (12, yr - 1)
+        last = calendar.monthrange(py, pm)[1]
+        return f"{py:04d}-{pm:02d}-{last:02d}"
+    else:
+        last = calendar.monthrange(yr, mo)[1]
+        return f"{yr:04d}-{mo:02d}-{last:02d}"
+
+
+def _period_mmm_yy(period_str: str) -> str:
+    yyyymm = period_str[:6]
+    try:
+        dt = datetime(int(yyyymm[:4]), int(yyyymm[4:6]), 1)
+        return dt.strftime("%b'%y")   # e.g. Jun'25
+    except Exception:
+        return yyyymm
+
+
+# ─── Account code maps (APC vs CC) ──────────────────────────────────────────
+
+_APC_CODES = {
+    "basic":      "2.6.1.1",
+    "claim":      "2.6.1.2",
+    "bonus":      "2.6.1.3",
+    "ca_dedn":    "2.6.1.6",
+    "epf":        "2.6.1.10.1",
+    "socso_eis":  "2.6.1.10.3",
+    "hrdf":       "2.6.1.10.4",
+    "mtd":        "2.6.1.10.7",
+}
+_CC_CODES = {
+    "basic":      "2.6.2.1",
+    "claim":      "2.6.2.2",
+    "bonus":      "2.6.2.3",
+    "ca_dedn":    "2.6.2.6",
+    "epf":        "2.6.2.10.1",
+    "socso_eis":  "2.6.2.10.3",
+    "hrdf":       "2.6.2.10.4",
+    "mtd":        "2.6.2.10.7",
+}
+_PAYABLE_CODE  = "HSSB-041"   # Consultant Salary Payable (CR on accrual, DR on payment)
+_BANK_CODE     = "HSSB-003"   # Cash at Bank - MBB_MYR   (CR on payment)
+
+
+# ─── Auto accrual booking (Step 2 → 3) ───────────────────────────────────────
+
+async def _auto_book_accruals(kase: dict, db) -> dict:
+    """
+    Posts ONE Zoho journal entry for all consultants, breakdown by breakdown.
+    DR: expense accounts (APC or CC codes).  CR: HSSB-041 (paired per line).
+    Returns {"success": bool, "journal_id": str|None, "error": str|None, "skipped": int}
+    """
+    org_cfg = ORGS.get(kase.get("entity", ""), {})
+    org_id  = org_cfg.get("id")
+    if not org_id:
+        return {"success": False, "error": f"No Zoho org ID for entity {kase.get('entity')}"}
+
+    journal_date = _compute_journal_date(kase.get("period", ""))
+    mmm_yy       = _period_mmm_yy(kase.get("period", ""))
+    entity_code  = kase.get("entity", "HSSB")
+
+    # Fetch accounts from Zoho indexed by code
+    try:
+        all_accounts = await fetch_accounts(org_id)
+    except Exception as e:
+        return {"success": False, "error": f"Could not fetch Zoho accounts: {e}"}
+
+    by_code = {a["code"]: a["id"] for a in all_accounts if a.get("code")}
+
+    def account_id(code: str):
+        return by_code.get(code)
+
+    payable_id = account_id(_PAYABLE_CODE)
+    if not payable_id:
+        return {"success": False, "error": f"Account {_PAYABLE_CODE} not found in Zoho chart of accounts"}
+
+    entities = (kase.get("parsed_data") or {}).get("entities", [])
+    all_employees = [
+        {**emp, "entityName": ent["sheetName"]}
+        for ent in entities for emp in ent.get("employees", [])
+    ]
+
+    line_items = []
+    skipped = 0
+
+    for emp in all_employees:
+        is_apc   = (emp.get("clientType") or "CC").upper() == "APC"
+        codes    = _APC_CODES if is_apc else _CC_CODES
+        cust     = emp.get("costCentre", "")
+        cons     = emp.get("name", emp.get("employeeId", ""))
+        desc     = f"{entity_code}_CSI_{cust}_{cons}_{mmm_yy}"
+
+        # Component → (amount, account code key)
+        components = [
+            ("basic",     _round2(emp.get("grossSalary", 0))),
+            ("claim",     _round2(emp.get("claim", 0))),
+            ("bonus",     _round2(emp.get("bonus", 0))),
+            ("ca_dedn",   _round2(emp.get("caDedn", 0))),
+            ("epf",       _round2(emp.get("epfEmployer", 0))),
+            ("socso_eis", _round2((emp.get("eisEmployer") or 0) + (emp.get("socsoEmployer") or 0))),
+            ("hrdf",      _round2(emp.get("hrdf", 0))),
+            ("mtd",       _round2(emp.get("mtd", 0))),
+        ]
+
+        for comp_key, amount in components:
+            if amount <= 0:
+                continue
+            dr_id = account_id(codes[comp_key])
+            if not dr_id:
+                skipped += 1
+                continue
+            # DR expense
+            line_items.append({"account_id": dr_id, "debit_or_credit": "debit",
+                                "amount": amount, "description": desc})
+            # CR payable (paired)
+            line_items.append({"account_id": payable_id, "debit_or_credit": "credit",
+                                "amount": amount, "description": desc})
+
+    if not line_items:
+        return {"success": False, "error": "No line items generated (all amounts zero or accounts not found)", "skipped": skipped}
+
+    try:
+        journal = await post_journal_entry(org_id, {
+            "journal_date":     journal_date,
+            "reference_number": f"ACCR-{kase['reference']}",
+            "notes": (
+                f"CSI Payroll Accrual – {kase.get('period')} – "
+                f"{kase.get('entity_name', entity_code)} – Ref: {kase['reference']}"
+            ),
+            "line_items": line_items,
+        })
+        j_id = journal.get("journal_id")
+        db.from_("payroll_cases").update({
+            "zoho_org_id":     org_id,
+            "zoho_journal_ids": [j_id] if j_id else [],
+        }).eq("id", kase["id"]).execute()
+        return {"success": True, "journal_id": j_id, "skipped": skipped}
+    except Exception as e:
+        return {"success": False, "error": str(e), "skipped": skipped}
+
+
+# ─── Auto payment booking (Step 6) ───────────────────────────────────────────
+
+async def _auto_book_payment(kase: dict, db) -> dict:
+    """
+    Posts ONE Zoho journal: DR HSSB-041 / CR HSSB-003 per consultant (Net Salary).
+    """
+    org_cfg = ORGS.get(kase.get("entity", ""), {})
+    org_id  = org_cfg.get("id") or kase.get("zoho_org_id")
+    if not org_id:
+        return {"success": False, "error": f"No Zoho org ID for entity {kase.get('entity')}"}
+
+    journal_date = _compute_journal_date(kase.get("period", ""))
+    mmm_yy       = _period_mmm_yy(kase.get("period", ""))
+    entity_code  = kase.get("entity", "HSSB")
+
+    try:
+        all_accounts = await fetch_accounts(org_id)
+    except Exception as e:
+        return {"success": False, "error": f"Could not fetch Zoho accounts: {e}"}
+
+    by_code = {a["code"]: a["id"] for a in all_accounts if a.get("code")}
+    payable_id = by_code.get(_PAYABLE_CODE)
+    bank_id    = by_code.get(_BANK_CODE)
+
+    if not payable_id:
+        return {"success": False, "error": f"Account {_PAYABLE_CODE} not found in Zoho"}
+    if not bank_id:
+        return {"success": False, "error": f"Account {_BANK_CODE} not found in Zoho"}
+
+    entities = (kase.get("parsed_data") or {}).get("entities", [])
+    all_employees = [
+        {**emp, "entityName": ent["sheetName"]}
+        for ent in entities for emp in ent.get("employees", [])
+    ]
+
+    line_items = []
+    for emp in all_employees:
+        amount = _round2(emp.get("netSalary", 0))
+        if amount <= 0:
+            continue
+        cust = emp.get("costCentre", "")
+        cons = emp.get("name", emp.get("employeeId", ""))
+        desc = f"{entity_code}_CSI_{cust}_{cons}_{mmm_yy}"
+        line_items.append({"account_id": payable_id, "debit_or_credit": "debit",
+                            "amount": amount, "description": desc})
+        line_items.append({"account_id": bank_id, "debit_or_credit": "credit",
+                            "amount": amount, "description": desc})
+
+    if not line_items:
+        return {"success": False, "error": "No employees with net salary > 0"}
+
+    try:
+        journal = await post_journal_entry(org_id, {
+            "journal_date":     journal_date,
+            "reference_number": f"PMT-{kase['reference']}",
+            "notes": (
+                f"CSI Salary Payment – {kase.get('period')} – "
+                f"{kase.get('entity_name', entity_code)} – Ref: {kase['reference']}"
+            ),
+            "line_items": line_items,
+        })
+        j_id = journal.get("journal_id")
+        existing = kase.get("zoho_journal_ids") or []
+        db.from_("payroll_cases").update({
+            "zoho_org_id":      org_id,
+            "zoho_journal_ids": existing + ([j_id] if j_id else []),
+            "zoho_posted_at":   _now(),
+        }).eq("id", kase["id"]).execute()
+        return {"success": True, "journal_id": j_id}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 def _approval_page_html(title: str, color: str, msg: str) -> str:
@@ -225,13 +462,13 @@ async def upload_case(
     if not file or not file.filename.endswith((".xlsx", ".xls")):
         return HTMLResponse('<div class="error-msg">Please upload an Excel file (.xlsx or .xls).</div>')
 
-    # Combine and validate period: YYYYMM + cycle 01-04
-    period_ym = period_ym.strip()
-    period_cycle = period_cycle.strip().zfill(2)
+    # Combine and validate period: YYYYMM + named cycle
+    period_ym    = period_ym.strip()
+    period_cycle = period_cycle.strip()
     if not _re.match(r"^\d{6}$", period_ym):
         return HTMLResponse('<div class="error-msg">Period must be 6 digits YYYYMM (e.g. 202506).</div>')
-    if period_cycle not in ("01", "02", "03", "04"):
-        return HTMLResponse('<div class="error-msg">Cycle must be 01, 02, 03, or 04.</div>')
+    if period_cycle not in ("25th", "EOM", "7th", "15th"):
+        return HTMLResponse('<div class="error-msg">Cycle must be 25th, EOM, 7th, or 15th.</div>')
     period = f"{period_ym}-{period_cycle}"
 
     content = await file.read()
@@ -371,7 +608,17 @@ async def gen_check(case_id: str, request: Request):
         "consultantCount": check_data["consultantCount"], "flagCount": check_data["flagCount"],
     })
 
-    return await _refresh_detail(case_id, db, request, user, 2)
+    # Auto-book accruals in Zoho (non-blocking — failure logged, workflow continues)
+    fresh_kase = {**kase, "check_data": check_data}
+    try:
+        accrual_result = await _auto_book_accruals(fresh_kase, db)
+    except Exception as e:
+        accrual_result = {"success": False, "error": str(e)}
+
+    await _audit_log(db, case_id, "ZOHO_ACCRUAL_AUTO", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), accrual_result)
+
+    # Advance to Step 3 (check approval) after generating check
+    return await _refresh_detail(case_id, db, request, user, 3)
 
 
 # ─── Step 3a: Send check approval ────────────────────────────────────────────
@@ -386,11 +633,6 @@ async def send_check_approval(case_id: str, request: Request):
         return HTMLResponse('<div class="error-msg">Case not found.</div>')
     if kase.get("status") != "check_generated":
         return HTMLResponse(f'<div class="error-msg">Cannot send approval from status: {kase["status"]}</div>')
-
-    body = await request.form()
-    org_id = body.get("orgId", "")
-    debit_account_id = body.get("debitAccountId", "")
-    credit_account_id = body.get("creditAccountId", "")
 
     token = secrets.token_hex(32)
     db.from_("payroll_approval_tokens").insert({
@@ -410,39 +652,8 @@ async def send_check_approval(case_id: str, request: Request):
         pass
 
     now = _now()
-    accrual_results = []
-    if org_id and debit_account_id and credit_account_id:
-        entities = (kase.get("parsed_data") or {}).get("entities", [])
-        all_employees = [
-            {**emp, "entityName": ent["sheetName"]}
-            for ent in entities for emp in ent.get("employees", [])
-        ]
-        journal_date = kase.get("payment_date") or now[:10]
-        for emp in all_employees:
-            amount = _round2(emp.get("ctcHexa", 0))
-            try:
-                j = await post_journal_entry(org_id, {
-                    "journal_date": journal_date,
-                    "reference_number": f"ACCR-{kase['reference']}-{emp['employeeId']}",
-                    "notes": f"Payroll Accrual – {kase['period']} – {emp['name']} ({emp['employeeId']}) – Ref: {kase['reference']}",
-                    "line_items": [
-                        {"account_id": debit_account_id, "debit_or_credit": "debit", "amount": amount, "description": f"{emp['name']} – {kase['period']}"},
-                        {"account_id": credit_account_id, "debit_or_credit": "credit", "amount": amount, "description": f"{emp['name']} – {kase['period']}"},
-                    ],
-                })
-                accrual_results.append({"name": emp["name"], "journalId": j.get("journal_id"), "success": True})
-            except Exception as e:
-                accrual_results.append({"name": emp["name"], "error": str(e), "success": False})
-
-        await _audit_log(db, case_id, "ZOHO_ACCRUAL_BOOKED", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {
-            "orgId": org_id,
-            "posted": sum(1 for r in accrual_results if r["success"]),
-            "failed": sum(1 for r in accrual_results if not r["success"]),
-        })
-
     db.from_("payroll_cases").update({
         "status": "check_approval_sent", "check_approval_sent_at": now,
-        "zoho_org_id": org_id or kase.get("zoho_org_id") or None,
     }).eq("id", case_id).execute()
 
     await _audit_log(db, case_id, "CHECK_APPROVAL_SENT", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"sentTo": APPROVERS["reviewer"]["email"]})
@@ -733,11 +944,20 @@ async def director_approve(token: str, action: str = "approve"):
 
     await _audit_log(db, kase["id"], "PAYMENT_APPROVED", tok["approver_name"], None, None, {"cert": cert})
 
+    # Auto-book payment journal in Zoho (DR Salary Payable / CR Bank)
+    fresh_kase = {**kase, "payment_approved_by": tok["approver_name"], "payment_approval_cert": cert}
+    try:
+        pay_result = await _auto_book_payment(fresh_kase, db)
+    except Exception as e:
+        pay_result = {"success": False, "error": str(e)}
+    await _audit_log(db, kase["id"], "ZOHO_PAYMENT_AUTO", tok["approver_name"], None, None, pay_result)
+
     try:
         email_notify(
             kase.get("uploaded_by_email", ""), kase,
-            "Payment Approved — Post to Zoho Books",
-            f"Payment for {kase['reference']} has been approved by {tok['approver_name']} ({_fmt_rm(check.get('ctcTotal'))}). You may now post the journal entry to Zoho Books.",
+            "Payment Approved & Zoho Posted",
+            f"Payment for {kase['reference']} approved by {tok['approver_name']} ({_fmt_rm(check.get('ctcTotal'))})."
+            + (f" Zoho journal {pay_result.get('journal_id')} posted." if pay_result.get("success") else f" Zoho posting failed: {pay_result.get('error')}"),
         )
     except Exception:
         pass
@@ -780,7 +1000,15 @@ async def confirm_payment(case_id: str, request: Request):
 
     await _audit_log(db, case_id, "PAYMENT_CONFIRMED_INAPP", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"cert": cert})
 
-    return await _refresh_detail(case_id, db, request, user, 6)
+    # Auto-book payment journal in Zoho
+    fresh_kase = {**kase, "payment_approved_by": user.get("name") or user.get("email"), "payment_approval_cert": cert}
+    try:
+        pay_result = await _auto_book_payment(fresh_kase, db)
+    except Exception as e:
+        pay_result = {"success": False, "error": str(e)}
+    await _audit_log(db, case_id, "ZOHO_PAYMENT_AUTO", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), pay_result)
+
+    return await _refresh_detail(case_id, db, request, user, 7)
 
 
 # ─── Step 7: Post to Zoho ─────────────────────────────────────────────────────

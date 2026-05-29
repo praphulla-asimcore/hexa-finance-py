@@ -7,6 +7,17 @@ REQUIRED_COLS = [
     "SOCSO Employer", "HRDF", "MTD", "CTC Hexa", "Net Salary",
 ]
 
+# Optional columns — present in some CSI files, summed into logical fields
+BONUS_COLS = [
+    "Commission (Daily/Weekly/Monthly)",
+    "Retirement Bonus (Monthly)",
+    "Retirement contribution",
+]
+CADEDN_COLS = [
+    "Deduction",
+    "Deduction (from Net Salary)",
+]
+
 
 def _to_num(val) -> float:
     if val is None or val == "":
@@ -15,6 +26,18 @@ def _to_num(val) -> float:
         return float(str(val).replace(",", ""))
     except (ValueError, TypeError):
         return 0.0
+
+
+def _get(row, col_map, key) -> float:
+    idx = col_map.get(key)
+    return _to_num(row[idx]) if idx is not None and idx < len(row) else 0.0
+
+
+def _get_str(row, col_map, key) -> str:
+    idx = col_map.get(key)
+    if idx is None or idx >= len(row):
+        return ""
+    return str(row[idx] or "").strip()
 
 
 def parse_excel_buffer(data: bytes) -> list[dict]:
@@ -42,26 +65,35 @@ def parse_excel_buffer(data: bytes) -> list[dict]:
             emp_id_idx = col_map.get("Employee ID")
             if emp_id_idx is None:
                 continue
-            emp_id_val = row[emp_id_idx]
+            emp_id_val = row[emp_id_idx] if emp_id_idx < len(row) else None
             if emp_id_val is None or str(emp_id_val).strip() == "":
                 continue
 
-            ctc_hexa = _to_num(row[col_map["CTC Hexa"]] if "CTC Hexa" in col_map else None)
+            ctc_hexa = _get(row, col_map, "CTC Hexa")
             if ctc_hexa == 0:
                 continue
 
+            # Sum optional bonus columns
+            bonus = sum(_get(row, col_map, c) for c in BONUS_COLS)
+            # Sum optional CA deduction columns
+            ca_dedn = sum(_get(row, col_map, c) for c in CADEDN_COLS)
+
             employees.append({
-                "employeeId": str(emp_id_val).strip(),
-                "name": str(row[col_map["Nickname / Name"]] or "").strip() if "Nickname / Name" in col_map else "",
-                "costCentre": str(row[col_map["Cost Centre"]] or "").strip() if "Cost Centre" in col_map else "",
-                "grossSalary": _to_num(row[col_map["Gross Salary"]] if "Gross Salary" in col_map else None),
-                "epfEmployer": _to_num(row[col_map["EPF Employer"]] if "EPF Employer" in col_map else None),
-                "eisEmployer": _to_num(row[col_map["EIS Employer"]] if "EIS Employer" in col_map else None),
-                "socsoEmployer": _to_num(row[col_map["SOCSO Employer"]] if "SOCSO Employer" in col_map else None),
-                "hrdf": _to_num(row[col_map["HRDF"]] if "HRDF" in col_map else None),
-                "mtd": _to_num(row[col_map["MTD"]] if "MTD" in col_map else None),
-                "ctcHexa": ctc_hexa,
-                "netSalary": _to_num(row[col_map["Net Salary"]] if "Net Salary" in col_map else None),
+                "employeeId":   str(emp_id_val).strip(),
+                "name":         _get_str(row, col_map, "Nickname / Name"),
+                "costCentre":   _get_str(row, col_map, "Cost Centre"),
+                "clientType":   _get_str(row, col_map, "Client Type").upper() or "CC",
+                "grossSalary":  _get(row, col_map, "Gross Salary"),
+                "claim":        _get(row, col_map, "Claim"),
+                "bonus":        bonus,
+                "caDedn":       ca_dedn,
+                "epfEmployer":  _get(row, col_map, "EPF Employer"),
+                "eisEmployer":  _get(row, col_map, "EIS Employer"),
+                "socsoEmployer":_get(row, col_map, "SOCSO Employer"),
+                "hrdf":         _get(row, col_map, "HRDF"),
+                "mtd":          _get(row, col_map, "MTD"),
+                "ctcHexa":      ctc_hexa,
+                "netSalary":    _get(row, col_map, "Net Salary"),
             })
 
         if not employees:
@@ -69,9 +101,9 @@ def parse_excel_buffer(data: bytes) -> list[dict]:
 
         total_ctc = round(sum(e["ctcHexa"] for e in employees), 2)
         entities.append({
-            "sheetName": sheet_name.strip(),
-            "employees": employees,
-            "totalCTC": total_ctc,
+            "sheetName":    sheet_name.strip(),
+            "employees":    employees,
+            "totalCTC":     total_ctc,
             "missingColumns": missing_cols,
         })
 

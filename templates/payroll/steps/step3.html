@@ -1,17 +1,17 @@
-{% macro fmt_rm(n) %}{% if n is not none %}RM {{ "{:,.2f}".format(n|float) }}{% else %}—{% endif %}{% endmacro %}
 {% macro fmt_date(d) %}{% if d %}{{ d[:16].replace('T',' ') }}{% else %}—{% endif %}{% endmacro %}
 
 {% set can_send = kase.status == 'check_generated' %}
 {% set is_approved = kase.status in ['check_approved','bank_file_generated','bank_uploaded','payment_approval_sent','payment_approved','payment_rejected','zoho_posted'] %}
 {% set is_rejected = kase.status == 'check_rejected' %}
 {% set cert = kase.check_approval_cert or {} %}
+{% set audit_accrual = (logs | selectattr('event_type','equalto','ZOHO_ACCRUAL_AUTO') | list | last) if logs else none %}
 
-{% macro approver_status(name, role, status, ts) %}
+{% macro approver_box(name, role, status, ts) %}
 <div class="pf-approver-box">
   <div class="pf-approver-name">{{ name }}</div>
   <div class="pf-approver-role">{{ role }}</div>
   <span class="badge badge-{% if status=='approved' %}success{% elif status=='rejected' %}danger{% elif status=='pending' %}warning{% else %}neutral{% endif %}">
-    {% if status == 'approved' %}Approved{% elif status == 'rejected' %}Rejected{% elif status == 'pending' %}Awaiting{% else %}Not yet sent{% endif %}
+    {% if status=='approved' %}Approved{% elif status=='rejected' %}Rejected{% elif status=='pending' %}Awaiting{% else %}Not yet sent{% endif %}
   </span>
   {% if ts %}<div class="pf-approver-time">{{ fmt_date(ts) }}</div>{% endif %}
 </div>
@@ -21,67 +21,43 @@
   <div class="pf-panel-header">
     <span class="pf-panel-step">Step 3</span>
     <h2 class="pf-panel-title">Approval Gate (Check)</h2>
-    <p class="pf-panel-sub">Select GL accounts to book payroll accrual, then send for approval.</p>
+    <p class="pf-panel-sub">Approval email sent to reviewer → final approver. Accruals auto-posted.</p>
   </div>
 
-  <div class="pf-approver-chain">
-    {% set rev_status = 'approved' if kase.status in ['check_reviewer_approved','check_approved','bank_file_generated','bank_uploaded','payment_approval_sent','payment_approved','payment_rejected','zoho_posted'] else ('pending' if kase.status == 'check_approval_sent' else 'waiting') %}
-    {{ approver_status('Asim Subedi', 'First Reviewer', rev_status, kase.check_reviewer_approved_at) }}
-    <div class="pf-chain-arrow">→</div>
-    {% set fin_status = 'approved' if is_approved else ('rejected' if is_rejected else ('pending' if kase.status == 'check_reviewer_approved' else 'waiting')) %}
-    {{ approver_status('Praphulla Subedi', 'Final Approver', fin_status, kase.check_approved_at) }}
+  {# ── Accrual result banner ── #}
+  {% if audit_accrual %}
+  {% set meta = audit_accrual.metadata or {} %}
+  {% if meta.get('success') %}
+  <div class="pf-info-banner pf-banner-ok" style="margin-bottom:16px">
+    ✓ Accrual journal posted to Zoho Books
+    {% if meta.get('journal_id') %}<span style="font-family:monospace;margin-left:8px;font-size:12px">JV: {{ meta.journal_id }}</span>{% endif %}
+    {% if meta.get('skipped') %}<span style="margin-left:8px;opacity:.7">({{ meta.skipped }} line items skipped — account codes not found)</span>{% endif %}
   </div>
-
-  {% if not is_approved and not is_rejected %}
-  <div class="pf-detail-card" style="margin-bottom:16px">
-    <div class="pf-detail-card-title">Zoho Accrual Booking — DR Salary Expense / CR Salary Payable (per consultant, optional)</div>
-    <div class="pf-gl-form" style="margin-top:10px" id="gl-form-3">
-      <div class="pf-form-section">
-        <label class="label">Organisation</label>
-        <select class="input" id="org-select-3" onchange="loadAccounts3(this.value)">
-          <option value="">— select org —</option>
-          {% for code, cfg in orgs.items() %}
-          <option value="{{ cfg.id }}" {% if kase.entity == code or kase.zoho_org_id == cfg.id %}selected{% endif %}>{{ cfg.name }} ({{ code }})</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="pf-form-section" style="display:flex;align-items:flex-end">
-        <button type="button" class="btn btn-secondary" style="width:100%"
-            onclick="loadAccounts3(document.getElementById('org-select-3').value)">
-          Load GL Accounts
-        </button>
-      </div>
-    </div>
-    <div id="gl-accounts-3" style="display:none;margin-top:12px">
-      <div class="pf-gl-form">
-        <div class="pf-form-section">
-          <label class="label">Debit — Salary Expense Account</label>
-          <select class="input" id="debit-account-3"><option value="">— select —</option></select>
-        </div>
-        <div class="pf-form-section">
-          <label class="label">Credit — Salary Payable Account</label>
-          <select class="input" id="credit-account-3"><option value="">— select —</option></select>
-        </div>
-      </div>
-    </div>
-    <p style="font-size:12px;color:var(--text-muted);margin-top:8px">GL accounts optional — skip to send approval without Zoho booking.</p>
+  {% else %}
+  <div class="pf-info-banner pf-banner-warning" style="margin-bottom:16px">
+    ⚠ Accrual auto-posting failed: {{ meta.get('error','Unknown error') }}
   </div>
   {% endif %}
+  {% endif %}
 
+  {# ── Approver chain ── #}
+  <div class="pf-approver-chain">
+    {% set rev_status = 'approved' if kase.status in ['check_reviewer_approved','check_approved','bank_file_generated','bank_uploaded','payment_approval_sent','payment_approved','payment_rejected','zoho_posted'] else ('pending' if kase.status == 'check_approval_sent' else 'waiting') %}
+    {{ approver_box('Asim Subedi', 'First Reviewer', rev_status, kase.check_reviewer_approved_at) }}
+    <div class="pf-chain-arrow">→</div>
+    {% set fin_status = 'approved' if is_approved else ('rejected' if is_rejected else ('pending' if kase.status == 'check_reviewer_approved' else 'waiting')) %}
+    {{ approver_box('Praphulla Subedi', 'Final Approver', fin_status, kase.check_approved_at) }}
+  </div>
+
+  {# ── Send approval button ── #}
   {% if can_send %}
   <div class="pf-action-zone">
-    <p class="pf-action-desc" id="approval-desc-3">Send the check file for approval. Set GL accounts above to also book payroll accrual in Zoho simultaneously.</p>
-    <div id="step3-error" class="error-msg" style="display:none"></div>
+    <p class="pf-action-desc">Accruals have been auto-posted to Zoho. Send the check file to the reviewer for approval.</p>
     <form hx-post="/cases/{{ kase.id }}/send-check-approval"
-          hx-target="#case-detail-inner"
-          hx-swap="innerHTML"
-          id="step3-form">
-      <input type="hidden" name="orgId" id="step3-org-id"/>
-      <input type="hidden" name="debitAccountId" id="step3-debit-id"/>
-      <input type="hidden" name="creditAccountId" id="step3-credit-id"/>
+          hx-target="#case-detail-inner" hx-swap="innerHTML">
       <button type="submit" class="btn btn-primary">
         <span class="spinner htmx-indicator"></span>
-        Book Accrual & Send for Approval
+        Send for Approval
       </button>
     </form>
   </div>
@@ -109,28 +85,3 @@
   </div>
   {% endif %}
 </div>
-
-<script>
-async function loadAccounts3(orgId) {
-  if (!orgId) return;
-  const resp = await fetch('/hx/accounts/' + orgId);
-  const html = await resp.text();
-  document.getElementById('debit-account-3').innerHTML = html;
-  document.getElementById('credit-account-3').innerHTML = html;
-  document.getElementById('gl-accounts-3').style.display = 'block';
-}
-// Wire up form pre-submit to populate hidden inputs from the selects outside the form
-(function() {
-  const form = document.getElementById('step3-form');
-  if (form) {
-    form.addEventListener('htmx:beforeRequest', function() {
-      document.getElementById('step3-org-id').value = document.getElementById('org-select-3')?.value || '';
-      document.getElementById('step3-debit-id').value = document.getElementById('debit-account-3')?.value || '';
-      document.getElementById('step3-credit-id').value = document.getElementById('credit-account-3')?.value || '';
-    });
-  }
-  // Auto-load accounts if org is pre-selected (runs immediately, works for HTMX swap too)
-  const sel = document.getElementById('org-select-3');
-  if (sel && sel.value) loadAccounts3(sel.value);
-})();
-</script>

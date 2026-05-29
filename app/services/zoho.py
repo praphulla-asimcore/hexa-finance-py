@@ -53,7 +53,12 @@ async def fetch_accounts(org_id: str) -> list[dict]:
             if data.get("code") != 0:
                 raise RuntimeError(f"Zoho accounts error [{data.get('code')}]: {data.get('message')}")
             for a in data.get("chartofaccounts", []):
-                accounts.append({"id": a["account_id"], "name": a["account_name"], "type": a["account_type"]})
+                accounts.append({
+                    "id":   a["account_id"],
+                    "name": a["account_name"],
+                    "type": a["account_type"],
+                    "code": a.get("account_code", ""),
+                })
             if not data.get("page_context", {}).get("has_more_page"):
                 break
             page += 1
