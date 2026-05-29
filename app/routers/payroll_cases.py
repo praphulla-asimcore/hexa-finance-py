@@ -141,47 +141,72 @@ def _period_mmm_yy(period_str: str) -> str:
         return yyyymm
 
 
-# ─── Account maps — code AND name fallback (APC vs CC) ──────────────────────
+# ─── Account ID maps (hardcoded from Chart_of_Accounts.csv) ─────────────────
+# Zoho API default filter excludes sub-accounts (2.6.x.x) so we use the CSV.
+# Key: component → Zoho account_id  (org-specific)
 
+# HSSB org (762447369) — sourced from Chart_of_Accounts.csv
+_HSSB_APC = {
+    "basic":     "2877958000012773826",  # APC - Consultant Salaries and Benefits
+    "claim":     "2877958000012773830",  # APC - Consultant Claims and Reimbursements
+    "bonus":     "2877958000012773834",  # APC - Bonus, Commission, Incentive…
+    "ca_dedn":   "2877958000012773846",  # APC - Cash Advance Deduction
+    "epf":       "2877958000012773866",  # APC - EPF, SSF, CPF, Pag-IBIG/HDMF
+    "socso_eis": "2877958000012773874",  # APC - BPJS TK, SSC, SSS, SOCSO, EIS
+    "hrdf":      "2877958000012773878",  # APC - HRDF, SDL
+    "mtd":       "2877958000012773890",  # APC - TDS, PCB/MTD, PIT
+}
+_HSSB_CC = {
+    "basic":     "2877958000012773902",  # CC - Consultant Salaries and Benefits
+    "claim":     "2877958000012773906",  # CC - Consultant Claims and Reimbursements
+    "bonus":     "2877958000012773910",  # CC - Bonus, Commission, Incentive…
+    "ca_dedn":   "2877958000012773922",  # CC - Cash Advance Deduction
+    "epf":       "2877958000012773942",  # CC - EPF, SSF, CPF, Pag-IBIG/HDMF
+    "socso_eis": "2877958000012773950",  # CC - BPJS TK, SSC, SSS, SOCSO, EIS
+    "hrdf":      "2877958000012773954",  # CC - HRDF, SDL
+    "mtd":       "2877958000012773966",  # CC - TDS, PCB/MTD, PIT
+}
+_HSSB_PAYABLE = "2877958000005041061"   # Consultant Salary Payable (HSSB-041)
+_HSSB_BANK    = "2877958000000096397"   # Cash at Bank - MBB_MYR  (HSSB-003)
+
+# Lookup by org_id → (apc_map, cc_map, payable_id, bank_id)
+_ORG_ACCOUNT_MAPS: dict = {
+    "762447369": (_HSSB_APC, _HSSB_CC, _HSSB_PAYABLE, _HSSB_BANK),
+}
+
+# Fallback: code-based keys for API lookup when org not in hardcoded map
 _APC_CODES = {
-    "basic":      "2.6.1.1",   "claim":     "2.6.1.2",
-    "bonus":      "2.6.1.3",   "ca_dedn":   "2.6.1.6",
-    "epf":        "2.6.1.10.1","socso_eis": "2.6.1.10.3",
-    "hrdf":       "2.6.1.10.4","mtd":       "2.6.1.10.7",
+    "basic": "2.6.1.1", "claim": "2.6.1.2", "bonus": "2.6.1.3", "ca_dedn": "2.6.1.6",
+    "epf": "2.6.1.10.1", "socso_eis": "2.6.1.10.3", "hrdf": "2.6.1.10.4", "mtd": "2.6.1.10.7",
 }
 _CC_CODES = {
-    "basic":      "2.6.2.1",   "claim":     "2.6.2.2",
-    "bonus":      "2.6.2.3",   "ca_dedn":   "2.6.2.6",
-    "epf":        "2.6.2.10.1","socso_eis": "2.6.2.10.3",
-    "hrdf":       "2.6.2.10.4","mtd":       "2.6.2.10.7",
+    "basic": "2.6.2.1", "claim": "2.6.2.2", "bonus": "2.6.2.3", "ca_dedn": "2.6.2.6",
+    "epf": "2.6.2.10.1", "socso_eis": "2.6.2.10.3", "hrdf": "2.6.2.10.4", "mtd": "2.6.2.10.7",
 }
-
-# Name-based fallback (used when account_code not configured in Zoho)
 _APC_NAMES = {
-    "basic":     "APC - Consultant Salaries and Benefits",
-    "claim":     "APC - Consultant Claims and Reimbursements",
-    "bonus":     "APC - Bonus, Commission, Incentive, Galloping, THR, EOC",
-    "ca_dedn":   "APC - Cash Advance Deduction",
-    "epf":       "APC - EPF, SSF, CPF, Pag-IBIG/HDMF",
+    "basic": "APC - Consultant Salaries and Benefits",
+    "claim": "APC - Consultant Claims and Reimbursements",
+    "bonus": "APC - Bonus, Commission, Incentive, Galloping, THR, EOC",
+    "ca_dedn": "APC - Cash Advance Deduction",
+    "epf": "APC - EPF, SSF, CPF, Pag-IBIG/HDMF",
     "socso_eis": "APC - BPJS TK, SSC, SSS, SOCSO, EIS",
-    "hrdf":      "APC - HRDF, SDL",
-    "mtd":       "APC - TDS, PCB/MTD, PIT",
+    "hrdf": "APC - HRDF, SDL",
+    "mtd": "APC - TDS, PCB/MTD, PIT",
 }
 _CC_NAMES = {
-    "basic":     "CC - Consultant Salaries and Benefits",
-    "claim":     "CC - Consultant Claims and Reimbursements",
-    "bonus":     "CC - Bonus, Commission, Incentive, Galloping, THR, EOC",
-    "ca_dedn":   "CC - Cash Advance Deduction",
-    "epf":       "CC - EPF, SSF, CPF, Pag-IBIG/HDMF",
+    "basic": "CC - Consultant Salaries and Benefits",
+    "claim": "CC - Consultant Claims and Reimbursements",
+    "bonus": "CC - Bonus, Commission, Incentive, Galloping, THR, EOC",
+    "ca_dedn": "CC - Cash Advance Deduction",
+    "epf": "CC - EPF, SSF, CPF, Pag-IBIG/HDMF",
     "socso_eis": "CC - BPJS TK, SSC, SSS, SOCSO, EIS",
-    "hrdf":      "CC - HRDF, SDL",
-    "mtd":       "CC - TDS, PCB/MTD, PIT",
+    "hrdf": "CC - HRDF, SDL",
+    "mtd": "CC - TDS, PCB/MTD, PIT",
 }
-
-_PAYABLE_CODE  = "HSSB-041"
-_PAYABLE_NAME  = "Consultant Salary Payable"
-_BANK_CODE     = "HSSB-003"
-_BANK_NAME     = "Cash at Bank - MBB_MYR"
+_PAYABLE_CODE = "HSSB-041"
+_PAYABLE_NAME = "Consultant Salary Payable"
+_BANK_CODE    = "HSSB-003"
+_BANK_NAME    = "Cash at Bank - MBB_MYR"
 
 
 # ─── Auto accrual booking (Step 2 → 3) ───────────────────────────────────────
@@ -201,31 +226,34 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
     mmm_yy       = _period_mmm_yy(kase.get("period", ""))
     entity_code  = kase.get("entity", "HSSB")
 
-    # Fetch accounts — index by code AND by name for fallback
-    try:
-        all_accounts = await fetch_accounts(org_id)
-    except Exception as e:
-        return {"success": False, "error": f"Could not fetch Zoho accounts: {e}"}
+    # Use hardcoded account IDs if available for this org (avoids API sub-account issue)
+    hardcoded = _ORG_ACCOUNT_MAPS.get(org_id)
+    if hardcoded:
+        _apc_map, _cc_map, payable_id, _bank_id_cached = hardcoded
 
-    by_code = {a["code"]: a["id"] for a in all_accounts if a.get("code")}
-    by_name = {a["name"]: a["id"] for a in all_accounts if a.get("name")}
+        def account_id_from_map(is_apc: bool, comp_key: str) -> str | None:
+            return (_apc_map if is_apc else _cc_map).get(comp_key)
 
-    def account_id(code: str, name_fallback: str = "") -> str | None:
-        """Try code first; fall back to exact name match."""
-        return by_code.get(code) or (by_name.get(name_fallback) if name_fallback else None)
+        def account_id(code: str, name_fallback: str = "") -> str | None:
+            return payable_id  # only used for payable in this path
 
-    payable_id = account_id(_PAYABLE_CODE, _PAYABLE_NAME)
-    if not payable_id:
-        sample = list(by_code.keys())[:6]
-        return {
-            "success": False,
-            "error": (
-                f"Account '{_PAYABLE_CODE}' / '{_PAYABLE_NAME}' not found in Zoho. "
-                f"Fetched {len(all_accounts)} accounts. "
-                f"Sample codes: {sample}. "
-                f"Ensure account codes match in Zoho Books chart of accounts."
-            )
-        }
+    else:
+        # Fallback: fetch from Zoho API
+        try:
+            all_accounts = await fetch_accounts(org_id)
+        except Exception as e:
+            return {"success": False, "error": f"Could not fetch Zoho accounts: {e}"}
+        by_code = {a["code"]: a["id"] for a in all_accounts if a.get("code")}
+        by_name = {a["name"]: a["id"] for a in all_accounts if a.get("name")}
+
+        def account_id_from_map(is_apc: bool, comp_key: str) -> str | None:
+            codes = _APC_CODES if is_apc else _CC_CODES
+            names = _APC_NAMES if is_apc else _CC_NAMES
+            return by_code.get(codes[comp_key]) or by_name.get(names.get(comp_key, ""))
+
+        payable_id = by_code.get(_PAYABLE_CODE) or by_name.get(_PAYABLE_NAME)
+        if not payable_id:
+            return {"success": False, "error": f"Account '{_PAYABLE_NAME}' not found in Zoho ({len(all_accounts)} fetched). Zoho API does not return sub-accounts by default. Add org to _ORG_ACCOUNT_MAPS."}
 
     entities = (kase.get("parsed_data") or {}).get("entities", [])
     all_employees = [
@@ -239,11 +267,9 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
     total_amounts = 0.0
     for emp in all_employees:
         is_apc   = (emp.get("clientType") or "CC").upper() == "APC"
-        codes    = _APC_CODES if is_apc else _CC_CODES
-        names    = _APC_NAMES if is_apc else _CC_NAMES
-        cust     = emp.get("costCentre", "")
-        cons     = emp.get("name", emp.get("employeeId", ""))
-        desc     = f"{entity_code}_CSI_{cust}_{cons}_{mmm_yy}"
+        cust = emp.get("costCentre", "")
+        cons = emp.get("name", emp.get("employeeId", ""))
+        desc = f"{entity_code}_CSI_{cust}_{cons}_{mmm_yy}"
 
         components = [
             ("basic",     _round2(emp.get("grossSalary", 0))),
@@ -260,7 +286,7 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
             if amount <= 0:
                 continue
             total_amounts += amount
-            dr_id = account_id(codes[comp_key], names.get(comp_key, ""))
+            dr_id = account_id_from_map(is_apc, comp_key)
             if not dr_id:
                 skipped += 1
                 continue
@@ -272,20 +298,9 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
     if not line_items:
         if total_amounts == 0:
             return {"success": False, "error": "All component amounts are zero — check CSI file data.", "skipped": skipped}
-        not_found = [_PAYABLE_CODE] + [_APC_CODES[k] for k in _APC_CODES]
-        sample_codes = list(by_code.keys())[:8]
-        sample_names = list(by_name.keys())[:5]
         return {
-            "success": False,
-            "skipped": skipped,
-            "error": (
-                f"Accounts not matched in Zoho ({len(all_accounts)} fetched). "
-                f"Total amounts = RM {total_amounts:,.2f} so data is present. "
-                f"Codes in Zoho: {sample_codes}. "
-                f"Names in Zoho (sample): {sample_names}. "
-                f"Expected codes like '2.6.1.1' or names like 'APC - Consultant Salaries and Benefits'. "
-                f"Set account codes in Zoho Books chart of accounts to match."
-            )
+            "success": False, "skipped": skipped,
+            "error": f"No line items matched (total RM {total_amounts:,.2f} present, {skipped} components skipped). Add org {org_id} to _ORG_ACCOUNT_MAPS.",
         }
 
     try:
@@ -319,25 +334,31 @@ async def _auto_book_payment(kase: dict, db) -> dict:
     if not org_id:
         return {"success": False, "error": f"No Zoho org ID for entity {kase.get('entity')}"}
 
-    journal_date = _compute_journal_date(kase.get("period", ""))
-    mmm_yy       = _period_mmm_yy(kase.get("period", ""))
-    entity_code  = kase.get("entity", "HSSB")
+    # Use actual payment date (from bank upload / payment approval), NOT period cycle date
+    payment_date = (
+        kase.get("payment_date")               # date set at upload
+        or (kase.get("payment_approved_at") or _now())[:10]  # date payment was approved
+    )
+    mmm_yy      = _period_mmm_yy(kase.get("period", ""))
+    entity_code = kase.get("entity", "HSSB")
 
-    try:
-        all_accounts = await fetch_accounts(org_id)
-    except Exception as e:
-        return {"success": False, "error": f"Could not fetch Zoho accounts: {e}"}
-
-    by_code = {a["code"]: a["id"] for a in all_accounts if a.get("code")}
-    by_name = {a["name"]: a["id"] for a in all_accounts if a.get("name")}
-
-    payable_id = by_code.get(_PAYABLE_CODE) or by_name.get(_PAYABLE_NAME)
-    bank_id    = by_code.get(_BANK_CODE)    or by_name.get(_BANK_NAME)
-
-    if not payable_id:
-        return {"success": False, "error": f"Account '{_PAYABLE_CODE}'/'{_PAYABLE_NAME}' not found in Zoho ({len(all_accounts)} accounts fetched)"}
-    if not bank_id:
-        return {"success": False, "error": f"Account '{_BANK_CODE}'/'{_BANK_NAME}' not found in Zoho ({len(all_accounts)} accounts fetched)"}
+    # Use hardcoded IDs if available for this org
+    hardcoded = _ORG_ACCOUNT_MAPS.get(org_id)
+    if hardcoded:
+        _, _, payable_id, bank_id = hardcoded
+    else:
+        try:
+            all_accounts = await fetch_accounts(org_id)
+        except Exception as e:
+            return {"success": False, "error": f"Could not fetch Zoho accounts: {e}"}
+        by_code = {a["code"]: a["id"] for a in all_accounts if a.get("code")}
+        by_name = {a["name"]: a["id"] for a in all_accounts if a.get("name")}
+        payable_id = by_code.get(_PAYABLE_CODE) or by_name.get(_PAYABLE_NAME)
+        bank_id    = by_code.get(_BANK_CODE)    or by_name.get(_BANK_NAME)
+        if not payable_id:
+            return {"success": False, "error": f"Account '{_PAYABLE_NAME}' not found in Zoho. Add org {org_id} to _ORG_ACCOUNT_MAPS."}
+        if not bank_id:
+            return {"success": False, "error": f"Account '{_BANK_NAME}' not found in Zoho. Add org {org_id} to _ORG_ACCOUNT_MAPS."}
 
     # Build payment rows from bank file (RCMS XLSX) if available,
     # otherwise fall back to CSI parsed employee data
@@ -395,7 +416,7 @@ async def _auto_book_payment(kase: dict, db) -> dict:
             expense = await create_expense(org_id, {
                 "account_id":              payable_id,
                 "paid_through_account_id": bank_id,
-                "date":                    journal_date,
+                "date":                    payment_date,
                 "amount":                  amount,
                 "description":             description,
                 "reference_number":        reference,
