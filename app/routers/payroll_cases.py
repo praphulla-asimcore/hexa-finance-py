@@ -546,7 +546,8 @@ async def case_detail_page(case_id: str, request: Request):
            "step_state": _step_state, "get_active_step": _get_active_step, "orgs": ORGS}
 
     if request.headers.get("HX-Request"):
-        return templates.TemplateResponse(request, "payroll/detail.html", ctx)
+        # Refresh buttons target #case-detail-inner — return just the inner content
+        return templates.TemplateResponse(request, "payroll/detail_inner.html", ctx)
     return templates.TemplateResponse(request, "payroll/detail_page.html", ctx)
 
 

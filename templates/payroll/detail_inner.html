@@ -2,29 +2,30 @@
 {% macro fmt_date(d) %}{% if d %}{{ d[:16].replace('T',' ') }}{% else %}—{% endif %}{% endmacro %}
 
 {% set STEP_DEFS = [
-  (1, 'Upload & Intake Stamp', 'Upload'),
-  (2, 'AI Check File Generation', 'Check File'),
-  (3, 'Approval Gate (Check)', 'Check Approval'),
-  (4, 'Bank Upload File', 'Bank File'),
-  (5, 'FE Bank Upload', 'Bank Upload'),
-  (6, 'Payment Approval (Director)', 'Payment Approval'),
-  (7, 'Zoho Books Posting', 'Zoho Post'),
-  (8, 'FP&A Sub-Ledger', 'FP&A Ledger'),
-  (9, 'Audit Package Assembly', 'Audit Package'),
-  (10, 'Compliance Controls', 'Compliance'),
+  (1,  'Upload & Intake Stamp',        'Upload'),
+  (2,  'AI Check File Generation',     'Check File'),
+  (3,  'Approval Gate (Check)',        'Check Approval'),
+  (4,  'Bank Upload File',             'Bank File'),
+  (5,  'FE Bank Upload',               'Bank Upload'),
+  (6,  'Payment Approval (Director)',  'Payment Approval'),
+  (7,  'Zoho Books Posting',           'Zoho Post'),
+  (8,  'FP&A Sub-Ledger',             'FP&A Ledger'),
+  (9,  'Audit Package Assembly',       'Audit Package'),
+  (10, 'Compliance Controls',          'Compliance'),
 ] %}
 
-<div class="pf-layout">
+<div class="pf-layout" id="case-layout">
+
   {# ── Step tracker sidebar ── #}
-  <div class="pf-tracker">
+  <div class="pf-tracker" id="step-tracker">
     {% for sn, stitle, sshort in STEP_DEFS %}
     {% set state = step_state(sn, kase) %}
     {% set is_selected = selected_step == sn %}
-    <button class="pf-tracker-step pf-state-{{ state }} {% if is_selected %}pf-step-selected{% endif %}"
-        hx-get="/cases/{{ kase.id }}/step/{{ sn }}"
-        hx-target="#step-panel"
-        hx-swap="innerHTML">
-      <div class="pf-step-circle pf-circle-{{ state }}">
+    <button
+        class="pf-tracker-step pf-state-{{ state }} {% if is_selected %}pf-step-selected{% endif %}"
+        data-step="{{ sn }}"
+        onclick="switchStep({{ sn }}, this)">
+      <div class="pf-step-circle pf-circle-{{ state }} pf-circle-animate">
         {% if state == 'done' %}
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
         {% elif state == 'rejected' %}
@@ -42,18 +43,77 @@
     {% endfor %}
   </div>
 
-  {# ── Step panel ── #}
-  <div class="pf-panel" id="step-panel">
-    {% if selected_step == 1 %}{% include "payroll/steps/step1.html" %}
-    {% elif selected_step == 2 %}{% include "payroll/steps/step2.html" %}
-    {% elif selected_step == 3 %}{% include "payroll/steps/step3.html" %}
-    {% elif selected_step == 4 %}{% include "payroll/steps/step4.html" %}
-    {% elif selected_step == 5 %}{% include "payroll/steps/step5.html" %}
-    {% elif selected_step == 6 %}{% include "payroll/steps/step6.html" %}
-    {% elif selected_step == 7 %}{% include "payroll/steps/step7.html" %}
-    {% elif selected_step == 8 %}{% include "payroll/steps/step8.html" %}
-    {% elif selected_step == 9 %}{% include "payroll/steps/step9.html" %}
-    {% elif selected_step == 10 %}{% include "payroll/steps/step10.html" %}
-    {% endif %}
+  {# ── All step panels pre-rendered, JS switches between them ── #}
+  <div class="pf-panels-container" id="panels-container">
+    {% for sn, stitle, sshort in STEP_DEFS %}
+    <div id="step-panel-{{ sn }}"
+         class="pf-step-panel pf-panel {% if selected_step == sn %}pf-panel-active{% endif %}"
+         data-step="{{ sn }}">
+      {% if sn == 1 %}{% include "payroll/steps/step1.html" %}
+      {% elif sn == 2 %}{% include "payroll/steps/step2.html" %}
+      {% elif sn == 3 %}{% include "payroll/steps/step3.html" %}
+      {% elif sn == 4 %}{% include "payroll/steps/step4.html" %}
+      {% elif sn == 5 %}{% include "payroll/steps/step5.html" %}
+      {% elif sn == 6 %}{% include "payroll/steps/step6.html" %}
+      {% elif sn == 7 %}{% include "payroll/steps/step7.html" %}
+      {% elif sn == 8 %}{% include "payroll/steps/step8.html" %}
+      {% elif sn == 9 %}{% include "payroll/steps/step9.html" %}
+      {% elif sn == 10 %}{% include "payroll/steps/step10.html" %}
+      {% endif %}
+    </div>
+    {% endfor %}
   </div>
 </div>
+
+<script>
+(function() {
+  var _current = {{ selected_step }};
+
+  function switchStep(n, btn) {
+    if (n === _current) return;
+
+    var dir = n > _current ? 1 : -1;
+
+    // Animate out current panel
+    var oldPanel = document.getElementById('step-panel-' + _current);
+    if (oldPanel) {
+      oldPanel.classList.add(dir > 0 ? 'pf-panel-exit-left' : 'pf-panel-exit-right');
+      setTimeout(function() {
+        oldPanel.classList.remove('pf-panel-active', 'pf-panel-exit-left', 'pf-panel-exit-right');
+      }, 220);
+    }
+
+    // Animate in new panel
+    var newPanel = document.getElementById('step-panel-' + n);
+    if (newPanel) {
+      newPanel.classList.add(dir > 0 ? 'pf-panel-enter-right' : 'pf-panel-enter-left');
+      newPanel.classList.add('pf-panel-active');
+      // Force reflow so the enter class is applied before removal
+      newPanel.offsetHeight;
+      requestAnimationFrame(function() {
+        requestAnimationFrame(function() {
+          newPanel.classList.remove('pf-panel-enter-right', 'pf-panel-enter-left');
+        });
+      });
+    }
+
+    // Update tracker button highlight
+    document.querySelectorAll('.pf-tracker-step').forEach(function(b) {
+      b.classList.remove('pf-step-selected');
+    });
+    if (btn) btn.classList.add('pf-step-selected');
+
+    _current = n;
+  }
+
+  // Expose globally so HTMX-refreshed content can re-initialise
+  window.switchStep = switchStep;
+
+  // After any HTMX swap into #case-detail-inner, re-run scripts in new panels
+  document.body.addEventListener('htmx:afterSwap', function(e) {
+    if (e.detail.target && e.detail.target.id === 'case-detail-inner') {
+      // The new detail_inner already has the correct selected step highlighted
+    }
+  });
+})();
+</script>

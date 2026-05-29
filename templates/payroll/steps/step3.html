@@ -65,7 +65,7 @@
   <div class="pf-info-banner pf-banner-waiting">
     Approval email sent {{ fmt_date(kase.check_approval_sent_at) }}. Waiting for approver response.
     <button class="btn btn-secondary btn-sm" style="margin-left:12px"
-        hx-get="/cases/{{ kase.id }}/step/3" hx-target="#step-panel" hx-swap="innerHTML">
+        hx-get="/cases/{{ kase.id }}" hx-target="#case-detail-inner" hx-swap="innerHTML">
       Refresh
     </button>
   </div>

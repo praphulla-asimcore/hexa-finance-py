@@ -615,3 +615,229 @@ select{
 .bene-detail-item span{display:block;font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;font-weight:700}
 .bene-detail-item strong{font-size:13px;font-weight:700;color:var(--text-primary)}
 .bene-detail-warning{background:var(--warning-bg);border:1px solid var(--warning-border);border-radius:10px;padding:11px 14px;font-size:13px;color:#92400E;display:flex;align-items:center;gap:9px}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   STEP PANEL ANIMATION SYSTEM
+   All 10 panels are pre-rendered; JS switches visibility with transitions.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Container holds all panels stacked */
+.pf-panels-container {
+  position: relative;
+  min-height: 420px;
+}
+
+/* Each step panel — hidden by default */
+.pf-step-panel {
+  display: none;
+  opacity: 0;
+  transform: translateX(0);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+  background: var(--surface);
+  border: 1px solid rgba(156,39,176,0.08);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+
+/* Active panel — visible */
+.pf-step-panel.pf-panel-active {
+  display: block;
+  opacity: 1;
+  transform: translateX(0);
+  animation: panelFadeIn 0.24s cubic-bezier(0.4,0,0.2,1) forwards;
+}
+
+/* Enter from right (going forward) */
+.pf-step-panel.pf-panel-enter-right {
+  transform: translateX(32px);
+  opacity: 0;
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+/* Enter from left (going backward) */
+.pf-step-panel.pf-panel-enter-left {
+  transform: translateX(-32px);
+  opacity: 0;
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+/* Exit to left (forward navigation) */
+.pf-step-panel.pf-panel-exit-left {
+  display: block;
+  opacity: 0;
+  transform: translateX(-24px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+}
+
+/* Exit to right (backward navigation) */
+.pf-step-panel.pf-panel-exit-right {
+  display: block;
+  opacity: 0;
+  transform: translateX(24px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+}
+
+@keyframes panelFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Step circle animations ──────────────────────────────────────────────── */
+
+/* Active step: glowing pulse ring */
+.pf-circle-active {
+  animation: activeStepPulse 2.2s ease-in-out infinite !important;
+  background: var(--grad) !important;
+  border-color: transparent !important;
+  color: #fff !important;
+  box-shadow: 0 0 0 0 rgba(233,30,140,0.5);
+}
+
+@keyframes activeStepPulse {
+  0%   { box-shadow: 0 0 0 0   rgba(233,30,140,0.55); }
+  50%  { box-shadow: 0 0 0 7px rgba(233,30,140,0.00); }
+  100% { box-shadow: 0 0 0 0   rgba(233,30,140,0.55); }
+}
+
+/* Done step: scale-in pop when it first becomes done */
+.pf-circle-animate.pf-circle-done {
+  animation: donePop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+@keyframes donePop {
+  0%   { transform: scale(0.55); }
+  100% { transform: scale(1); }
+}
+
+/* ── Tracker connector line ──────────────────────────────────────────────── */
+
+/* Done connectors: animated gradient shimmer */
+.pf-step-connector.pf-conn-done {
+  background: var(--grad);
+  overflow: hidden;
+  position: relative;
+}
+
+.pf-step-connector.pf-conn-done::after {
+  content: '';
+  position: absolute;
+  top: 0; left: -100%;
+  width: 60%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent);
+  animation: connShimmer 2.4s ease-in-out infinite;
+}
+
+@keyframes connShimmer {
+  0%   { left: -80%; }
+  100% { left: 200%; }
+}
+
+/* Active connector: gradient glow */
+.pf-step-connector.pf-conn-active {
+  background: linear-gradient(180deg, var(--pink), transparent);
+  opacity: 0.6;
+}
+
+/* ── Tracker step hover glow ─────────────────────────────────────────────── */
+
+.pf-tracker-step {
+  transition: background 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.pf-tracker-step:hover {
+  transform: translateX(4px);
+}
+
+.pf-step-selected {
+  background: linear-gradient(135deg,rgba(233,30,140,0.10),rgba(156,39,176,0.08)) !important;
+  border-left: 3px solid var(--pink) !important;
+  box-shadow: inset 0 0 0 1px rgba(233,30,140,0.18);
+}
+
+/* ── Loading skeleton while initial case load ────────────────────────────── */
+
+.pf-skeleton {
+  background: linear-gradient(90deg, var(--border) 25%, rgba(156,39,176,0.08) 50%, var(--border) 75%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.4s ease-in-out infinite;
+  border-radius: 8px;
+  height: 14px;
+  margin-bottom: 10px;
+}
+
+@keyframes skeletonShimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── Panel header — gradient accent bar on entry ─────────────────────────── */
+
+.pf-panel-active .pf-panel-header {
+  position: relative;
+}
+
+.pf-panel-active .pf-panel-header::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0;
+  height: 2px;
+  background: var(--grad);
+  border-radius: 99px;
+  animation: headerLineExpand 0.35s ease forwards;
+  width: 0;
+}
+
+@keyframes headerLineExpand {
+  to { width: 100%; }
+}
+
+/* ── Step number badge in tracker — count-up feel ────────────────────────── */
+
+.pf-tracker-step .pf-step-circle span {
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+
+.pf-tracker-step:hover .pf-step-circle span {
+  transform: scale(1.2);
+}
+
+/* ── Info banners — slide down on appear ─────────────────────────────────── */
+
+.pf-info-banner {
+  animation: bannerSlideDown 0.25s ease forwards;
+}
+
+@keyframes bannerSlideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Action zone — subtle entrance ──────────────────────────────────────────*/
+
+.pf-action-zone {
+  animation: actionZoneFade 0.3s ease forwards;
+}
+
+@keyframes actionZoneFade {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Certificate box — scale entrance ───────────────────────────────────── */
+
+.pf-cert-box {
+  animation: certScale 0.3s cubic-bezier(0.34,1.56,0.64,1) forwards;
+  transform-origin: top left;
+}
+
+@keyframes certScale {
+  from { opacity: 0; transform: scale(0.94); }
+  to   { opacity: 1; transform: scale(1); }
+}

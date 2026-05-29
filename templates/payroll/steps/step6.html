@@ -30,7 +30,7 @@
     Approval email sent to Dato Thiruchelvapalan on {{ fmt_date(kase.payment_approval_sent_at) }}.
     Director can approve via the secure email link, or confirm below if approved verbally.
     <button class="btn btn-secondary btn-sm" style="margin-left:12px"
-        hx-get="/cases/{{ kase.id }}/step/6" hx-target="#step-panel" hx-swap="innerHTML">
+        hx-get="/cases/{{ kase.id }}" hx-target="#case-detail-inner" hx-swap="innerHTML">
       Refresh
     </button>
   </div>
