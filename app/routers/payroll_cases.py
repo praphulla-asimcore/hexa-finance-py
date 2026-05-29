@@ -255,9 +255,9 @@ async def upload_case(
         "uploaded_by_email": user.get("email", ""),
         "uploaded_at": _now(), "upload_ip": ip,
         "payment_date": payment_date or None,
-    }).select().single().execute()
+    }).select().execute()
 
-    kase = insert_resp.data
+    kase = (insert_resp.data or [None])[0]
     if not kase:
         return HTMLResponse('<div class="error-msg">Failed to create case.</div>')
 

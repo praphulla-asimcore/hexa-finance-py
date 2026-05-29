@@ -53,10 +53,10 @@ async def invite_user(request: Request):
         db.from_("users").update({"name": name or ex.get("name", ""), "role": role, "status": "invited", "invite_token": token, "invite_expires": expires}).eq("id", ex["id"]).execute()
         user_id = ex["id"]
     else:
-        res = db.from_("users").insert({"email": email, "name": name or "", "role": role, "invite_token": token, "invite_expires": expires}).select("id").single().execute()
+        res = db.from_("users").insert({"email": email, "name": name or "", "role": role, "invite_token": token, "invite_expires": expires}).select("id").execute()
         if not res.data:
             raise HTTPException(500, "Failed to create user.")
-        user_id = res.data["id"]
+        user_id = res.data[0]["id"]
 
     invite_url = f"{APP_URL}/accept-invite?token={token}"
     try:
