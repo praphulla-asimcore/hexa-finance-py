@@ -31,7 +31,12 @@ async def login_page(request: Request):
     user = try_get_user(request)
     if user:
         return RedirectResponse("/", status_code=302)
-    return templates.TemplateResponse("login.html", {"request": request, "error": None})
+    try:
+        return templates.TemplateResponse("login.html", {"request": request, "error": None})
+    except Exception as e:
+        import traceback
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(f"TEMPLATE ERROR:\n{traceback.format_exc()}", status_code=500)
 
 
 @router.post("/login")
