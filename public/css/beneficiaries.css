@@ -1,39 +1,45 @@
-.bene-screen { max-width: 1200px; }
-.bene-stat { font-size: 13px; color: var(--text-muted); }
-.bene-stat-sep { display: inline-block; width: 4px; height: 4px; background: var(--text-muted); border-radius: 50%; margin: 0 8px; vertical-align: middle; }
-.bene-stat-missing { color: var(--danger); }
-
-.bene-alert { padding: 16px 20px; border-left: 4px solid var(--danger); display: flex; gap: 12px; align-items: flex-start; margin-bottom: 16px; }
-.bene-alert-icon { color: var(--danger); flex-shrink: 0; margin-top: 2px; }
-.bene-alert-body { font-size: 14px; color: var(--text-primary); }
-
-.bene-toolbar { padding: 14px 20px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
-.bene-filters { display: flex; gap: 6px; flex-wrap: wrap; }
-.bene-filter-btn { padding: 6px 14px; border-radius: 20px; border: 1.5px solid var(--border-strong); background: transparent; font-size: 13px; font-weight: 500; cursor: pointer; color: var(--text-secondary); transition: all 0.15s; }
-.bene-filter-btn:hover { border-color: var(--brand-indigo); color: var(--brand-indigo); }
-.bene-filter-active { background: var(--info-bg); border-color: var(--brand-indigo); color: var(--brand-indigo); font-weight: 600; }
-.bene-search { max-width: 280px; padding: 8px 14px; border: 1.5px solid var(--border-strong); border-radius: 20px; font-size: 13px; outline: none; }
-.bene-search:focus { border-color: var(--brand-indigo); box-shadow: 0 0 0 3px rgba(99,102,241,0.1); }
-
-.bene-table-wrap { overflow-x: auto; margin-bottom: 20px; }
-.bene-loading { display: flex; align-items: center; gap: 10px; color: var(--text-muted); padding: 32px; justify-content: center; }
-.bene-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.bene-table th { padding: 10px 12px; text-align: left; font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 2px solid var(--border); white-space: nowrap; }
-.bene-table td { padding: 12px 12px; border-bottom: 1px solid var(--border); }
-.bene-row { cursor: pointer; transition: background 0.1s; }
-.bene-row:hover { background: var(--surface-2); }
-.bene-row-missing td { color: var(--text-muted); }
-.bene-row-selected { background: var(--info-bg) !important; }
-.bene-code { font-family: monospace; font-size: 12px; font-weight: 700; color: var(--brand-indigo); }
-
-.bene-detail-panel { padding: 20px 24px; margin-top: 16px; }
-.bene-detail-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-.bene-detail-name { font-size: 20px; font-weight: 700; color: var(--text-primary); margin-bottom: 16px; }
-.bene-detail-close { background: none; border: none; cursor: pointer; color: var(--text-muted); padding: 4px; border-radius: 6px; display: flex; }
-.bene-detail-close:hover { background: var(--surface-2); color: var(--text-primary); }
-.bene-detail-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin-bottom: 16px; }
-@media (max-width: 600px) { .bene-detail-grid { grid-template-columns: 1fr 1fr; } }
-.bene-detail-item { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
-.bene-detail-item span { display: block; font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 3px; }
-.bene-detail-item strong { font-size: 13px; font-weight: 600; color: var(--text-primary); }
-.bene-detail-warning { background: var(--warning-bg); border: 1px solid var(--warning-border); border-radius: 8px; padding: 10px 12px; font-size: 13px; color: #92400e; display: flex; align-items: center; gap: 8px; }
+.bene-screen{max-width:1200px}
+.bene-stat{font-size:13px;color:var(--text-muted)}
+.bene-stat-sep{display:inline-block;width:4px;height:4px;background:var(--text-muted);border-radius:50%;margin:0 8px;vertical-align:middle}
+.bene-stat-missing{color:var(--danger)}
+.bene-alert{padding:16px 22px;border-left:4px solid var(--danger);display:flex;gap:14px;align-items:flex-start;margin-bottom:16px;border-radius:var(--radius)}
+.bene-alert-icon{color:var(--danger);flex-shrink:0;margin-top:2px}
+.bene-alert-body{font-size:14px;color:var(--text-primary)}
+.bene-toolbar{padding:16px 22px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:18px}
+.bene-filters{display:flex;gap:7px;flex-wrap:wrap}
+.bene-filter-btn{
+  padding:7px 16px;border-radius:20px;border:1.5px solid var(--border-strong);
+  background:transparent;font-size:13px;font-weight:600;cursor:pointer;
+  color:var(--text-secondary);transition:all 0.18s;
+}
+.bene-filter-btn:hover{border-color:var(--purple);color:var(--purple);background:var(--info-bg)}
+.bene-filter-active{background:var(--grad)!important;border-color:transparent!important;color:#fff!important;box-shadow:var(--shadow-grad)}
+.bene-search{
+  max-width:290px;padding:9px 16px;
+  border:1.5px solid var(--border-strong);border-radius:22px;
+  font-size:13px;outline:none;transition:all 0.18s;
+  background:var(--surface);color:var(--text-primary);
+}
+.bene-search:focus{border-color:var(--purple);box-shadow:0 0 0 4px rgba(156,39,176,0.10)}
+.bene-table-wrap{overflow-x:auto;margin-bottom:20px}
+.bene-loading{display:flex;align-items:center;gap:12px;color:var(--text-muted);padding:36px;justify-content:center}
+.bene-table{width:100%;border-collapse:collapse;font-size:13px}
+.bene-table th{padding:11px 14px;text-align:left;font-size:11px;font-weight:800;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;border-bottom:2px solid var(--border);white-space:nowrap}
+.bene-table td{padding:13px 14px;border-bottom:1px solid var(--border)}
+.bene-row{cursor:pointer;transition:background 0.12s}
+.bene-row:hover{background:var(--surface-2)}
+.bene-row-missing td{color:var(--text-muted)}
+.bene-row-selected{background:var(--info-bg)!important}
+.bene-code{font-family:'SF Mono','Fira Code',monospace;font-size:12px;font-weight:800;color:var(--purple)}
+.bene-detail-panel{padding:22px 28px;margin-top:18px;animation:fadeIn 0.25s ease}
+.bene-detail-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.bene-detail-name{font-size:22px;font-weight:900;color:var(--text-primary);margin-bottom:18px;background:var(--grad-text);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;display:inline-block}
+.bene-detail-close{background:none;border:none;cursor:pointer;color:var(--text-muted);padding:6px;border-radius:8px;display:flex;transition:all 0.15s}
+.bene-detail-close:hover{background:var(--danger-bg);color:var(--danger)}
+.bene-detail-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px}
+@media(max-width:600px){.bene-detail-grid{grid-template-columns:1fr 1fr}}
+.bene-detail-item{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;transition:all 0.2s}
+.bene-detail-item:hover{border-color:var(--purple);box-shadow:0 2px 10px rgba(156,39,176,0.10)}
+.bene-detail-item span{display:block;font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;font-weight:700}
+.bene-detail-item strong{font-size:13px;font-weight:700;color:var(--text-primary)}
+.bene-detail-warning{background:var(--warning-bg);border:1px solid var(--warning-border);border-radius:10px;padding:11px 14px;font-size:13px;color:#92400E;display:flex;align-items:center;gap:9px}
