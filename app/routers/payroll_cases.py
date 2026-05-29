@@ -220,8 +220,12 @@ async def upload_case(
     if not db:
         return HTMLResponse('<div class="error-msg">Database not configured.</div>')
 
+    import re as _re
     if not file or not file.filename.endswith((".xlsx", ".xls")):
         return HTMLResponse('<div class="error-msg">Please upload an Excel file (.xlsx or .xls).</div>')
+
+    if not _re.match(r"^\d{6}-(0[1-4])$", period):
+        return HTMLResponse('<div class="error-msg">Period must be YYYYMM-01/02/03/04 (e.g. 202506-01).</div>')
 
     content = await file.read()
     try:
@@ -264,8 +268,16 @@ async def upload_case(
         "consultantCount": sum(len(e.get("employees", [])) for e in parsed_entities),
     })
 
-    # Redirect to case detail
-    return HTMLResponse("", status_code=200, headers={"HX-Redirect": f"/cases/{kase['id']}"})
+    # Return case detail directly — use fragment for HTMX, full page for direct load
+    logs_resp = db.from_("payroll_audit_log").select("*").eq("case_id", kase["id"]).order("created_at").execute()
+    logs = logs_resp.data or []
+    ctx = {**_case_detail_ctx(kase, logs, 1), "request": request, "user": user,
+           "module": module, "section": module,
+           "step_state": _step_state, "get_active_step": _get_active_step, "orgs": ORGS}
+    tmpl = "payroll/detail.html" if request.headers.get("HX-Request") else "payroll/detail_page.html"
+    response = templates.TemplateResponse(request, tmpl, ctx)
+    response.headers["HX-Push-Url"] = f"/cases/{kase['id']}"
+    return response
 
 
 # ─── Case detail page ─────────────────────────────────────────────────────────
