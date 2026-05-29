@@ -11,7 +11,26 @@ async def get_accounts_json(org_id: str, request: Request):
     get_current_user(request)
     try:
         accounts = await fetch_accounts(org_id)
-        return JSONResponse({"accounts": accounts})
+        return JSONResponse({"accounts": accounts, "total": len(accounts)})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+
+@router.get("/api/accounts/{org_id}/debug")
+async def get_accounts_debug(org_id: str, request: Request):
+    """Returns accounts with their codes — use this to diagnose Zoho account code mismatches."""
+    get_current_user(request)
+    try:
+        accounts = await fetch_accounts(org_id)
+        with_code    = [a for a in accounts if a.get("code")]
+        without_code = [a for a in accounts if not a.get("code")]
+        return JSONResponse({
+            "total": len(accounts),
+            "with_code": len(with_code),
+            "without_code": len(without_code),
+            "accounts_with_codes": sorted(with_code, key=lambda a: a["code"]),
+            "accounts_without_codes_sample": without_code[:20],
+        })
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=502)
 
