@@ -447,12 +447,13 @@ def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None) -
 
 
 def _get_active_step(status: str) -> int:
+    # Steps shown: 1, 2, 3, 4, 5, 6, 9  (7/8/10 removed)
     mapping = {
         "uploaded": 2, "check_generated": 3,
         "check_approval_sent": 3, "check_reviewer_approved": 3, "check_rejected": 3,
         "check_approved": 4, "bank_file_generated": 5, "bank_uploaded": 5,
         "payment_approval_sent": 6, "payment_rejected": 6,
-        "payment_approved": 7, "zoho_posted": 9,
+        "payment_approved": 6, "zoho_posted": 9,
     }
     return mapping.get(status, 1)
 
@@ -461,15 +462,12 @@ def _step_state(step_num: int, kase: dict) -> str:
     s = kase.get("status", "")
     DONE_AFTER = {
         1: True,
-        2: {"check_generated", "check_approval_sent", "check_reviewer_approved", "check_approved", "check_rejected", "bank_file_generated", "bank_uploaded", "payment_approval_sent", "payment_approved", "payment_rejected", "zoho_posted"},
-        3: {"check_approved", "bank_file_generated", "bank_uploaded", "payment_approval_sent", "payment_approved", "payment_rejected", "zoho_posted"},
-        4: {"bank_file_generated", "bank_uploaded", "payment_approval_sent", "payment_approved", "payment_rejected", "zoho_posted"},
-        5: {"payment_approval_sent", "payment_approved", "payment_rejected", "zoho_posted"},
-        6: {"payment_approved", "zoho_posted"},
-        7: {"zoho_posted"},
-        8: {"zoho_posted"},
+        2: {"check_generated","check_approval_sent","check_reviewer_approved","check_approved","check_rejected","bank_file_generated","bank_uploaded","payment_approval_sent","payment_approved","payment_rejected","zoho_posted"},
+        3: {"check_approved","bank_file_generated","bank_uploaded","payment_approval_sent","payment_approved","payment_rejected","zoho_posted"},
+        4: {"bank_file_generated","bank_uploaded","payment_approval_sent","payment_approved","payment_rejected","zoho_posted"},
+        5: {"payment_approval_sent","payment_approved","payment_rejected","zoho_posted"},
+        6: {"payment_approved","zoho_posted"},
         9: set(),
-        10: True,
     }
     if step_num == 1:
         return "done"
@@ -683,7 +681,7 @@ async def gen_check(case_id: str, request: Request):
     if not kase:
         return HTMLResponse('<div class="error-msg">Case not found.</div>')
     if kase.get("status") != "uploaded":
-        return HTMLResponse(f'<div class="error-msg">Cannot generate check from status: {kase["status"]}</div>')
+        return await _refresh_detail(case_id, db, request, user, _get_active_step(kase.get("status","")))
 
     check_data = _build_check_data((kase.get("parsed_data") or {}).get("entities", []))
     now = _now()
@@ -720,7 +718,7 @@ async def send_check_approval(case_id: str, request: Request):
     if not kase:
         return HTMLResponse('<div class="error-msg">Case not found.</div>')
     if kase.get("status") != "check_generated":
-        return HTMLResponse(f'<div class="error-msg">Cannot send approval from status: {kase["status"]}</div>')
+        return await _refresh_detail(case_id, db, request, user, _get_active_step(kase.get("status","")))
 
     token = secrets.token_hex(32)
     db.from_("payroll_approval_tokens").insert({
@@ -746,7 +744,7 @@ async def send_check_approval(case_id: str, request: Request):
 
     await _audit_log(db, case_id, "CHECK_APPROVAL_SENT", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"sentTo": APPROVERS["reviewer"]["email"]})
 
-    return await _refresh_detail(case_id, db, request, user, 3)
+    return await _refresh_detail(case_id, db, request, user, 4)
 
 
 # ─── Step 3b: Email approve/reject token ─────────────────────────────────────
@@ -760,8 +758,8 @@ async def email_approve(token: str, action: str = "approve"):
     if not db:
         return HTMLResponse(_approval_page_html("Unavailable", "#ef4444", "Service temporarily unavailable."))
 
-    tok_resp = db.from_("payroll_approval_tokens").select("*, payroll_cases(*)").eq("token", token).single().execute()
-    tok = tok_resp.data
+    tok_resp = db.from_("payroll_approval_tokens").select("*, payroll_cases(*)").eq("token", token).execute()
+    tok = (tok_resp.data or [None])[0]
     if not tok:
         return HTMLResponse(_approval_page_html("Not Found", "#ef4444", "This approval link is invalid or expired."))
     if tok.get("status") != "pending":
@@ -991,8 +989,8 @@ async def director_approve(token: str, action: str = "approve"):
     if not db:
         return HTMLResponse(_approval_page_html("Unavailable", "#ef4444", "Service temporarily unavailable."))
 
-    tok_resp = db.from_("payroll_approval_tokens").select("*, payroll_cases(*)").eq("token", token).single().execute()
-    tok = tok_resp.data
+    tok_resp = db.from_("payroll_approval_tokens").select("*, payroll_cases(*)").eq("token", token).execute()
+    tok = (tok_resp.data or [None])[0]
     if not tok:
         return HTMLResponse(_approval_page_html("Not Found", "#ef4444", "This link is invalid or expired."))
     if tok.get("status") != "pending":

@@ -79,20 +79,21 @@
         Uploaded by {{ c.uploaded_by_name }} · {{ fmt_date(c.uploaded_at) }}
         {% if c.zoho_posted_at %}<span class="pf-zoho-tag"> · Posted {{ fmt_date(c.zoho_posted_at) }}</span>{% endif %}
       </div>
-      {# Step progress dots #}
-      {% set statuses_done = {
+      {# 7-step progress dots: 1,2,3,4,5,6,9 #}
+      {% set step_nums = [1,2,3,4,5,6,9] %}
+      {% set done_from = {
         2: ['check_generated','check_approval_sent','check_reviewer_approved','check_approved','check_rejected','bank_file_generated','bank_uploaded','payment_approval_sent','payment_approved','payment_rejected','zoho_posted'],
         3: ['check_approved','bank_file_generated','bank_uploaded','payment_approval_sent','payment_approved','payment_rejected','zoho_posted'],
         4: ['bank_file_generated','bank_uploaded','payment_approval_sent','payment_approved','payment_rejected','zoho_posted'],
         5: ['payment_approval_sent','payment_approved','payment_rejected','zoho_posted'],
         6: ['payment_approved','zoho_posted'],
-        7: ['zoho_posted'],
+        9: ['zoho_posted'],
       } %}
       <div class="pf-step-progress">
-        {% for sn in range(1, 10) %}
+        {% for sn in step_nums %}
         {% if sn == 1 %}
         <div class="pf-prog-dot pf-prog-done" title="Step 1: Upload"></div>
-        {% elif sn in statuses_done and c.status in statuses_done[sn] %}
+        {% elif sn in done_from and c.status in done_from[sn] %}
         <div class="pf-prog-dot pf-prog-done" title="Step {{ sn }}"></div>
         {% elif (sn == 3 and c.status == 'check_rejected') or (sn == 6 and c.status == 'payment_rejected') %}
         <div class="pf-prog-dot pf-prog-rejected" title="Step {{ sn }}"></div>

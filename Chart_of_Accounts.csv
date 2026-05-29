@@ -1,0 +1,486 @@
+Account ID,Account Code,Account Name,Description,Account Type,Currency,Parent Account
+2877958000000010001,HSSB-141,Other Charges,Miscellaneous charges like adjustments made to the invoice can be recorded in this account.,Income,MYR,
+2877958000000032023,,Lodging,Any expense related to putting up at motels etc while on business travel can be entered here.,Expense,MYR,
+2877958000000000358,,Undeposited Funds,Record funds received by your company yet to be deposited in a bank as undeposited funds and group them as a current asset in your balance sheet.,Cash,MYR,
+2877958000000000361,HSSB-166,Petty Cash,It is a small amount of cash that is used to pay your minor or casual expenses rather than writing a check.,Cash,MYR,
+2877958000000000364,HSSB-127,Accounts Receivable,The money that customers owe you becomes the accounts receivable. A good example of this is a payment expected from an invoice sent to your customer.,Accounts Receivable,MYR,
+2877958000000000367,,Furniture and Equipment,Purchases of furniture and equipment for your office that can be used for a long period of time usually exceeding one year can be tracked with this account.,Fixed Asset,MYR,
+2877958000000000370,,Advance Tax,"Any tax which is paid in advance is recorded into the advance tax account. This advance tax payment could be a quarterly, half yearly or yearly payment.",Other Current Asset,MYR,
+2877958000000000373,HSSB-132,Accounts Payable,"This is an account of all the money which you owe to others like a pending bill payment to a vendor,etc.",Accounts Payable,MYR,
+2877958000000000376,HSSB-136,SST Control,The amount of money which you owe to your tax authority is recorded under the tax payable account. This amount is a sum of your outstanding in taxes and the tax charged on sales.,Other Current Liability,MYR,
+2877958000000000379,HSSB-058,Retained Earnings,The earnings of your company which are not distributed among the share holders is accounted as retained earnings.,Equity,MYR,
+2877958000000000382,,Owner's Equity,The owners rights to the assets of a company can be quantified in the owner''s equity account.,Equity,MYR,
+2877958000000000385,,Opening Balance Offset,This is an account where you can record the balance from your previous years earning or the amount set aside for some activities. It is like a buffer account for your funds.,Equity,MYR,
+2877958000000000388,,Sales,The income from the sales in your business is recorded under the sales account.,Income,MYR,
+2877958000003962191,,Employer of Record (EOR),,Income,MYR,Sales
+2877958000003962195,,Professional Employer Organization (PEO),,Income,MYR,Sales
+2877958000003962201,,Service Support,,Income,MYR,Sales
+2877958000003962243,,Permanent Placement,,Income,MYR,Sales
+2877958000004284147,Hx-4040,Consulting Services,,Income,MYR,Sales
+2877958000005854003,,Unbilled Revenue,,Income,MYR,Sales
+2877958000006986298,Hx-4000,Employer of Record Services (EOR),Employer of Record Services (EOR),Income,MYR,Sales
+2877958000006986304,Hx-4010,Recruitment Process Outsourcing (RPO),Recruitment Process Outsourcing (RPO),Income,MYR,Sales
+2877958000006986310,Hx-4020,Business Support Services (BSS),Business Support Services (BSS),Income,MYR,Sales
+2877958000006986316,Hx-4021,Immigration Services,Immigration Services,Income,MYR,Business Support Services (BSS)
+2877958000006986322,Hx-4022,Delivery Centre,Delivery Centre,Income,MYR,Business Support Services (BSS)
+2877958000006986328,Hx-4030,Discounts / Rebates,Discounts / Rebates,Income,MYR,Sales
+2877958000012768078,1.1,Consulting Services - Revenue,,Income,MYR,Sales
+2877958000012768081,1.2,Business Support Services (BSS) - Revenue,,Income,MYR,Sales
+2877958000012768084,1.2.1,Delivery Centre - Revenue,,Income,MYR,Business Support Services (BSS) - Revenue
+2877958000012768087,1.2.2,Immigration Services - Revenue,,Income,MYR,Business Support Services (BSS) - Revenue
+2877958000012768090,1.3,Professional Employer Organization (PEO) - Revenue,,Income,MYR,Sales
+2877958000012768093,1.4,Management Services - Revenue,,Income,MYR,Sales
+2877958000012768096,1.5,Shared Services - Revenue,,Income,MYR,Sales
+2877958000012768099,1.6,Employer of Record Services (EOR) - Revenue,,Income,MYR,Sales
+2877958000012768102,1.6.1,Advance Paying Clients - Revenue,,Income,MYR,Employer of Record Services (EOR) - Revenue
+2877958000012768105,1.6.2,Credit Clients - Revenue,,Income,MYR,Employer of Record Services (EOR) - Revenue
+2877958000000000391,,General Income,A general category of account where you can record any income which cannot be recorded into any other category.,Income,MYR,
+2877958000000005001,HSSB-140,Unearned Revenue,"A liability account that reports amounts received in advance of providing goods or services. When the goods or services are provided, this account balance is decreased and a revenue account is increased.",Other Current Liability,MYR,
+2877958000000000394,HSSB-175,Interest income,A percentage of your balances and deposits are given as interest to you by your banks and financial institutions. This interest is recorded into the interest income account.,Income,MYR,
+2877958000000000397,,Late Fee Income,Any late fee income is recorded into the late fee income account. The late fee is levied when the payment for an invoice is not received by the due date.,Income,MYR,
+2877958000000000406,,Discount,Any reduction on your selling price as a discount can be recorded into the discount account.,Income,MYR,
+2877958000000000409,HSSB-073,Bank Fees and Charges,"Any bank fees levied is recorded into the bank fees and charges account. A bank account maintenance fee, transaction charges, a late payment fee are some examples.",Expense,MYR,
+2877958000000000412,,Credit Card Charges,"Service fees for transactions , balance transfer fees, annual credit fees and other charges levied on a credit card are recorded into the credit card account.",Expense,MYR,
+2877958000000000415,HSSB-122,Exchange Gain or Loss,Changing the conversion rate can result in a gain or a loss. You can record this into the exchange gain or loss account.,Other Expense,MYR,
+2877958000000000421,,Telephone Expense,"The expenses on your telephone, mobile and fax usage are accounted as telephone expenses.",Expense,MYR,
+2877958000000000424,,Automobile Expense,"Transportation related expenses like fuel charges and maintenance charges for automobiles, are included to the automobile expense account.",Expense,MYR,
+2877958000000000427,,IT and Internet Expenses,"Money spent on your IT infrastructure and usage like  internet connection, purchasing computer equipment etc is recorded as an IT and Computer Expense.",Expense,MYR,
+2877958000000000430,,Rent Expense,The rent paid for your office or any space related to your business can be recorded as a rental expense.,Expense,MYR,
+2877958000000000433,,Janitorial Expense,All your janitorial and cleaning expenses are recorded into the janitorial expenses account.,Expense,MYR,
+2877958000000014001,,Shipping Charge,Shipping charges made to the invoice will be recorded in this account.,Income,MYR,
+2877958000000000436,,Postage,"Your expenses on ground mails, shipping and air mails can be recorded under the postage account.",Expense,MYR,
+2877958000000000439,3.10,Bad Debt,Any amount which is lost and is unrecoverable is recorded into the bad debt account.,Expense,MYR,
+2877958000000003001,HSSB-135,Opening Balance Adjustments,This account will hold the difference in the debits and credits entered during the opening balance.,Other Current Liability,MYR,
+2877958000000035001,,Employee Advance,Money paid out to an employee in advance can be tracked here till it's repaid or shown to be spent for company purposes.,Other Current Asset,MYR,
+2877958000000035003,,Employee Reimbursements,This account can be used to track the reimbursements that are due to be paid out to employees.,Other Current Liability,MYR,
+2877958000000000445,,Salaries and Employee Wages,Salaries for your employees and the wages paid to workers are recorded under the salaries and wages account.,Expense,MYR,
+2877958000000035005,,Uncategorized,This account can be used to temporarily track expenses that are yet to be identified and classified into a particular category,Expense,MYR,
+2877958000000000448,HSSB-091,Meals and entertainment,Expenses on food and entertainment are recorded into this account.,Expense,MYR,
+2877958000000000451,,Depreciation Expense,Any depreciation in value of your assets can be captured as a depreciation expense.,Expense,MYR,
+2877958000000000454,,Consultant Expense,Charges for availing the services of a consultant is recorded as a consultant expenses. The fees paid to a soft skills consultant to impart personality development training for your employees is a good example.,Expense,MYR,
+2877958000000045001,,Tag Adjustments,This adjustment account tracks the transfers between different reporting tags.,Other Liability,MYR,
+2877958000000000457,HSSB-103,Upkeep of office equipment,The costs involved in maintenance and repair of assets is recorded under this account.,Expense,MYR,
+2877958000000000460,HSSB-144,Other Expenses,Any minor expense on activities unrelated to primary business operations is recorded under the other expense account.,Expense,MYR,
+2877958000000034001,HSSB-028,Inventory Asset,An account which tracks the value of goods in your inventory.,Stock,MYR,
+2877958000000034003,,Cost of Goods Sold,An expense account which tracks the value of the goods sold.,Cost Of Goods Sold,MYR,
+2877958000006998676,Hx-5020,Cost of Consulting Services,Consulting Services,Cost Of Goods Sold,MYR,Cost of Goods Sold
+2877958000006998684,Hx-5000,Cost of Services,Cost of Services,Cost Of Goods Sold,MYR,Cost of Goods Sold
+2877958000006998692,Hx-5001,Consultant Salaries and Benefits,Consultant Salaries and Benefits,Cost Of Goods Sold,MYR,Cost of Services
+2877958000006998700,Hx-5002,Consultant Claims and Reimbursements,Consultant Claims and Reimbursements,Cost Of Goods Sold,MYR,Cost of Services
+2877958000006998708,Hx-5003,Consultant Insurance,Consultant Insurance,Cost Of Goods Sold,MYR,Cost of Services
+2877958000006998716,Hx-5004,Consultant Equipment Rental,Consultant Equipment Rental,Cost Of Goods Sold,MYR,Cost of Services
+2877958000006998724,Hx-5005,Consultant Travel,Consultant Travel,Cost Of Goods Sold,MYR,Cost of Services
+2877958000010621912,,Consultant recruitment & onboarding,,Cost Of Goods Sold,MYR,Cost of Services
+2877958000006998732,Hx-5010,Cost of Business Support Services (BSS),Cost of Business Support Services (BSS),Cost Of Goods Sold,MYR,Cost of Goods Sold
+2877958000006998740,Hx-5011,Cost of Immigration,Immigration,Cost Of Goods Sold,MYR,Cost of Business Support Services (BSS)
+2877958000006998748,Hx-5012,Cost of Delivery Centre,Delivery Centre,Cost Of Goods Sold,MYR,Cost of Business Support Services (BSS)
+2877958000000012001,,Drawings,The money withdrawn from a business by its owner can be tracked with this account.,Equity,MYR,
+2877958000000072001,,Purchase Discounts,Tracks any reduction that your vendor offers on your purchases. Some vendors also provide them to encourage quick payment settlement.,Expense,MYR,
+2877958000000096389,HSSB-001,Cash at Bank - Alliance_MYR,,Bank,MYR,
+2877958000000096393,HSSB-002,Cash at Bank - CIMB (8603921662),,Bank,MYR,
+2877958000000096397,HSSB-003,Cash at Bank - MBB_MYR,,Bank,MYR,
+2877958000000096401,HSSB-004,Cash at Bank - MBB_MYR_USD,,Bank,USD,
+2877958000000096405,HSSB-005,Cash at Bank - SCB_MYR,,Bank,MYR,
+2877958000000096409,HSSB-006,Cash at Bank - CIMB (8002604295),,Bank,MYR,
+2877958000000096415,HSSB-007,Trade receivables - MYR,,Other Current Asset,MYR,
+2877958000000096441,HSSB-008,Trade receivables - USD,,Other Current Asset,MYR,
+2877958000000096447,HSSB-009,Work In Progress_Sales,,Other Current Asset,MYR,
+2877958000000096481,HSSB-011,Amount due from related parties,,Other Current Asset,MYR,
+2877958000000096487,HSSB-012,Amount due from related companies:Amount due from related companies_CNG,,Other Current Asset,MYR,Amount due from related parties
+2877958000000096519,HSSB-013,Amount due from related companies:Amount due from related companies_HACL,,Other Current Asset,MYR,Amount due from related parties
+2877958000000096639,HSSB-016,Amount due from related companies:Amount due from related companies_HEDU,,Other Current Asset,MYR,Amount due from related parties
+2877958000000096687,HSSB-017,Amount due from related companies:Amount due from related companies_HESB,,Other Current Asset,MYR,Amount due from related parties
+2877958000000096693,HSSB-018,Amount due from related companies:Amount due from related companies_Hexarta,,Other Current Asset,MYR,Amount due from related parties
+2877958000000096745,HSSB-019,Amount due from related companies:Amount due from related companies_HNS,,Other Current Asset,MYR,Amount due from related parties
+2877958000000096861,HSSB-021,Amount due from related companies:Amount due from related companies_MYDESK,,Other Current Asset,MYR,Amount due from related parties
+2877958000000096925,HSSB-022,Amount due from related companies:Amount due from related companies_Pakaservcomm,,Other Current Asset,MYR,Amount due from related parties
+2877958000000096999,HSSB-024,Amount due from related companies:Amount due from related companies_WorkSpacing,,Other Current Asset,MYR,Amount due from related parties
+2877958000003120086,HSSB-163,Amount due from related companies:Amount due from related companies_Datacrats,,Other Current Asset,MYR,Amount due from related parties
+2877958000003365028,HSSB-164,Amount due from related companies:Amount due from related companies_Galaxie Towers,,Other Current Asset,MYR,Amount due from related parties
+2877958000004235125,,Amount due from related companies:Amount due from related companies_Artamulia,,Other Current Asset,MYR,Amount due from related parties
+2877958000006307330,,Amount due from related companies:Amount due from related companies_HCSSB,,Other Current Asset,MYR,Amount due from related parties
+2877958000007693226,,Amount due from related parties- HCI,,Other Current Asset,MYR,Amount due from related parties
+2877958000000097005,HSSB-025,Current Tax Asset,,Other Current Asset,MYR,
+2877958000000097173,HSSB-031,PPE - Computer,,Fixed Asset,MYR,
+2877958000000097253,HSSB-032,PPE - Accumulated Depreciation_Computer,,Fixed Asset,MYR,PPE - Computer
+2877958000000097337,HSSB-033,PPE - Furniture & Fittings/Tools,,Fixed Asset,MYR,
+2877958000000097425,HSSB-034,PPE - Accumulated Depreciation_Furniture & Fittings/Tools,,Fixed Asset,MYR,PPE - Furniture & Fittings/Tools
+2877958000000097517,HSSB-035,PPE - Leasehold Building,,Fixed Asset,MYR,
+2877958000000097613,HSSB-036,PPE - Accumulated Depreciation_Leasehold Building,,Fixed Asset,MYR,PPE - Leasehold Building
+2877958000000097713,HSSB-037,PPE - Motor Vehicles,,Fixed Asset,MYR,
+2877958000000097817,HSSB-038,PPE - Accumulated Depreciation_Motor Vehicles,,Fixed Asset,MYR,PPE - Motor Vehicles
+2877958000000097925,HSSB-039,Deferred tax assets,,Other Current Asset,MYR,
+2877958000000098037,HSSB-040,Long-Term Investments,,Other Current Asset,MYR,
+2877958000000098153,HSSB-041,Trade and other payables,,Other Current Liability,MYR,
+2877958000000098273,HSSB-042,Trade and other payables - USD,,Other Current Liability,MYR,
+2877958000000098663,HSSB-046,Current Tax Liabilities,,Other Current Liability,MYR,
+2877958000000098669,HSSB-047,Dividends payable,,Other Current Liability,MYR,
+2877958000000098945,HSSB-049,GST Control,,Other Current Liability,MYR,
+2877958000000098951,HSSB-050,SST Payable,,Other Current Liability,MYR,
+2877958000000098963,HSSB-052,Other payables and accruals,,Other Current Liability,MYR,
+2877958000000099255,HSSB-054,NCL- Hire Purchase Payables,,Other Liability,MYR,
+2877958000000099407,HSSB-055,Long-term debt,"Alliance Bank : 141670052021079
+Branch : Bangsar
+
+CIMB Bank : 1607890431
+Branch : Jaya One",Other Liability,MYR,
+2877958000000099569,HSSB-057,Dividend disbursed (Account closed),,Non Current Liability,MYR,
+2877958000000099729,HSSB-059,Share capital,,Equity,MYR,
+2877958000000099893,HSSB-061,Commission,,Cost Of Goods Sold,MYR,
+2877958000000099905,HSSB-063,Cost of sales,,Cost Of Goods Sold,MYR,
+2877958000005557459,,Client Support Services,,Cost Of Goods Sold,MYR,Cost of sales
+2877958000000099911,HSSB-064,Immigration expenses,,Cost Of Goods Sold,MYR,
+2877958000000099917,HSSB-065,Project Management Services,,Cost Of Goods Sold,MYR,
+2877958000000099923,HSSB-066,Purchase Requisition - Consultants,,Cost Of Goods Sold,MYR,
+2877958000000099929,HSSB-067,Purchases - Site Survey,,Cost Of Goods Sold,MYR,
+2877958000000099947,HSSB-070,Advertisement,,Expense,MYR,
+2877958000000099953,HSSB-071,Audit Fee,,Expense,MYR,
+2877958000000099959,HSSB-072,Bad debts,,Expense,MYR,
+2877958000000099965,HSSB-073,Bank charges,,Expense,MYR,
+2877958000000099977,HSSB-075,Upkeep of motor vehicles,,Expense,MYR,
+2877958000000099983,HSSB-076,Upkeep of office,,Expense,MYR,
+2877958000000099989,HSSB-077,Commissions and fees,,Expense,MYR,
+2877958000000099995,HSSB-078,Credit Card Fees,,Expense,MYR,
+2877958000000100007,HSSB-080,Director Fees,,Expense,MYR,
+2877958000000100013,HSSB-081,Donation,,Expense,MYR,
+2877958000000100019,HSSB-082,Dues and subscriptions,,Expense,MYR,
+2877958000000100025,Hx-6021,Electricity and water,,Expense,MYR,
+2877958000000100031,HSSB-084,Staff welfare,,Expense,MYR,
+2877958000000100037,HSSB-085,GST Expense,,Expense,MYR,
+2877958000000100043,HSSB-086,(Finance Cost) - Hire Purchase Interest,,Expense,MYR,
+2877958000000100049,HSSB-087,Insurance - General,,Expense,MYR,
+2877958000000100055,HSSB-088,Insurance and Road Tax,,Expense,MYR,
+2877958000000100061,HSSB-089,Internet Expenses,,Expense,MYR,
+2877958000000100075,HSSB-092,Office expenses,,Expense,MYR,
+2877958000000100081,HSSB-093,Security expense,,Expense,MYR,
+2877958000000100093,HSSB-095,Other general and administrative expenses,,Expense,MYR,
+2877958000000100099,HSSB-096,Service cost,,Expense,MYR,
+2877958000000100105,HSSB-097,Other Types of Expenses-Advertising Expenses,,Expense,MYR,
+2877958000000100111,HSSB-098,Outsourced HR expenses,,Expense,MYR,
+2877958000000100117,HSSB-099,Payroll expenses,,Expense,MYR,
+2877958000000100123,HSSB-100,Penalty,,Expense,MYR,
+2877958000000100129,HSSB-101,Recruitment Expenses,,Expense,MYR,
+2877958000000100143,HSSB-104,Sewerage charges,,Expense,MYR,
+2877958000000100149,HSSB-105,Postage & Courier,,Expense,MYR,
+2877958000000100155,HSSB-106,Upkeep of software,,Expense,MYR,
+2877958000000100161,HSSB-107,Printing and stationery,,Expense,MYR,
+2877958000000100167,HSSB-108,Statutory contribution - EIS,,Expense,MYR,
+2877958000000100173,HSSB-109,Statutory contribution - EPF,,Expense,MYR,
+2877958000000100179,HSSB-110,Statutory contribution - PCB,,Expense,MYR,
+2877958000000100185,HSSB-111,Statutory contribution - SOCSO,,Expense,MYR,
+2877958000000100191,HSSB-112,Taxation,,Expense,MYR,
+2877958000000100197,HSSB-113,Telephone charges,,Expense,MYR,
+2877958000000100203,HSSB-114,(Finance Cost) - Term Loan Interest,,Expense,MYR,
+2877958000000100209,HSSB-115,Travelling expenses,,Expense,MYR,
+2877958000000100215,HSSB-116,Utilities,,Expense,MYR,
+2877958000000100221,HSSB-117,Witholding Tax Expenses,,Expense,MYR,
+2877958000000100227,,Contra Account,,Expense,MYR,
+2877958000000100233,HSSB-119,Incentive Received,,Other Income,MYR,
+2877958000000100241,HSSB-121,Other operating income (expenses),,Expense,MYR,
+2877958000000100249,3.9,Other Expense,,Expense,MYR,
+2877958000008771013,3.9.2,IPO Expenses,,Expense,MYR,Other Expense
+2877958000009105169,3.9.3,Bank Charges & Transaction Fees,,Expense,MYR,Other Expense
+2877958000012774218,3.9.1,Other Operating Expenses,,Expense,MYR,Other Expense
+2877958000012774226,3.9.4,Asset Written Off,,Expense,MYR,Other Expense
+2877958000012774230,3.9.5,Miscellaneous Admin Expenses,,Expense,MYR,Other Expense
+2877958000000305745,,'-Split-,eing adjustment made for bank charges,Expense,MYR,
+2877958000000327037,,Bank Transfer Account,"for Data Migration purpose. MBB USD AC cannot  make payment to MYR base Customers.
+Transfer the MBB USD payment to this  Bank Transfer Account and then make bill  payment to MYR base customers",Other Asset,MYR,
+2877958000000327061,,Bank Transfer,Description : for Data Migration purpose. MBB USD AC cannot make payment to MYR base Customers. Transfer the MBB USD payment to this Bank Transfer Account and then make bill payment to MYR base customers,Bank,MYR,
+2877958000000760001,,Inventory Assets,,Fixed Asset,MYR,
+2877958000000789117,4.3,Other Income,,Other Income,MYR,
+2877958000001200005,,Contra Account CIMB MYR,,Other Asset,MYR,
+2877958000001204229,,Withholding Tax,,Cash,MYR,
+2877958000001232020,,Parking,The parking fares you pay while on business trips can be recorded under this expense category.,Expense,MYR,
+2877958000001232140,,Fuel/Mileage Expenses,This category is for tracking all the mileage related expenses.,Expense,MYR,
+2877958000001286037,CIMB_CC,CIMB Credit Card,,Credit Card,MYR,
+2877958000001311599,HSSB-128,Cash at Bank - SCB_USD,,Bank,USD,
+2877958000001565001,,Software and Licenses,,Expense,MYR,
+2877958000001726001,HSSB-173,Staff Claims,,Expense,MYR,
+2877958000001918213,HSSB-148,Training Expense,,Expense,MYR,
+2877958000001918259,,Secretary Fees,,Expense,MYR,
+2877958000002084023,HSSB-112,Statutory Contribution - HRDF,,Expense,MYR,
+2877958000002122624,HSSB-118,Compensation,,Expense,MYR,
+2877958000002122740,HSSB-120,Legal fee,,Expense,MYR,
+2877958000002122924,HSSB-121,Secretarial and filing fee,,Expense,MYR,
+2877958000002153085,HSSB-055,Tax Penalty,,Other Current Liability,MYR,
+2877958000002153115,HSSB-118,Tax Expense,,Expense,MYR,
+2877958000002155443,HSSB-152,Staff Medical Expense,,Expense,MYR,
+2877958000002329005,HSSB-130,PPE - Office Equipment,,Fixed Asset,MYR,
+2877958000002329011,HSSB-131,PPE - Accumulated Depreciation_Office Equipment,,Fixed Asset,MYR,PPE - Office Equipment
+2877958000002333001,,Prepayment for hire purchase,,Other Current Asset,MYR,
+2877958000002333013,,Interest suspense - CIMB loan,,Other Current Liability,MYR,
+2877958000002359001,HSSB-145,Protege Training,,Expense,MYR,
+2877958000002359077,HSSB-146,Protege Allowance,,Expense,MYR,
+2877958000002531589,HSSB-094,Gift and Donation,,Expense,MYR,
+2877958000002670001,,Work Permit Expenses,,Expense,MYR,
+2877958000002788083,Hx-6010,Rental Expenses,,Expense,MYR,
+2877958000000100135,HSSB-102,Rental of storage,,Expense,MYR,Rental Expenses
+2877958000003221603,HSSB-125,Rental of computers,,Expense,MYR,Rental Expenses
+2877958000005556452,,Rental of Printers,,Expense,MYR,Rental Expenses
+2877958000006733191,,Rental of Office Space,,Expense,MYR,Rental Expenses
+2877958000009105125,Hx-6012,Rental of Laptop,,Expense,MYR,Rental Expenses
+2877958000002788089,HSSB-172,Interest Late Payment Expenses,,Expense,MYR,
+2877958000002792635,HSSB-165,Enrich Money - Traveller Prepaid Card,,Cash,MYR,
+2877958000002910906,,Business Licenses & Permits,,Expense,MYR,
+2877958000003120092,HSSB-147,Stamp Duty,,Expense,MYR,
+2877958000003220005,HSSB-143,Travelling expenses - COGS,,Cost Of Goods Sold,MYR,
+2877958000003220149,HSSB-149,Income Tax expense,,Other Expense,MYR,
+2877958000007699003,,Deferred Tax Expense,,Other Expense,MYR,Income Tax expense
+2877958000003220327,HSSB-142,Other operating income,,Other Income,MYR,
+2877958000003221609,HSSB-126,Rental of plants,,Expense,MYR,
+2877958000003226001,,Amount Due To Related Parties,,Other Current Liability,MYR,
+2877958000000098279,HSSB-043,Amount Due to Related Companies:Amount Due to Related Companies_Datacrats,,Other Current Liability,MYR,Amount Due To Related Parties
+2877958000000098403,HSSB-044,Amount Due to Related Companies:Amount Due to Related Companies_HESB,,Other Current Liability,MYR,Amount Due To Related Parties
+2877958000006028366,,Amount due to related companies:Amount due to related companies_HEDU,,Other Current Liability,MYR,Amount Due To Related Parties
+2877958000007693234,,Amount Due to Related Parties- HMCL,,Other Current Liability,MYR,Amount Due To Related Parties
+2877958000007693242,,Amount Due to Related Companies- HSPL,,Other Current Liability,MYR,Amount Due To Related Parties
+2877958000007693250,,Amount Due to Related Companies- PTHIT,,Other Current Liability,MYR,Amount Due To Related Parties
+2877958000003340291,, Office expenses,Hexa_Raya_Additional,Expense,MYR,
+2877958000003526001,HSSB-167,Software and Technology,,Fixed Asset,MYR,
+2877958000003636941,HSSB-170,Statutory Liabilities,,Other Current Liability,MYR,
+2877958000003813001,,Other Receivables,,Other Current Asset,MYR,
+2877958000000074012,HSSB-129,Prepaid Expenses,An asset account that reports amounts paid in advance while purchasing goods or services from a vendor.,Other Current Asset,MYR,Other Receivables
+2877958000000096475,HSSB-010,Amount due from director,,Other Current Asset,MYR,Other Receivables
+2877958000000097011,HSSB-026,Deposits,,Other Current Asset,MYR,Other Receivables
+2877958000000097083,HSSB-027,Employee Cash Advances,,Other Current Asset,MYR,Other Receivables
+2877958000000097091,HSSB-029,Other receivables and deposits,,Other Current Asset,MYR,Other Receivables
+2877958000000097167,HSSB-030,Withholding tax receivable,,Other Current Asset,MYR,Other Receivables
+2877958000003821985,,Term Loans,,Non Current Liability,MYR,
+2877958000002292285,HSSB-139,NCL- Term Loan - Maybank (464128615674),"Maybank Loan
+Disbursed 30/9/22
+Account No: 464128615674
+Branch : Bangsar Baru",Non Current Liability,MYR,Term Loans
+2877958000003821045,HSSB-138,NCL- Term Loan - CIMB (1607890431),"Financing Amount : RM500,000
+Account Number : 1607890431
+Branch : Jaya One, PJ",Non Current Liability,MYR,Term Loans
+2877958000003821057,HSSB-137,NCL- Term Loan - Alliance Bank (141670052021079),"Account No: 141670052021079
+Branch : Bangsar",Non Current Liability,MYR,Term Loans
+2877958000003853501,HSSB-161,Advance to Vendor,,Other Current Asset,MYR,
+2877958000003875071,,Amount due from subsidiaries,,Other Current Asset,MYR,
+2877958000000096555,HSSB-014,Amount due from subsidiaries:Amount due from subsidiaries_HBL,,Other Current Asset,MYR,Amount due from subsidiaries
+2877958000000096595,HSSB-015,Amount due from subsidiaries:Amount due from subsidiaries_HCI,,Other Current Asset,MYR,Amount due from subsidiaries
+2877958000000096801,HSSB-020,Amount due from subsidiaries:Amount due from subsidiaries_HSPL,,Other Current Asset,MYR,Amount due from subsidiaries
+2877958000000096931,HSSB-023,Amount due from subsidiaries:Amount due from subsidiaries_PTHIT,,Other Current Asset,MYR,Amount due from subsidiaries
+2877958000002748351,HSSB-511,Amount due from subsidiaries:Amount due from subsidiaries_HexaNepal,,Other Current Asset,MYR,Amount due from subsidiaries
+2877958000003875119,,Amount due from subsidiaries:Amount due from subsidiaries_HMCL,,Other Current Asset,MYR,Amount due from subsidiaries
+2877958000007776635,,Amount Due from Subsidiary Hexa Hr Sdn Bhd,,Other Current Asset,MYR,Amount due from subsidiaries
+2877958000012485079,,Amount due from subsidiaries: Amount due from subsidiaries_HCSSB,,Other Current Asset,MYR,Amount due from subsidiaries
+2877958000003875091,,Amount due to subsidiaries,,Other Current Liability,MYR,
+2877958000000098531,HSSB-045,Amount due to subsidiaries:Amount due to subsidiaries_HMCL,,Other Current Liability,MYR,Amount due to subsidiaries
+2877958000003815049,HSSB-133,Amount due to subsidiaries:Amount due to subsidiaries_HSPL,,Other Current Liability,MYR,Amount due to subsidiaries
+2877958000003815055,HSSB-134,Amount due to subsidiaries:Amount due to subsidiaries_PTHIT,,Other Current Liability,MYR,Amount due to subsidiaries
+2877958000003874001,HSSB-169,Amount due to subsidiaries:Amount due to subsidiaries_HCI,,Other Current Liability,MYR,Amount due to subsidiaries
+2877958000003875107,HSSB-168,Amount due to subsidiaries:Amount due to subsidiaries_HBL,,Other Current Liability,MYR,Amount due to subsidiaries
+2877958000003875113,,Amount due to subsidiaries:Amount due to subsidiaries_HexaNepal,,Other Current Liability,MYR,Amount due to subsidiaries
+2877958000012646159,,Amount due to subsidiaries:Amount due to subsidiaries_HLL,,Other Current Liability,MYR,Amount due to subsidiaries
+2877958000004001001,HSSB-171,Centralised Finance Cost,,Expense,MYR,
+2877958000004236839,,Amount due from related companies:Amount due from related companies_HexaNepal,HexaNepal_0124,Expense,MYR,
+2877958000005041061,HSSB-041,Consultant Salary Payable,,Other Current Liability,MYR,
+2877958000005041067,HSSB-043,Internal Salary Payable,,Other Current Liability,MYR,
+2877958000005226107,,Gain on Disposal of Motor Vehicles,For recording gain on disposal of Motor Vehicles,Other Income,MYR,
+2877958000005226111,,Waiver of Debt,"For recording waiver of debt, the payable amount that is waived is recorded in this head",Other Income,MYR,
+2877958000005226377,HSSB-123,Write off Deposit,,Other Expense,MYR,
+2877958000005226523,,Deferred Tax Liability,,Non Current Liability,MYR,
+2877958000005229079,,Investment in Subsidiary,,Other Asset,MYR,
+2877958000012581152,,Allowance for Impairment on Investment in Subsidiary,,Other Asset,MYR,Investment in Subsidiary
+2877958000005229137,HSSB-004,Cash at Bank - MBB_MYR_USD_FOREX,,Bank,MYR,
+2877958000005229141,,Cash at Bank - SCB_USD-FOREX,,Bank,MYR,
+2877958000005233059,,Amount Due to Director,,Other Liability,MYR,
+2877958000005233111,CIMB_CC-1,CIMB Credit Card_CC-1,,Cash,MYR,
+2877958000005310121,,Travel Advance,,Other Current Asset,MYR,
+2877958000005310143,,EP Advance,,Other Current Asset,MYR,
+2877958000005354959,HSSB-054,CL- Hire Purchase Payables,,Other Current Liability,MYR,
+2877958000005360271,,Over Payment,,Expense,MYR,
+2877958000005538007,,Accrued Consultant Salary,,Other Current Liability,MYR,
+2877958000005557517,,Interest on Overdraft-MBB,,Other Expense,MYR,
+2877958000005700564,,Advance Loan,For CIMB Bank,Other Current Asset,MYR,
+2877958000005830007,,Audit fee payable,,Other Current Liability,MYR,
+2877958000005863120,,Employee Benefits Expense,,Expense,MYR,
+2877958000005876011,,Loan Payable,,Other Current Liability,MYR,
+2877958000005899512,,Interest Income- Non Operating,,Other Income,MYR,
+2877958000005899518,,Other Charges- Non Operating,,Other Expense,MYR,
+2877958000006186751,,Amount due from HNPL,Salary_Feb'25_Praphulla Subedi_HNPL,Expense,MYR,
+2877958000006258281,,Other Charge,,Other Income,MYR,
+2877958000006399028,,Hire Purchase,,Non Current Liability,MYR,
+2877958000006399036,,NCL- Hire Purchase Payables - 06983011567,PROSCHE MACAN_T1,Non Current Liability,MYR,Hire Purchase
+2877958000006776003,,Deferred Expense,,Other Current Asset,MYR,
+2877958000006774053,,(Finance Cost) - Hire Purchase Interest - 06983011567,,Expense,MYR,
+2877958000007235003,,Deferred Revenue,,Other Current Liability,MYR,
+2877958000007303001,,Output Tax,The amount of money charged as Tax on your sales.,Output Tax,MYR,
+2877958000007303005,,Input Tax,The amount of money charged to you as Tax on your purchases.,Input Tax,MYR,
+2877958000007699160,,Investment in Associate,,Other Asset,MYR,
+2877958000007699407,,Term Loan,,Other Current Liability,MYR,
+2877958000005233143,,CL: MBB Overdraft,,Other Current Liability,MYR,Term Loan
+2877958000005354939,HSSB-137,CL- Term Loan - Alliance Bank (141670052021079),,Other Current Liability,MYR,Term Loan
+2877958000005354947,HSSB-138,CL- Term Loan - CIMB (1607890431),,Other Current Liability,MYR,Term Loan
+2877958000005354953,HSSB-139,CL- Term Loan - Maybank (464128615674),,Other Current Liability,MYR,Term Loan
+2877958000007699539,,Amount Due to Directors,,Other Current Liability,MYR,
+2877958000007699785,,Loss of Impairment of Financial Assets,,Other Expense,MYR,
+2877958000007761059,,Realized Foreign Exchange Gain,,Other Income,MYR,
+2877958000007775415,,Service Tax,,Expense,MYR,
+2877958000007953249,,Fines and penalties,,Fixed Asset,MYR,
+2877958000007953277,,Penalty expenses,,Fixed Asset,MYR,
+2877958000008757670,Hx-6030,IT and Software Expenses,,Expense,MYR,
+2877958000009105089,Hx-6000,Staff Salaries & Wages,,Expense,MYR,
+2877958000009105097,Hx-6001,Staff Welfare & Claims,,Expense,MYR,
+2877958000009105105,Hx-6002,Staff Bonuses & Incentives,,Expense,MYR,
+2877958000009105133,Hx-6013,Storage Rental,,Expense,MYR,
+2877958000009105141,Hx-6020,Office Utilities,,Expense,MYR,
+2877958000009105153,Hx-6022,Internet and Cleaning,,Expense,MYR,
+2877958000009105161,Hx-6040,"Legal, Audit, and Professional Fees",,Expense,MYR,
+2877958000009105177,3.7,Depreciation & Amortization,,Expense,MYR,
+2877958000000100001,3.7.1,Depreciation,,Expense,MYR,Depreciation & Amortization
+2877958000012774196,3.7.2,Amortization,,Expense,MYR,Depreciation & Amortization
+2877958000009105185,Hx-6070,Insurance – Companywide,,Expense,MYR,
+2877958000009105193,Hx-6080,Recruitment & Training,,Expense,MYR,
+2877958000009105201,Hx-6090,Communication & Subscriptions,,Expense,MYR,
+2877958000009105209,Hx-6100,Travel & Entertainment,,Expense,MYR,
+2877958000009105217,Hx-6110,Office Supplies & Stationery,,Expense,MYR,
+2877958000009105225,Hx-6120,Miscellaneous / Other Admin Expenses,,Expense,MYR,
+2877958000009327045,,Consultant cash advance,,Other Current Asset,MYR,
+2877958000009442528,,Centralised HR Cost,,Expense,MYR,
+2877958000009431293,,Penalties,,Other Expense,MYR,
+2877958000009447182,,Equity Advance,,Equity,MYR,
+2877958000010403007,,Other non operating expense,,Other Expense,MYR,
+2877958000010558462,,Design Consultation Fee,,Expense,MYR,
+2877958000011914513,,Cash at Bank- CIMB (8011577179),,Bank,MYR,
+2877958000012485055,,Current Asset Held for Sale,,Other Current Asset,MYR,
+2877958000012567091,,Allowance of ECL-AR,,Other Expense,MYR,
+2877958000012581079,,Cash at Bank - MBB_MYR_USD - Forex,,Bank,MYR,
+2877958000012581110,,Impairment on Advance to Vendor,,Other Expense,MYR,
+2877958000012581120,,Impairment loss of Investment in Subsidiary,,Other Expense,MYR,
+2877958000012581124,,Impairment loss of Investment in Subsidiary-HMCL,,Other Expense,MYR,Impairment loss of Investment in Subsidiary
+2877958000012581130,,Impairment loss of Investment in Subsidiary-HBL,,Other Expense,MYR,Impairment loss of Investment in Subsidiary
+2877958000012581134,,Impairment loss of Investment in Subsidiary-HTPL,,Other Expense,MYR,Impairment loss of Investment in Subsidiary
+2877958000012581138,,Impairment loss of Investment in Subsidiary-HACL,,Other Expense,MYR,Impairment loss of Investment in Subsidiary
+2877958000012581142,,Impairment loss of Investment in Subsidiary-HNPL,,Other Expense,MYR,Impairment loss of Investment in Subsidiary
+2877958000012581146,,Impairment loss of Investment in Subsidiary-HexaHR,,Other Expense,MYR,Impairment loss of Investment in Subsidiary
+2877958000012602002,,Allowance of ECL-Due from Subsidiaries,,Other Expense,MYR,
+2877958000012602006,,Amount due from Subsidiaries-ECL,,Other Asset,MYR,
+2877958000012602010,,Amount due from Subsidiaries-ECL-HNPL,,Other Asset,MYR,Amount due from Subsidiaries-ECL
+2877958000012602014,,Amount Due from Subsidiaries- ECL-HexaHR,,Other Asset,MYR,
+2877958000012602152,,Amount due to subsidiaries:Amount due to subsidiaries_HSPL - EX. Gain/Loss,,Other Current Liability,MYR,
+2877958000012618024,,Other income-rental Income,,Other Income,MYR,
+2877958000012773784,2.1,Consulting Services - Expense,,Cost Of Goods Sold,MYR,
+2877958000000099899,2.1.1,Consultancy Fees,,Cost Of Goods Sold,MYR,Consulting Services - Expense
+2877958000012773790,2.1.2,Travel expenses,,Cost Of Goods Sold,MYR,Consulting Services - Expense
+2877958000012774302,2.1.3,Other Consulting expenses,,Cost Of Goods Sold,MYR,Consulting Services - Expense
+2877958000012773794,2.2,Business Support Services (BSS) - Expense,,Cost Of Goods Sold,MYR,
+2877958000012773798,2.2.1,Delivery Centre - Expense,,Cost Of Goods Sold,MYR,Business Support Services (BSS) - Expense
+2877958000012773802,2.2.2,Immigration Services - Expense,,Cost Of Goods Sold,MYR,Business Support Services (BSS) - Expense
+2877958000012773806,2.3,Professional Employer Organization (PEO) - Expense,,Cost Of Goods Sold,MYR,
+2877958000012773810,2.4,Management Services Cost - Expense,,Cost Of Goods Sold,MYR,
+2877958000012773814,2.5,Shared Services Cost - Expense,,Cost Of Goods Sold,MYR,
+2877958000012773818,2.6,Employer of Record Services (EOR) - Expense,,Cost Of Goods Sold,MYR,
+2877958000012773822,2.6.1,Advance Paying Clients - Expense,,Cost Of Goods Sold,MYR,Employer of Record Services (EOR) - Expense
+2877958000012773826,2.6.1.1,APC - Consultant Salaries and Benefits,,Cost Of Goods Sold,MYR,Advance Paying Clients - Expense
+2877958000012773830,2.6.1.2,APC - Consultant Claims and Reimbursements,,Cost Of Goods Sold,MYR,Advance Paying Clients - Expense
+2877958000012773834,2.6.1.3,"APC - Bonus, Commission, Incentive, Galloping, THR, EOC",,Cost Of Goods Sold,MYR,Advance Paying Clients - Expense
+2877958000012773838,2.6.1.4,APC - Employee Deduction borne by Employer,,Cost Of Goods Sold,MYR,Advance Paying Clients - Expense
+2877958000012773842,2.6.1.5,APC - Employment and Dependant Pass Deduction,,Cost Of Goods Sold,MYR,Advance Paying Clients - Expense
+2877958000012773846,2.6.1.6,APC - Cash Advance Deduction,,Cost Of Goods Sold,MYR,Advance Paying Clients - Expense
+2877958000012773850,2.6.1.7,APC - Other Deductions,,Cost Of Goods Sold,MYR,Advance Paying Clients - Expense
+2877958000012773854,2.6.1.8,APC - Leave Encashment,,Cost Of Goods Sold,MYR,Advance Paying Clients - Expense
+2877958000012773858,2.6.1.9,APC - Gratuity,,Cost Of Goods Sold,MYR,Advance Paying Clients - Expense
+2877958000012773862,2.6.1.10,APC - Statutory Deductions and Contributions,,Cost Of Goods Sold,MYR,Advance Paying Clients - Expense
+2877958000012773866,2.6.1.10.1,"APC - EPF, SSF, CPF, Pag-IBIG/HDMF",,Cost Of Goods Sold,MYR,APC - Statutory Deductions and Contributions
+2877958000012773870,2.6.1.10.2,"APC - BPJS Kesehatan, PhilHealth",,Cost Of Goods Sold,MYR,APC - Statutory Deductions and Contributions
+2877958000012773874,2.6.1.10.3,"APC - BPJS TK, SSC, SSS, SOCSO, EIS",,Cost Of Goods Sold,MYR,APC - Statutory Deductions and Contributions
+2877958000012773878,2.6.1.10.4,"APC - HRDF, SDL",,Cost Of Goods Sold,MYR,APC - Statutory Deductions and Contributions
+2877958000012773882,2.6.1.10.5,"APC - CDAC, SINDA, MBMF, FWL",,Cost Of Goods Sold,MYR,APC - Statutory Deductions and Contributions
+2877958000012773886,2.6.1.10.6,APC - SST,,Cost Of Goods Sold,MYR,APC - Statutory Deductions and Contributions
+2877958000012773890,2.6.1.10.7,"APC - TDS, PCB/MTD, PIT",,Cost Of Goods Sold,MYR,APC - Statutory Deductions and Contributions
+2877958000012773894,2.6.1.11,Insurance Expense - Consultant - APC,,Cost Of Goods Sold,MYR,Advance Paying Clients - Expense
+2877958000012773898,2.6.2,Credit Clients - Expense,,Cost Of Goods Sold,MYR,Employer of Record Services (EOR) - Expense
+2877958000012773902,2.6.2.1,CC - Consultant Salaries and Benefits,,Cost Of Goods Sold,MYR,Credit Clients - Expense
+2877958000012773906,2.6.2.2,CC - Consultant Claims and Reimbursements,,Cost Of Goods Sold,MYR,Credit Clients - Expense
+2877958000012773910,2.6.2.3,"CC - Bonus, Commission, Incentive, Galloping, THR, EOC",,Cost Of Goods Sold,MYR,Credit Clients - Expense
+2877958000012773914,2.6.2.4,CC - Employee Deduction borne by Employer,,Cost Of Goods Sold,MYR,Credit Clients - Expense
+2877958000012773918,2.6.2.5,CC - Employment and Dependant Pass Deduction,,Cost Of Goods Sold,MYR,Credit Clients - Expense
+2877958000012773922,2.6.2.6,CC - Cash Advance Deduction,,Cost Of Goods Sold,MYR,Credit Clients - Expense
+2877958000012773926,2.6.2.7,CC - Other Deductions,,Cost Of Goods Sold,MYR,Credit Clients - Expense
+2877958000012773930,2.6.2.8,CC - Leave Encashment,,Cost Of Goods Sold,MYR,Credit Clients - Expense
+2877958000012773934,2.6.2.9,CC - Gratuity,,Cost Of Goods Sold,MYR,Credit Clients - Expense
+2877958000012773938,2.6.2.10,CC - Statutory Deductions and Contributions,,Cost Of Goods Sold,MYR,Credit Clients - Expense
+2877958000012773942,2.6.2.10.1,"CC - EPF, SSF, CPF, Pag-IBIG/HDMF",,Cost Of Goods Sold,MYR,CC - Statutory Deductions and Contributions
+2877958000012773946,2.6.2.10.2,"CC - BPJS Kesehatan, PhilHealth",,Cost Of Goods Sold,MYR,CC - Statutory Deductions and Contributions
+2877958000012773950,2.6.2.10.3,"CC - BPJS TK, SSC, SSS, SOCSO, EIS",,Cost Of Goods Sold,MYR,CC - Statutory Deductions and Contributions
+2877958000012773954,2.6.2.10.4,"CC - HRDF, SDL",,Cost Of Goods Sold,MYR,CC - Statutory Deductions and Contributions
+2877958000012773958,2.6.2.10.5,"CC - CDAC, SINDA, MBMF, FWL",,Cost Of Goods Sold,MYR,CC - Statutory Deductions and Contributions
+2877958000012773962,2.6.2.10.6,CC - SST,,Cost Of Goods Sold,MYR,CC - Statutory Deductions and Contributions
+2877958000012773966,2.6.2.10.7,"CC - TDS, PCB/MTD, PIT",,Cost Of Goods Sold,MYR,CC - Statutory Deductions and Contributions
+2877958000012773970,2.6.2.11,Insurance Expense - Consultant - CC,,Cost Of Goods Sold,MYR,Credit Clients - Expense
+2877958000012773974,3.1,Personnel Expenses,,Expense,MYR,
+2877958000012773978,3.1.1,Internal - Salaries and Benefits,,Expense,MYR,Personnel Expenses
+2877958000012773982,3.1.2,Internal - Claims and Reimbursements,,Expense,MYR,Personnel Expenses
+2877958000012773986,3.1.3,"Internal - Bonus, Commission, Incentive, Galloping, THR, EOC",,Expense,MYR,Personnel Expenses
+2877958000012773990,3.1.4,Internal - Employee Deduction borne by Employer,,Expense,MYR,Personnel Expenses
+2877958000012773994,3.1.5,Internal - Employment and Dependant Pass Deduction,,Expense,MYR,Personnel Expenses
+2877958000012773998,3.1.6,Internal - Cash Advance Deduction,,Expense,MYR,Personnel Expenses
+2877958000012774002,3.1.7,Internal - Other Deductions,,Expense,MYR,Personnel Expenses
+2877958000012774006,3.1.8,Internal - Leave Encashment,,Expense,MYR,Personnel Expenses
+2877958000012774010,3.1.9,Internal - Gratuity,,Expense,MYR,Personnel Expenses
+2877958000012774014,3.1.10,Internal - Statutory Deductions and Contributions,,Expense,MYR,Personnel Expenses
+2877958000012774018,3.1.10.1,"Internal - EPF, SSF, CPF, Pag-IBIG/HDMF",,Expense,MYR,Internal - Statutory Deductions and Contributions
+2877958000012774022,3.1.10.2,"Internal - BPJS Kesehatan, PhilHealth",,Expense,MYR,Internal - Statutory Deductions and Contributions
+2877958000012774026,3.1.10.3,"Internal - BPJS TK, SSC, SSS, SOCSO, EIS",,Expense,MYR,Internal - Statutory Deductions and Contributions
+2877958000012774030,3.1.10.4,"Internal - HRDF, SDL",,Expense,MYR,Internal - Statutory Deductions and Contributions
+2877958000012774034,3.1.10.5,"Internal - CDAC, SINDA, MBMF, FWL",,Expense,MYR,Internal - Statutory Deductions and Contributions
+2877958000012774038,3.1.10.6,Internal - SST,,Expense,MYR,Internal - Statutory Deductions and Contributions
+2877958000012774042,3.1.10.7,"Internal - TDS, PCB/MTD, PIT",,Expense,MYR,Internal - Statutory Deductions and Contributions
+2877958000012774046,3.1.11,Insurance Expense - Internal,,Expense,MYR,Personnel Expenses
+2877958000012774050,3.1.12,Director's Fees and Claims,,Expense,MYR,Personnel Expenses
+2877958000012774054,3.1.12.1,Director 1,,Expense,MYR,Director's Fees and Claims
+2877958000012774058,3.1.12.2,Director 2,,Expense,MYR,Director's Fees and Claims
+2877958000012774062,3.1.13,Staff Welfare & Engagement,,Expense,MYR,Personnel Expenses
+2877958000012774066,3.2,Office & Facilities,,Expense,MYR,
+2877958000009105117,3.2.1,Office Rent,,Expense,MYR,Office & Facilities
+2877958000012774072,3.2.2,Laptop and other Equipment Rent,,Expense,MYR,Office & Facilities
+2877958000012774076,3.2.3,Security Services,,Expense,MYR,Office & Facilities
+2877958000012774080,3.2.4,Repairs & Maintenance,,Expense,MYR,Office & Facilities
+2877958000012774084,3.2.4.1,Office,,Expense,MYR,Repairs & Maintenance
+2877958000012774088,3.2.4.2,Vehicles,,Expense,MYR,Repairs & Maintenance
+2877958000012774092,3.2.5,Vehicle Rent,,Expense,MYR,Office & Facilities
+2877958000012774096,3.3,Professional Services,,Expense,MYR,
+2877958000000100067,3.3.3,Legal and Professional Fees,,Expense,MYR,Professional Services
+2877958000002122698,3.3.2,Tax Agent Fees,,Expense,MYR,Professional Services
+2877958000012774100,3.3.1,Audit Fees,,Expense,MYR,Professional Services
+2877958000012774108,3.3.4,Retainer Fees,,Expense,MYR,Professional Services
+2877958000012774112,3.3.4.1,Legal Retainership,,Expense,MYR,Retainer Fees
+2877958000012774116,3.3.4.2,Company Secretary Retainership,,Expense,MYR,Retainer Fees
+2877958000012774120,3.4,Business Operations,,Expense,MYR,
+2877958000000000400,3.4.2,Office Supplies,All expenses on purchasing office supplies like stationery are recorded into the office supplies account.,Expense,MYR,Business Operations
+2877958000000099971,3.4.12,Business Expenses,,Expense,MYR,Business Operations
+2877958000012774124,3.4.1,Printing & Stationery,,Expense,MYR,Business Operations
+2877958000012774130,3.4.3,Postage & Courier Services,,Expense,MYR,Business Operations
+2877958000012774134,3.4.4,Business Travel Expenses,,Expense,MYR,Business Operations
+2877958000012774138,3.4.5,Accommodation Expenses,,Expense,MYR,Business Operations
+2877958000012774142,3.4.6,Client Entertainment & Meals,,Expense,MYR,Business Operations
+2877958000012774146,3.4.7,Business Permits & Licenses,,Expense,MYR,Business Operations
+2877958000012774150,3.4.8,Rental Tax,,Expense,MYR,Business Operations
+2877958000012774154,3.4.9,Centralized Finance Cost,,Expense,MYR,Business Operations
+2877958000012774158,3.4.10,Centralized HR Cost,,Expense,MYR,Business Operations
+2877958000012774162,3.4.11,Centralized IT Cost,,Expense,MYR,Business Operations
+2877958000012774168,3.5,Software and IT Expenses,,Expense,MYR,
+2877958000012774172,3.6,Other Utilities,,Expense,MYR,
+2877958000012774176,3.6.1,Electricity,,Expense,MYR,Other Utilities
+2877958000012774180,3.6.2,Water,,Expense,MYR,Other Utilities
+2877958000012774184,3.6.3,Internet,,Expense,MYR,Other Utilities
+2877958000012774188,3.6.4,Communication,,Expense,MYR,Other Utilities
+2877958000012774200,3.8,Interest (Loans & Borrowings),,Expense,MYR,
+2877958000012774204,3.8.1,Finance Cost - Hire Purchase Interest - I,,Expense,MYR,Interest (Loans & Borrowings)
+2877958000012774208,3.8.2,Finance Cost - Hire Purchase Interest - II,,Expense,MYR,Interest (Loans & Borrowings)
+2877958000012774212,3.8.3,Finance Cost - Term Loan Interest,,Expense,MYR,Interest (Loans & Borrowings)
+2877958000012774236,4.1,Finance Income,,Other Income,MYR,
+2877958000012774239,4.2,Liability Written Back,,Other Income,MYR,
+2877958000012774244,5.3,Foreign Exchange,,Other Expense,MYR,
+2877958000012774248,5.3.1,Realized Forex (Gain)/Loss,,Other Expense,MYR,Foreign Exchange
+2877958000012774252,5.3.2,Unrealized Forex Translation (Gain)/Loss,,Other Expense,MYR,Foreign Exchange
+2877958000012774256,5.4,Other Non-operating expenses,,Other Expense,MYR,
+2877958000012774260,5.4.2,Fines & Penalties,,Other Expense,MYR,Other Non-operating expenses
+2877958000012774264,5.4.3,Impairment Losses,,Other Expense,MYR,Other Non-operating expenses
+2877958000012774308,5.4.1,Donations,,Other Expense,MYR,Other Non-operating expenses
+2877958000012774268,5.5,Corporate Tax,,Other Expense,MYR,
+2877958000012774272,5.5.1,Current Corporate Tax Expense,,Other Expense,MYR,Corporate Tax
+2877958000012774276,5.5.2,Prior Period Tax Adjustments,,Other Expense,MYR,Corporate Tax

@@ -2,16 +2,13 @@
 {% macro fmt_date(d) %}{% if d %}{{ d[:16].replace('T',' ') }}{% else %}—{% endif %}{% endmacro %}
 
 {% set STEP_DEFS = [
-  (1,  'Upload & Intake Stamp',        'Upload'),
-  (2,  'AI Check File Generation',     'Check File'),
-  (3,  'Approval Gate (Check)',        'Check Approval'),
-  (4,  'Bank Upload File',             'Bank File'),
-  (5,  'FE Bank Upload',               'Bank Upload'),
-  (6,  'Payment Approval (Director)',  'Payment Approval'),
-  (7,  'Zoho Books Posting',           'Zoho Post'),
-  (8,  'FP&A Sub-Ledger',             'FP&A Ledger'),
-  (9,  'Audit Package Assembly',       'Audit Package'),
-  (10, 'Compliance Controls',          'Compliance'),
+  (1, 'Upload & Intake Stamp',        'Upload'),
+  (2, 'AI Check File Generation',     'Check File'),
+  (3, 'Approval Gate (Check)',        'Check Approval'),
+  (4, 'Bank Upload File',             'Bank File'),
+  (5, 'FE Bank Upload',               'Bank Upload'),
+  (6, 'Payment Approval',             'Payment Approval'),
+  (9, 'Audit Package',                'Audit Package'),
 ] %}
 
 <div class="pf-layout" id="case-layout">
@@ -55,10 +52,7 @@
       {% elif sn == 4 %}{% include "payroll/steps/step4.html" %}
       {% elif sn == 5 %}{% include "payroll/steps/step5.html" %}
       {% elif sn == 6 %}{% include "payroll/steps/step6.html" %}
-      {% elif sn == 7 %}{% include "payroll/steps/step7.html" %}
-      {% elif sn == 8 %}{% include "payroll/steps/step8.html" %}
       {% elif sn == 9 %}{% include "payroll/steps/step9.html" %}
-      {% elif sn == 10 %}{% include "payroll/steps/step10.html" %}
       {% endif %}
     </div>
     {% endfor %}
