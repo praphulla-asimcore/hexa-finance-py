@@ -1,0 +1,108 @@
+<div class="modal-overlay" onclick="if(event.target===this)this.parentElement.innerHTML=''">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h2 class="modal-title">Settings & Admin</h2>
+      <button class="modal-close" onclick="document.getElementById('modal-container').innerHTML=''">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="modal-body">
+      {# Zoho status #}
+      <div class="modal-section">
+        <div class="modal-section-title">Zoho Books</div>
+        {% if zoho_configured %}
+        <div class="badge badge-success">✓ Credentials configured</div>
+        {% else %}
+        <div class="badge badge-danger">✗ Credentials not set (add ZOHO_* env vars)</div>
+        {% endif %}
+      </div>
+
+      {% if user.role == 'admin' %}
+      {# Invite user #}
+      <div class="modal-section">
+        <div class="modal-section-title">Invite User</div>
+        <form id="invite-form" onsubmit="sendInvite(event)">
+          <div class="pf-form-section">
+            <label class="label">Email</label>
+            <input type="email" class="input" id="invite-email" placeholder="user@hexamatics.com" required/>
+          </div>
+          <div class="pf-form-section">
+            <label class="label">Name</label>
+            <input type="text" class="input" id="invite-name" placeholder="Full name"/>
+          </div>
+          <div class="pf-form-section">
+            <label class="label">Role</label>
+            <select class="input" id="invite-role">
+              <option value="user">User</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <div id="invite-result" style="font-size:13px;margin-top:8px"></div>
+          <button type="submit" class="btn btn-primary btn-sm" style="margin-top:10px">Send Invite</button>
+        </form>
+      </div>
+
+      {# User list #}
+      <div class="modal-section">
+        <div class="modal-section-title">Users ({{ users|length }})</div>
+        <table class="admin-table">
+          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+            {% for u in users %}
+            <tr>
+              <td>{{ u.name or '—' }}</td>
+              <td style="font-size:12px">{{ u.email }}</td>
+              <td><span class="badge {% if u.role == 'admin' %}badge-info{% else %}badge-neutral{% endif %}">{{ u.role }}</span></td>
+              <td><span class="badge {% if u.status == 'active' %}badge-success{% elif u.status == 'invited' %}badge-warning{% else %}badge-neutral{% endif %}">{{ u.status }}</span></td>
+              <td>
+                {% if u.id != user.id %}
+                <button class="pf-delete-btn" onclick="deleteUser('{{ u.id }}', '{{ u.email }}', this)">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M9 6V4h6v2"/>
+                  </svg>
+                </button>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script>
+async function sendInvite(e) {
+  e.preventDefault();
+  const result = document.getElementById('invite-result');
+  result.textContent = 'Sending…';
+  try {
+    const r = await fetch('/api/users/invite', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        email: document.getElementById('invite-email').value,
+        name: document.getElementById('invite-name').value,
+        role: document.getElementById('invite-role').value,
+      })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error);
+    result.innerHTML = '<span style="color:#22c55e">✓ Invite sent to ' + document.getElementById('invite-email').value + '</span>';
+    document.getElementById('invite-form').reset();
+  } catch(e) {
+    result.innerHTML = '<span style="color:#ef4444">' + e.message + '</span>';
+  }
+}
+
+async function deleteUser(id, email, btn) {
+  if (!confirm('Delete user ' + email + '?')) return;
+  const r = await fetch('/api/users/' + id, { method: 'DELETE' });
+  if (r.ok) btn.closest('tr').remove();
+}
+</script>

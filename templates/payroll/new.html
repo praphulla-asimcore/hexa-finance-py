@@ -1,0 +1,146 @@
+{% set label = 'CSI' if module == 'csi' else 'Payroll' %}
+{% set case_type = 'CSI' if module == 'csi' else 'PAYROLL' %}
+
+{% macro period_default() %}
+  {% set now = [] %}
+  {{- '' -}}
+{% endmacro %}
+
+<div class="pf-screen fade-in">
+  <div class="screen-header">
+    <button class="pf-back-btn"
+      hx-get="/{{ module }}" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="15 18 9 12 15 6"/>
+      </svg>
+      Back
+    </button>
+    <h1 class="screen-title">New {{ label }} Run</h1>
+    <p class="screen-subtitle">Upload the {{ 'consultant salary' if label == 'CSI' else 'payroll' }} file to begin the 10-step workflow</p>
+  </div>
+
+  <div class="pf-new-form card">
+    {% if error %}
+    <div class="error-msg" style="margin-bottom:16px">{{ error }}</div>
+    {% endif %}
+
+    <form id="upload-form"
+          hx-post="/cases"
+          hx-target="#main-content"
+          hx-encoding="multipart/form-data"
+          hx-swap="innerHTML"
+          hx-indicator="#upload-spinner">
+      <input type="hidden" name="case_type" value="{{ case_type }}"/>
+      <input type="hidden" name="module" value="{{ module }}"/>
+
+      <div class="pf-form-section">
+        <label class="label">Payroll File <span class="req">*</span></label>
+        <div class="pf-drop-zone" id="drop-zone" onclick="document.getElementById('pf-file-input').click()">
+          <input id="pf-file-input" type="file" name="file" accept=".xlsx,.xls" style="display:none"
+                 onchange="updateDropZone(this)"/>
+          <div id="drop-placeholder" class="pf-drop-placeholder">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            <span>Drop Excel file here or click to browse</span>
+            <span class="pf-drop-hint">.xlsx / .xls · max 20 MB</span>
+          </div>
+          <div id="drop-filled" class="pf-drop-filled" style="display:none">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            <span id="drop-filename"></span>
+            <span id="drop-filesize" class="pf-drop-size"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="pf-form-row">
+        <div class="pf-form-section" style="grid-column:span 2">
+          <label class="label">Entity <span class="req">*</span></label>
+          <select name="entity" class="input" id="entity-select" required onchange="updateEntityHint(this)">
+            <option value="">— select entity —</option>
+            {% for code, cfg in orgs.items() %}
+            <option value="{{ code }}">{{ code }} — {{ cfg.name }}</option>
+            {% endfor %}
+          </select>
+          <input type="hidden" name="entity_name" id="entity-name-hidden"/>
+          <span class="pf-hint" id="entity-hint" style="display:none"></span>
+        </div>
+        <div class="pf-form-section">
+          <label class="label">Period (YYYYMM) <span class="req">*</span></label>
+          <input class="input" name="period" id="period-input" placeholder="202506" maxlength="6" required/>
+          <span class="pf-hint">Auto-detected from filename if possible</span>
+        </div>
+        <div class="pf-form-section">
+          <label class="label">Payment Date</label>
+          <input type="date" class="input" name="payment_date"/>
+          <span class="pf-hint">Used for GL labelling in Zoho</span>
+        </div>
+      </div>
+
+      <div id="upload-error" class="error-msg" style="display:none"></div>
+
+      <div class="pf-form-actions">
+        <button type="button" class="btn btn-secondary"
+          hx-get="/{{ module }}" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+          Cancel
+        </button>
+        <button type="submit" class="btn btn-primary" id="submit-btn">
+          <span id="upload-spinner" class="spinner htmx-indicator"></span>
+          Upload & Create Case
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+const ORGS = {{ orgs | tojson }};
+
+function updateDropZone(input) {
+  const file = input.files[0];
+  if (!file) return;
+  document.getElementById('drop-placeholder').style.display = 'none';
+  document.getElementById('drop-filled').style.display = 'flex';
+  document.getElementById('drop-filename').textContent = file.name;
+  document.getElementById('drop-filesize').textContent = '(' + (file.size / 1024).toFixed(0) + ' KB)';
+  document.getElementById('drop-zone').classList.add('pf-drop-zone-filled');
+
+  // Auto-detect period from filename
+  const name = file.name;
+  const m1 = name.match(/\b(20\d{2})(0[1-9]|1[0-2])\b/);
+  const m2 = name.match(/\b(20\d{2})[-_](0[1-9]|1[0-2])\b/);
+  const m3 = name.match(/\b(0[1-9]|1[0-2])[-_](20\d{2})\b/);
+  const periodInput = document.getElementById('period-input');
+  if (!periodInput.value) {
+    if (m1) periodInput.value = m1[1] + m1[2];
+    else if (m2) periodInput.value = m2[1] + m2[2];
+    else if (m3) periodInput.value = m3[2] + m3[1];
+  }
+
+  // Auto-detect entity from filename
+  const upper = name.toUpperCase();
+  const select = document.getElementById('entity-select');
+  if (!select.value) {
+    for (const code of Object.keys(ORGS)) {
+      if (upper.includes(code)) { select.value = code; updateEntityHint(select); break; }
+    }
+  }
+}
+
+function updateEntityHint(select) {
+  const code = select.value;
+  const hint = document.getElementById('entity-hint');
+  const nameHidden = document.getElementById('entity-name-hidden');
+  if (code && ORGS[code]) {
+    hint.style.display = 'block';
+    hint.innerHTML = 'Code: <strong>' + code + '</strong> · Zoho Org ID: <strong>' + ORGS[code].id + '</strong>';
+    nameHidden.value = ORGS[code].name;
+  } else {
+    hint.style.display = 'none';
+    nameHidden.value = '';
+  }
+}
+</script>

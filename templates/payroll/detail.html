@@ -1,0 +1,45 @@
+{% macro fmt_rm(n) %}{% if n is not none %}RM {{ "{:,.2f}".format(n|float) }}{% else %}—{% endif %}{% endmacro %}
+{% macro fmt_date(d) %}{% if d %}{{ d[:16].replace('T',' ') }}{% else %}—{% endif %}{% endmacro %}
+
+{% set STATUS_BADGE = {
+  'uploaded': ('Uploaded', 'neutral'),
+  'check_generated': ('Check Generated', 'info'),
+  'check_approval_sent': ('Pending Reviewer', 'warning'),
+  'check_reviewer_approved': ('Pending Final Approver', 'warning'),
+  'check_approved': ('Check Approved', 'success'),
+  'check_rejected': ('Check Rejected', 'danger'),
+  'bank_file_generated': ('Bank File Ready', 'info'),
+  'bank_uploaded': ('Bank Uploaded', 'info'),
+  'payment_approval_sent': ('Awaiting Director', 'warning'),
+  'payment_approved': ('Payment Approved', 'success'),
+  'payment_rejected': ('Payment Rejected', 'danger'),
+  'zoho_posted': ('Posted to Zoho', 'success'),
+} %}
+
+{% set badge_info = STATUS_BADGE.get(kase.status, (kase.status, 'neutral')) %}
+
+<div class="pf-screen fade-in">
+  <div class="pf-detail-header">
+    <button class="pf-back-btn"
+      hx-get="/{{ module }}" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="15 18 9 12 15 6"/>
+      </svg>
+      Back to Cases
+    </button>
+    <div class="pf-detail-title">
+      <span class="pf-ref-tag pf-ref-large">{{ kase.reference }}</span>
+      <span class="badge badge-{{ badge_info[1] }}">{{ badge_info[0] }}</span>
+    </div>
+    <div class="pf-detail-meta">
+      {{ kase.entity_name or kase.entity }} · {{ kase.period }}
+      · {{ (kase.check_data or {}).get('consultantCount', '?') }} consultants
+      {% if (kase.check_data or {}).get('ctcTotal') %}· {{ fmt_rm((kase.check_data or {}).get('ctcTotal')) }}{% endif %}
+    </div>
+  </div>
+
+  {# Inner: step tracker + panel — wrapped so HTMX actions can replace this whole block #}
+  <div id="case-detail-inner">
+    {% include "payroll/detail_inner.html" %}
+  </div>
+</div>

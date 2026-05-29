@@ -1,0 +1,28 @@
+<div class="pf-panel-body">
+  <div class="pf-panel-header">
+    <span class="pf-panel-step">Step 10</span>
+    <h2 class="pf-panel-title">Compliance Controls</h2>
+    <p class="pf-panel-sub">Built-in controls satisfying audit and regulatory requirements.</p>
+  </div>
+  <div class="pf-compliance-list">
+    {% for c in [
+      'No step can be skipped — each step is a system prerequisite for the next',
+      'No document can be deleted or overwritten — append-only storage',
+      'All user actions carry: User ID, Role, Timestamp, IP address',
+      'Rejection loops back with mandatory reason field — reason stored',
+      'Immutable audit log satisfies IAS 19, IFRS 15, IAS 1, IAS 24',
+      'GIA can access any package by reference number without contacting FE',
+      'File hashes (SHA-256) detect any tampering before bank upload',
+      'Director approval captured via secure link — not WhatsApp',
+      '24-hour auto-escalation logged if approver does not respond',
+      'Retained 7 years per internal policy and regulatory requirement',
+    ] %}
+    <div class="pf-compliance-item">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5">
+        <polyline points="20 6 9 17 4 12"/>
+      </svg>
+      <span>{{ c }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</div>

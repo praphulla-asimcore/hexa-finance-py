@@ -1,0 +1,14 @@
+<div class="pf-panel-body">
+  <div class="pf-panel-header">
+    <span class="pf-panel-step">Step 8</span>
+    <h2 class="pf-panel-title">FP&A Sub-Ledger</h2>
+    <p class="pf-panel-sub">Auto-generated upon Zoho posting.</p>
+  </div>
+  {% if kase.status == 'zoho_posted' %}
+  <div class="pf-info-banner pf-banner-ok">
+    FP&A ledger auto-assembled with {{ (kase.check_data or {}).get('consultantCount', '—') }} rows.
+  </div>
+  {% else %}
+  <div class="pf-pending-step">Auto-generated after Zoho posting (Step 7).</div>
+  {% endif %}
+</div>

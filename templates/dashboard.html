@@ -1,0 +1,131 @@
+{% set csi_data = namespace(count=0, total=0) %}
+{% set payroll_data = namespace(count=0, total=0) %}
+{% for m in stats.byModule %}
+  {% if m.module == 'csi' %}{% set csi_data.count = m.count %}{% set csi_data.total = m.total %}{% endif %}
+  {% if m.module == 'payroll' %}{% set payroll_data.count = m.count %}{% set payroll_data.total = m.total %}{% endif %}
+{% endfor %}
+
+{% macro fmt(n) %}{{ "{:,.2f}".format(n|float) }}{% endmacro %}
+{% macro fmt_date(d) %}{% if d %}{{ d[:10] }}{% else %}—{% endif %}{% endmacro %}
+
+<div class="dash fade-in">
+  <div class="screen-header">
+    <h1 class="screen-title">Dashboard</h1>
+    <p class="screen-subtitle">Journal posting activity across all entities</p>
+  </div>
+
+  <div class="dash-kpis">
+    <div class="dash-kpi card">
+      <div class="dash-kpi-label">Total Journals Posted</div>
+      <div class="dash-kpi-value">{{ stats.totalPosts }}</div>
+    </div>
+    <div class="dash-kpi card">
+      <div class="dash-kpi-label">Total Amount Posted</div>
+      <div class="dash-kpi-value">RM {{ fmt(stats.totalAmount) }}</div>
+    </div>
+    <div class="dash-kpi card">
+      <div class="dash-kpi-label">CSI Journals</div>
+      <div class="dash-kpi-value">{{ csi_data.count }}</div>
+      <div class="dash-kpi-sub">RM {{ fmt(csi_data.total) }}</div>
+    </div>
+    <div class="dash-kpi card">
+      <div class="dash-kpi-label">Payroll Journals</div>
+      <div class="dash-kpi-value">{{ payroll_data.count }}</div>
+      <div class="dash-kpi-sub">RM {{ fmt(payroll_data.total) }}</div>
+    </div>
+  </div>
+
+  <div class="dash-grid">
+    <div class="dash-panel card">
+      <div class="dash-panel-title">Journals by Entity</div>
+      {% if stats.byEntity %}
+      <table class="dash-table">
+        <thead><tr><th>Entity</th><th>Count</th><th style="text-align:right">Total (RM)</th></tr></thead>
+        <tbody>
+          {% for e in stats.byEntity %}
+          <tr>
+            <td><span class="entity-badge">{{ e.entity }}</span></td>
+            <td>{{ e.count }}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums">{{ fmt(e.total) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="dash-empty">No data yet</div>
+      {% endif %}
+    </div>
+
+    <div class="dash-panel card">
+      <div class="dash-panel-title">Monthly Activity</div>
+      {% if stats.recentMonths %}
+      {% set max_total = namespace(val=1) %}
+      {% for m in stats.recentMonths %}{% if m.total > max_total.val %}{% set max_total.val = m.total %}{% endif %}{% endfor %}
+      <div class="dash-bars">
+        {% for m in stats.recentMonths %}
+        <div class="dash-bar-row">
+          <div class="dash-bar-label">{{ m.month }}</div>
+          <div class="dash-bar-track">
+            <div class="dash-bar-fill" style="width:{{ ((m.total / max_total.val) * 100)|int }}%"></div>
+          </div>
+          <div class="dash-bar-value">RM {{ fmt(m.total) }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="dash-empty">No data yet</div>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if recent_cases %}
+  <div class="dash-panel card" style="margin-top:20px">
+    <div class="dash-panel-title">Recent Cases</div>
+    <div class="dash-activity">
+      {% for c in recent_cases %}
+      <div class="dash-activity-row" style="cursor:pointer"
+           hx-get="/cases/{{ c.id }}" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <div class="dash-activity-left">
+          <span class="badge {% if c.status == 'zoho_posted' %}badge-success{% elif 'reject' in c.status %}badge-danger{% elif 'approv' in c.status %}badge-warning{% else %}badge-neutral{% endif %}">
+            {{ c.status.replace('_',' ').title() }}
+          </span>
+          <span class="dash-activity-ref">{{ c.reference }}</span>
+          <span class="dash-activity-entity">{{ c.entity_name or c.entity }}</span>
+        </div>
+        <div class="dash-activity-right">
+          {% if c.check_data and c.check_data.ctcTotal %}
+          <span class="dash-activity-amount">RM {{ fmt(c.check_data.ctcTotal) }}</span>
+          {% endif %}
+          <span class="dash-activity-by">{{ c.uploaded_by_name }}</span>
+          <span class="dash-activity-date">{{ fmt_date(c.uploaded_at) }}</span>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if posts %}
+  <div class="dash-panel card" style="margin-top:20px">
+    <div class="dash-panel-title">Recent Journal Posts</div>
+    <div class="dash-activity">
+      {% for p in posts %}
+      <div class="dash-activity-row">
+        <div class="dash-activity-left">
+          <span class="badge {% if p.module == 'payroll' %}badge-info{% else %}badge-neutral{% endif %}">
+            {{ 'Payroll' if p.module == 'payroll' else 'CSI' }}
+          </span>
+          <span class="dash-activity-ref">{{ p.reference_number }}</span>
+          <span class="dash-activity-entity">{{ p.entity }}</span>
+        </div>
+        <div class="dash-activity-right">
+          <span class="dash-activity-amount">RM {{ fmt(p.total_amount) }}</span>
+          <span class="dash-activity-by">{{ p.posted_by_name }}</span>
+          <span class="dash-activity-date">{{ fmt_date(p.posted_at) }}</span>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>

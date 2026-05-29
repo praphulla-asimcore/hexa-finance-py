@@ -1,0 +1,33 @@
+{% macro fmt_date(d) %}{% if d %}{{ d[:16].replace('T',' ') }}{% else %}—{% endif %}{% endmacro %}
+
+<div class="pf-panel-body">
+  <div class="pf-panel-header">
+    <span class="pf-panel-step">Step 1</span>
+    <h2 class="pf-panel-title">Upload & Intake Stamp</h2>
+    <p class="pf-panel-sub">File received and locked in system.</p>
+  </div>
+
+  <div class="pf-info-grid">
+    <div class="pf-stamp-box"><span class="pf-stamp-label">Uploaded by</span><span class="pf-stamp-value">{{ kase.uploaded_by_name or '—' }}</span></div>
+    <div class="pf-stamp-box"><span class="pf-stamp-label">Date-Time</span><span class="pf-stamp-value">{{ fmt_date(kase.uploaded_at) }}</span></div>
+    <div class="pf-stamp-box"><span class="pf-stamp-label">IP Address</span><span class="pf-stamp-value">{{ kase.upload_ip or '—' }}</span></div>
+    <div class="pf-stamp-box"><span class="pf-stamp-label">File</span><span class="pf-stamp-value">{{ kase.original_file_name or '—' }}</span></div>
+    <div class="pf-stamp-box"><span class="pf-stamp-label">SHA-256 Hash</span><span class="pf-stamp-value" style="font-family:monospace;font-size:11px">{{ (kase.original_file_hash or '—')[:32] }}{% if kase.original_file_hash %}…{% endif %}</span></div>
+    <div class="pf-stamp-box"><span class="pf-stamp-label">Payment Date</span><span class="pf-stamp-value">{{ kase.payment_date or '—' }}</span></div>
+    <div class="pf-stamp-box"><span class="pf-stamp-label">Reference</span><span class="pf-stamp-value" style="color:#6366f1;font-family:monospace">{{ kase.reference }}</span></div>
+  </div>
+
+  {% if (kase.parsed_data or {}).get('entities') %}
+  <div class="pf-detail-card">
+    <div class="pf-detail-card-title">Parsed Entities</div>
+    {% for e in (kase.parsed_data or {}).get('entities', []) %}
+    <div class="pf-entity-row">
+      <span class="pf-entity-name">{{ e.sheetName }}</span>
+      <span>{{ e.employees|length }} employees</span>
+      {% if e.totalCTC %}<span>RM {{ "{:,.2f}".format(e.totalCTC|float) }}</span>{% endif %}
+      {% if e.missingColumns %}<span class="badge badge-warning">missing cols</span>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>

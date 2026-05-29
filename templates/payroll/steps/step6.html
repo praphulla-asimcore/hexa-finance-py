@@ -1,0 +1,68 @@
+{% macro fmt_rm(n) %}{% if n is not none %}RM {{ "{:,.2f}".format(n|float) }}{% else %}—{% endif %}{% endmacro %}
+{% macro fmt_date(d) %}{% if d %}{{ d[:16].replace('T',' ') }}{% else %}—{% endif %}{% endmacro %}
+
+{% set is_approved = kase.status in ['payment_approved','zoho_posted'] %}
+{% set is_rejected = kase.status == 'payment_rejected' %}
+{% set is_pending = kase.status == 'payment_approval_sent' %}
+{% set can_confirm = kase.status in ['payment_approval_sent','bank_uploaded'] %}
+{% set cert = kase.payment_approval_cert or {} %}
+
+<div class="pf-panel-body">
+  <div class="pf-panel-header">
+    <span class="pf-panel-step">Step 6</span>
+    <h2 class="pf-panel-title">Payment Approval (Director)</h2>
+    <p class="pf-panel-sub">Director approval via email link or in-app confirmation.</p>
+  </div>
+
+  <div class="pf-approver-chain">
+    <div class="pf-approver-box">
+      <div class="pf-approver-name">Dato Thiruchelvapalan</div>
+      <div class="pf-approver-role">Director</div>
+      <span class="badge badge-{% if is_approved %}success{% elif is_rejected %}danger{% elif is_pending %}warning{% else %}neutral{% endif %}">
+        {% if is_approved %}Approved{% elif is_rejected %}Rejected{% elif is_pending %}Awaiting{% else %}Not yet sent{% endif %}
+      </span>
+      {% if kase.payment_approved_at %}<div class="pf-approver-time">{{ fmt_date(kase.payment_approved_at) }}</div>{% endif %}
+    </div>
+  </div>
+
+  {% if is_pending %}
+  <div class="pf-info-banner pf-banner-waiting">
+    Approval email sent to Dato Thiruchelvapalan on {{ fmt_date(kase.payment_approval_sent_at) }}.
+    Director can approve via the secure email link, or confirm below if approved verbally.
+    <button class="btn btn-secondary btn-sm" style="margin-left:12px"
+        hx-get="/cases/{{ kase.id }}/step/6" hx-target="#step-panel" hx-swap="innerHTML">
+      Refresh
+    </button>
+  </div>
+  {% endif %}
+
+  {% if can_confirm %}
+  <div class="pf-action-zone" style="margin-top:12px">
+    <p class="pf-action-desc">
+      If the Director has confirmed payment approval verbally or through another channel, confirm it here to proceed to Zoho posting.
+    </p>
+    <button class="btn btn-primary"
+        hx-post="/cases/{{ kase.id }}/confirm-payment"
+        hx-target="#case-detail-inner"
+        hx-swap="innerHTML">
+      <span class="spinner htmx-indicator"></span>
+      Payment Approved in Bank ✓
+    </button>
+  </div>
+  {% endif %}
+
+  {% if is_rejected %}
+  <div class="pf-info-banner pf-banner-danger">Payment rejected: {{ kase.payment_rejection_reason }}</div>
+  {% endif %}
+
+  {% if is_approved and cert %}
+  <div class="pf-cert-box">
+    <div class="pf-cert-title">Payment Approval Certificate</div>
+    <div class="pf-stamp-box"><span class="pf-stamp-label">Approved by</span><span class="pf-stamp-value">{{ cert.approvedBy }}</span></div>
+    <div class="pf-stamp-box"><span class="pf-stamp-label">Amount</span><span class="pf-stamp-value">{{ cert.amount }}</span></div>
+    <div class="pf-stamp-box"><span class="pf-stamp-label">Bank Portal Ref</span><span class="pf-stamp-value">{{ cert.bankPortalRef or '—' }}</span></div>
+    <div class="pf-stamp-box"><span class="pf-stamp-label">Confirmed via</span><span class="pf-stamp-value">{{ cert.confirmedVia or 'email link' }}</span></div>
+    <div class="pf-stamp-box"><span class="pf-stamp-label">Date-Time</span><span class="pf-stamp-value">{{ fmt_date(cert.timestamp) }}</span></div>
+  </div>
+  {% endif %}
+</div>

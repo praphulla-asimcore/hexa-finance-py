@@ -1,0 +1,72 @@
+{% macro fmt_date(d) %}{% if d %}{{ d[:16].replace('T',' ') }}{% else %}—{% endif %}{% endmacro %}
+
+{% set can_log = kase.status == 'bank_file_generated' %}
+{% set can_request_approval = kase.status == 'bank_uploaded' %}
+{% set is_done = kase.status in ['payment_approval_sent','payment_approved','payment_rejected','zoho_posted'] %}
+
+<div class="pf-panel-body">
+  <div class="pf-panel-header">
+    <span class="pf-panel-step">Step 5</span>
+    <h2 class="pf-panel-title">FE Manual Bank Upload</h2>
+    <p class="pf-panel-sub">Log the bank portal reference, then send for payment approval.</p>
+  </div>
+
+  {# Sub-step A: Log bank upload #}
+  <div class="pf-sub-step">
+    <div class="pf-sub-step-header {% if kase.bank_upload_at %}done{% endif %}">
+      <div class="pf-sub-step-num">{% if kase.bank_upload_at %}✓{% else %}A{% endif %}</div>
+      <div>Log Bank Upload</div>
+    </div>
+    {% if can_log %}
+    <div class="pf-sub-step-body">
+      <form hx-post="/cases/{{ kase.id }}/log-bank-upload"
+            hx-target="#case-detail-inner"
+            hx-swap="innerHTML">
+        <label class="label">Bank Portal Reference Number</label>
+        <input class="input" name="bankPortalRef" placeholder="e.g. TXN-2026050001" style="margin-bottom:10px" required/>
+        <button type="submit" class="btn btn-primary">
+          <span class="spinner htmx-indicator"></span>
+          Log Bank Upload
+        </button>
+      </form>
+    </div>
+    {% elif kase.bank_upload_at %}
+    <div class="pf-sub-step-done">
+      <div class="pf-stamp-box"><span class="pf-stamp-label">Uploaded by</span><span class="pf-stamp-value">{{ kase.bank_upload_by }}</span></div>
+      <div class="pf-stamp-box"><span class="pf-stamp-label">Bank Portal Ref</span><span class="pf-stamp-value" style="font-family:monospace">{{ kase.bank_portal_ref }}</span></div>
+      <div class="pf-stamp-box"><span class="pf-stamp-label">Date-Time</span><span class="pf-stamp-value">{{ fmt_date(kase.bank_upload_at) }}</span></div>
+    </div>
+    {% else %}
+    <div class="pf-sub-step-locked">Generate and download bank files first (Step 4).</div>
+    {% endif %}
+  </div>
+
+  {# Sub-step B: Send for director approval #}
+  <div class="pf-sub-step">
+    <div class="pf-sub-step-header {% if is_done %}done{% endif %}">
+      <div class="pf-sub-step-num">{% if is_done %}✓{% else %}B{% endif %}</div>
+      <div>Payment Ready for Approval</div>
+    </div>
+    {% if can_request_approval %}
+    <div class="pf-sub-step-body">
+      <p class="pf-action-desc">
+        Bank file has been uploaded. Send the payment approval request to the Director (Dato Thiruchelvapalan) with the full payroll summary.
+      </p>
+      <button class="btn btn-primary"
+          hx-post="/cases/{{ kase.id }}/send-payment-approval"
+          hx-target="#case-detail-inner"
+          hx-swap="innerHTML">
+        <span class="spinner htmx-indicator"></span>
+        Payment Ready for Approval →
+      </button>
+    </div>
+    {% elif is_done %}
+    <div class="pf-sub-step-done">
+      <div class="pf-stamp-box"><span class="pf-stamp-label">Approval sent to</span><span class="pf-stamp-value">Dato Thiruchelvapalan</span></div>
+      <div class="pf-stamp-box"><span class="pf-stamp-label">Sent at</span><span class="pf-stamp-value">{{ fmt_date(kase.payment_approval_sent_at) }}</span></div>
+    </div>
+    {% else %}
+    <div class="pf-sub-step-locked">Complete Step A first.</div>
+    {% endif %}
+  </div>
+</div>

@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<div style="padding:40px;text-align:center">
+  <h2 style="font-size:48px;font-weight:800;color:#6366f1">{{ status_code }}</h2>
+  <p style="color:#64748b;margin-top:8px">{{ detail or "An error occurred." }}</p>
+  <a href="/" class="btn btn-secondary" style="margin-top:20px">Go Home</a>
+</div>
+{% endblock %}

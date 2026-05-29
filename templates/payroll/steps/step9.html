@@ -1,0 +1,59 @@
+{% macro fmt_rm(n) %}{% if n is not none %}RM {{ "{:,.2f}".format(n|float) }}{% else %}—{% endif %}{% endmacro %}
+{% macro fmt_date(d) %}{% if d %}{{ d[:16].replace('T',' ') }}{% else %}—{% endif %}{% endmacro %}
+
+{% set docs = [
+  (1, 'Original file', kase.original_file_name, kase.original_file_hash and (kase.original_file_hash[:16] + '…'), true),
+  (2, 'AI Check file', kase.check_generated_at and fmt_date(kase.check_generated_at), none, kase.check_generated_at is not none),
+  (3, 'Check Approval Certificate', kase.check_approved_at and ('Approved: ' ~ fmt_date(kase.check_approved_at)), none, (kase.check_approval_cert is not none)),
+  (4, 'Bank upload file', kase.bank_file_name, kase.bank_file_hash and (kase.bank_file_hash[:16] + '…'), kase.bank_file_generated_at is not none),
+  (5, 'Bank upload log', kase.bank_upload_at and ('Ref: ' ~ (kase.bank_portal_ref or '')), none, kase.bank_upload_at is not none),
+  (6, 'Payment Approval Certificate', kase.payment_approved_at and ('Approved: ' ~ fmt_date(kase.payment_approved_at)), none, (kase.payment_approval_cert is not none)),
+  (7, 'Zoho journal confirmation', (kase.zoho_journal_ids and kase.zoho_journal_ids[0]) and ('JV: ' ~ kase.zoho_journal_ids[0]), none, kase.zoho_posted_at is not none),
+  (8, 'Audit log (full event trail)', (logs|length|string ~ ' events'), none, logs|length > 0),
+] %}
+
+<div class="pf-panel-body">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px">
+    <div>
+      <div class="pf-panel-header" style="margin-bottom:0">
+        <span class="pf-panel-step">Step 9</span>
+        <h2 class="pf-panel-title">Audit Package Assembly</h2>
+        <p class="pf-panel-sub">AUDIT-PKG-{{ kase.reference }} — retained 7 years</p>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;flex-shrink:0;margin-top:4px">
+      <a href="/cases/{{ kase.id }}/audit-package.pdf" class="btn btn-primary" target="_blank">
+        ⬇ Audit Package PDF
+      </a>
+      <a href="/cases/{{ kase.id }}/check-report.pdf" class="btn btn-secondary" target="_blank">
+        ⬇ Check Report PDF
+      </a>
+    </div>
+  </div>
+
+  <div class="pf-audit-docs">
+    {% for num, name, detail, stamp, done in docs %}
+    <div class="pf-audit-doc {% if done %}pf-audit-doc-done{% else %}pf-audit-doc-pending{% endif %}">
+      <div class="pf-audit-doc-num">{% if done %}✓{% else %}{{ num }}{% endif %}</div>
+      <div class="pf-audit-doc-info">
+        <div class="pf-audit-doc-name">{{ name }}</div>
+        {% if detail %}<div class="pf-audit-doc-detail">{{ detail }}</div>{% endif %}
+        {% if stamp %}<div class="pf-audit-doc-stamp">{{ stamp }}</div>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if logs %}
+  <div class="pf-detail-card" style="margin-top:20px">
+    <div class="pf-detail-card-title">Immutable Audit Log ({{ logs|length }} events)</div>
+    {% for l in logs %}
+    <div class="pf-log-row">
+      <span class="pf-log-event">{{ l.event_type }}</span>
+      <span class="pf-log-by">{{ l.performed_by or 'System' }}</span>
+      <span class="pf-log-time">{{ fmt_date(l.created_at) }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>

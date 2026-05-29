@@ -1,0 +1,130 @@
+{% macro fmt_rm(n) %}{% if n is not none %}RM {{ "{:,.2f}".format(n|float) }}{% else %}—{% endif %}{% endmacro %}
+{% macro fmt_date(d) %}{% if d %}{{ d[:16].replace('T',' ') }}{% else %}—{% endif %}{% endmacro %}
+
+{% set is_done = kase.status == 'zoho_posted' %}
+{% set can_post = kase.status == 'payment_approved' %}
+{% set entities = (kase.parsed_data or {}).get('entities', []) %}
+{% set all_emp_count = namespace(n=0) %}
+{% for ent in entities %}{% set all_emp_count.n = all_emp_count.n + ent.employees|length %}{% endfor %}
+
+<div class="pf-panel-body">
+  <div class="pf-panel-header">
+    <span class="pf-panel-step">Step 7</span>
+    <h2 class="pf-panel-title">Zoho Books — Payment Clearing</h2>
+    <p class="pf-panel-sub">Books DR Salary Payable / CR Bank per consultant ({{ all_emp_count.n }} expense entries).</p>
+  </div>
+
+  {% if is_done %}
+  <div class="pf-info-banner pf-banner-ok">Posted {{ (kase.zoho_journal_ids or [])|length }} journal entries to Zoho Books.</div>
+  <div class="pf-info-grid">
+    <div class="pf-stamp-box"><span class="pf-stamp-label">Journals posted</span><span class="pf-stamp-value">{{ (kase.zoho_journal_ids or [])|length }}</span></div>
+    <div class="pf-stamp-box"><span class="pf-stamp-label">First journal ID</span><span class="pf-stamp-value" style="font-family:monospace">{{ (kase.zoho_journal_ids or ['—'])[0] }}</span></div>
+    <div class="pf-stamp-box"><span class="pf-stamp-label">Posted by</span><span class="pf-stamp-value">{{ kase.zoho_posted_by }}</span></div>
+    <div class="pf-stamp-box"><span class="pf-stamp-label">Date-Time</span><span class="pf-stamp-value">{{ fmt_date(kase.zoho_posted_at) }}</span></div>
+    <div class="pf-stamp-box"><span class="pf-stamp-label">Reference</span><span class="pf-stamp-value" style="font-family:monospace">{{ kase.reference }}</span></div>
+  </div>
+  {% elif not can_post %}
+  <div class="pf-info-banner pf-banner-warning">Payment approval (Step 6) required before posting.</div>
+  {% else %}
+  <form id="zoho-form-7"
+        hx-post="/cases/{{ kase.id }}/post-zoho"
+        hx-target="#case-detail-inner"
+        hx-swap="innerHTML"
+        hx-encoding="application/x-www-form-urlencoded">
+    <div class="pf-gl-form">
+      <div class="pf-form-section">
+        <label class="label">Organisation</label>
+        <select class="input" id="org-select-7" name="orgId" onchange="loadAccounts7(this.value)">
+          <option value="">— select org —</option>
+          {% for code, cfg in orgs.items() %}
+          <option value="{{ cfg.id }}"
+            {% if kase.entity == code or kase.zoho_org_id == cfg.id %}selected{% endif %}>
+            {{ cfg.name }} ({{ code }})
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="pf-form-section">
+        <label class="label">Journal Date</label>
+        <input type="date" class="input" name="journalDate" id="journal-date-7"
+               value="{{ kase.payment_date or '' }}" required/>
+      </div>
+    </div>
+
+    <button type="button" class="btn btn-secondary" style="margin-top:10px"
+        onclick="loadAccounts7(document.getElementById('org-select-7').value)">
+      Load GL Accounts
+    </button>
+
+    <div id="gl-accounts-7" style="display:none;margin-top:16px">
+      <div class="pf-gl-form">
+        <div class="pf-form-section">
+          <label class="label">Debit — Salary Payable Account</label>
+          <select class="input" name="payableAccountId" id="payable-account-7">
+            <option value="">— select —</option>
+          </select>
+        </div>
+        <div class="pf-form-section">
+          <label class="label">Credit — Bank / Cash Account</label>
+          <select class="input" name="bankAccountId" id="bank-account-7">
+            <option value="">— select —</option>
+          </select>
+        </div>
+      </div>
+      <input type="hidden" name="sheetName" id="sheet-name-7"
+             value="{{ (entities[0].sheetName if entities else kase.entity_name) or kase.entity }}"/>
+    </div>
+
+    <div id="je-preview-7" style="display:none" class="pf-je-preview" style="margin-top:16px">
+      <div class="pf-detail-card-title">Payment Clearing Preview — {{ all_emp_count.n }} expense entries</div>
+      <div class="pf-je-row" style="font-weight:600">
+        <span id="dr-label-7">DR Salary Payable</span><span>per consultant CTC</span>
+      </div>
+      <div class="pf-je-row pf-je-credit">
+        <span id="cr-label-7">CR Bank</span><span>per consultant CTC</span>
+      </div>
+      <div class="pf-je-narration">
+        Ref: PMT-{{ kase.reference }}-[EmpID] | Approved: {{ kase.payment_approved_by or '—' }}
+      </div>
+    </div>
+
+    <div id="zoho-error-7" class="error-msg" style="display:none;margin-top:12px"></div>
+
+    <button type="submit" class="btn btn-primary btn-lg" style="margin-top:16px">
+      <span class="spinner htmx-indicator"></span>
+      Book {{ all_emp_count.n }} Payment Entries to Zoho
+    </button>
+  </form>
+  {% endif %}
+</div>
+
+<script>
+async function loadAccounts7(orgId) {
+  if (!orgId) return;
+  const resp = await fetch('/hx/accounts/' + orgId);
+  const html = await resp.text();
+  document.getElementById('payable-account-7').innerHTML = html;
+  document.getElementById('bank-account-7').innerHTML = html;
+  document.getElementById('gl-accounts-7').style.display = 'block';
+
+  // Update preview labels on selection
+  document.getElementById('payable-account-7')?.addEventListener('change', updatePreview7);
+  document.getElementById('bank-account-7')?.addEventListener('change', updatePreview7);
+}
+function updatePreview7() {
+  const dr = document.getElementById('payable-account-7');
+  const cr = document.getElementById('bank-account-7');
+  if (dr?.value && cr?.value) {
+    const drName = dr.options[dr.selectedIndex]?.text?.split('—')[1]?.trim() || 'Salary Payable';
+    const crName = cr.options[cr.selectedIndex]?.text?.split('—')[1]?.trim() || 'Bank';
+    document.getElementById('dr-label-7').textContent = 'DR ' + drName;
+    document.getElementById('cr-label-7').textContent = 'CR ' + crName;
+    document.getElementById('je-preview-7').style.display = 'block';
+  }
+}
+// Auto-load if org pre-selected — runs immediately, works for HTMX swap
+(function() {
+  const sel = document.getElementById('org-select-7');
+  if (sel && sel.value) loadAccounts7(sel.value);
+})();
+</script>

@@ -1,0 +1,40 @@
+.login-body {
+  min-height: 100vh; background: linear-gradient(135deg, #0b0b16 0%, #1a1035 50%, #0b1628 100%);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+  font-family: 'Inter', sans-serif;
+}
+
+.login-orbs { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+.orb { position: absolute; border-radius: 50%; filter: blur(80px); animation: float 8s ease-in-out infinite; }
+.orb-1 { width: 400px; height: 400px; background: rgba(99,102,241,0.25); top: -100px; left: -100px; animation-delay: 0s; }
+.orb-2 { width: 300px; height: 300px; background: rgba(139,92,246,0.2); bottom: -80px; right: -80px; animation-delay: -4s; animation-direction: reverse; }
+.orb-3 { width: 200px; height: 200px; background: rgba(6,182,212,0.15); top: 50%; left: 60%; animation-delay: -2s; }
+
+@keyframes float { 0%,100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-20px) scale(1.03); } }
+
+.login-wrap { position: relative; z-index: 10; width: 100%; max-width: 420px; }
+
+.login-card {
+  background: rgba(255,255,255,0.05); backdrop-filter: blur(20px);
+  border: 1px solid rgba(255,255,255,0.12); border-radius: 24px;
+  padding: 40px; box-shadow: 0 32px 80px rgba(0,0,0,0.4), 0 0 0 1px rgba(99,102,241,0.15);
+}
+
+.login-brand { display: flex; align-items: center; gap: 14px; margin-bottom: 32px; }
+.login-brand-name { font-size: 18px; font-weight: 800; color: #fff; letter-spacing: 0.06em; }
+.login-brand-sub { font-size: 11px; color: rgba(255,255,255,0.4); letter-spacing: 0.05em; }
+
+.login-title { font-size: 28px; font-weight: 800; color: #fff; margin-bottom: 4px; }
+.login-subtitle { font-size: 13px; color: rgba(255,255,255,0.4); margin-bottom: 28px; }
+
+.login-form { display: flex; flex-direction: column; gap: 16px; }
+.login-field { display: flex; flex-direction: column; }
+.login-field .label { color: rgba(255,255,255,0.6); }
+.login-field input {
+  background: rgba(255,255,255,0.07); border-color: rgba(255,255,255,0.12);
+  color: #fff;
+}
+.login-field input:focus { border-color: #6366f1; background: rgba(99,102,241,0.12); box-shadow: 0 0 0 3px rgba(99,102,241,0.2); }
+.login-field input::placeholder { color: rgba(255,255,255,0.25); }
+
+.login-footer { font-size: 12px; color: rgba(255,255,255,0.25); text-align: center; margin-top: 24px; }

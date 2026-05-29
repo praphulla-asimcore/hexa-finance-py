@@ -1,0 +1,151 @@
+<div class="bene-screen fade-in"
+     x-data="consultants()"
+     x-init="load()">
+
+  <div class="screen-header">
+    <h1 class="screen-title">Consultant Database</h1>
+    <p class="screen-subtitle">
+      <span class="bene-stat" x-text="loading ? 'Loading from Airtable…' : total + ' consultants'"></span>
+      <template x-if="!loading && !error">
+        <><span class="bene-stat-sep"></span>
+        <span class="bene-stat" x-text="activeCount + ' active'"></span>
+        <span class="bene-stat-sep"></span>
+        <span class="bene-stat bene-stat-missing" x-text="expiredCount + ' expired'"></span></>
+      </template>
+    </p>
+  </div>
+
+  <template x-if="error">
+    <div class="bene-alert card">
+      <div class="bene-alert-body"><strong>Could not load consultant data.</strong> <span x-text="error"></span></div>
+    </div>
+  </template>
+
+  <div class="bene-toolbar card">
+    <div class="bene-filters">
+      <button class="bene-filter-btn" :class="filter==='all'&&'bene-filter-active'" @click="filter='all'">
+        All (<span x-text="total"></span>)
+      </button>
+      <button class="bene-filter-btn" :class="filter==='active'&&'bene-filter-active'" @click="filter='active'">
+        Active (<span x-text="activeCount"></span>)
+      </button>
+      <button class="bene-filter-btn" :class="filter==='expired'&&'bene-filter-active'" @click="filter='expired'">
+        Expired (<span x-text="expiredCount"></span>)
+      </button>
+    </div>
+    <input class="bene-search" type="text" placeholder="Search name, employee no, client…"
+           x-model="search"/>
+  </div>
+
+  <div class="bene-table-wrap card">
+    <template x-if="loading">
+      <div class="bene-loading"><span class="spinner"></span><span>Fetching from Airtable…</span></div>
+    </template>
+    <template x-if="!loading">
+      <table class="bene-table">
+        <thead>
+          <tr>
+            <th>Emp No.</th><th>Name</th><th>Client</th>
+            <th>Bank</th><th>Account No.</th><th>Contract End</th><th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-if="filtered.length === 0">
+            <tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px 0">No results</td></tr>
+          </template>
+          <template x-for="c in filtered" :key="c.id">
+            <tr class="bene-row"
+                :class="[contractStatus(c.contractEnd)==='expired'?'bene-row-missing':'', selected&&selected.id===c.id?'bene-row-selected':'']"
+                @click="selected = (selected&&selected.id===c.id) ? null : c">
+              <td><span class="bene-code" x-text="c.employeeNumber"></span></td>
+              <td x-text="c.name"></td>
+              <td x-text="c.client"></td>
+              <td x-text="c.bankName"></td>
+              <td style="font-family:monospace;font-size:12px" x-text="c.accountNo"></td>
+              <td x-text="formatDate(c.contractEnd)"></td>
+              <td>
+                <span class="badge"
+                  :class="contractStatus(c.contractEnd)==='active'?'badge-success':'badge-danger'"
+                  x-text="contractStatus(c.contractEnd)==='active'?'Active':'Expired'"></span>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </template>
+  </div>
+
+  <template x-if="selected">
+    <div class="bene-detail-panel card fade-in">
+      <div class="bene-detail-header">
+        <div>
+          <span class="bene-code" style="font-size:15px" x-text="selected.employeeNumber"></span>
+          <span class="badge" style="margin-left:8px"
+            :class="contractStatus(selected.contractEnd)==='active'?'badge-success':'badge-danger'"
+            x-text="contractStatus(selected.contractEnd)==='active'?'Active':'Expired'"></span>
+        </div>
+        <button class="bene-detail-close" @click="selected=null">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="bene-detail-name" x-text="selected.name"></div>
+      <div class="bene-detail-grid">
+        <div class="bene-detail-item"><span>Employee No.</span><strong x-text="selected.employeeNumber"></strong></div>
+        <div class="bene-detail-item"><span>Employee ID</span><strong x-text="selected.employeeId"></strong></div>
+        <div class="bene-detail-item"><span>ID Number</span><strong style="font-family:monospace" x-text="selected.idNumber"></strong></div>
+        <div class="bene-detail-item"><span>Client</span><strong x-text="selected.client"></strong></div>
+        <div class="bene-detail-item"><span>Contract Start</span><strong x-text="formatDate(selected.contractStart)"></strong></div>
+        <div class="bene-detail-item"><span>Contract End</span><strong x-text="formatDate(selected.contractEnd)"></strong></div>
+        <div class="bene-detail-item"><span>Monthly Salary</span><strong x-text="selected.salary ? 'RM ' + selected.salary.toLocaleString('en-MY',{minimumFractionDigits:2}) : '—'"></strong></div>
+        <div class="bene-detail-item"><span>Bank</span><strong x-text="selected.bankName"></strong></div>
+        <div class="bene-detail-item"><span>Account No.</span><strong style="font-family:monospace" x-text="selected.accountNo"></strong></div>
+      </div>
+      <template x-if="contractStatus(selected.contractEnd)==='expired'">
+        <div class="bene-detail-warning">
+          ⚠ Contract ended on <span x-text="formatDate(selected.contractEnd)"></span>.
+        </div>
+      </template>
+    </div>
+  </template>
+</div>
+
+<script src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js" defer></script>
+<script>
+function consultants() {
+  return {
+    all: [], filter: 'all', search: '', selected: null, loading: true, error: null,
+    async load() {
+      try {
+        const r = await fetch('/api/consultants');
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Failed');
+        this.all = d.consultants || [];
+      } catch(e) { this.error = e.message; }
+      finally { this.loading = false; }
+    },
+    get total() { return this.all.length; },
+    get activeCount() { return this.all.filter(c => this.contractStatus(c.contractEnd) === 'active').length; },
+    get expiredCount() { return this.all.filter(c => this.contractStatus(c.contractEnd) === 'expired').length; },
+    get filtered() {
+      let list = this.all;
+      if (this.filter === 'active') list = list.filter(c => this.contractStatus(c.contractEnd) === 'active');
+      if (this.filter === 'expired') list = list.filter(c => this.contractStatus(c.contractEnd) === 'expired');
+      if (this.search.trim()) {
+        const q = this.search.toLowerCase();
+        list = list.filter(c => c.name.toLowerCase().includes(q) || c.employeeNumber.toLowerCase().includes(q) || c.client.toLowerCase().includes(q) || c.accountNo.includes(q));
+      }
+      return list;
+    },
+    contractStatus(end) {
+      if (!end) return 'unknown';
+      return new Date(end) >= new Date() ? 'active' : 'expired';
+    },
+    formatDate(d) {
+      if (!d) return '—';
+      return new Date(d).toLocaleDateString('en-MY', { day:'2-digit', month:'short', year:'numeric' });
+    },
+  };
+}
+</script>

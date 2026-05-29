@@ -1,0 +1,59 @@
+{% macro fmt_rm(n) %}{% if n is not none %}RM {{ "{:,.2f}".format(n|float) }}{% else %}—{% endif %}{% endmacro %}
+{% macro fmt_date(d) %}{% if d %}{{ d[:16].replace('T',' ') }}{% else %}—{% endif %}{% endmacro %}
+
+{% set STEP_DEFS = [
+  (1, 'Upload & Intake Stamp', 'Upload'),
+  (2, 'AI Check File Generation', 'Check File'),
+  (3, 'Approval Gate (Check)', 'Check Approval'),
+  (4, 'Bank Upload File', 'Bank File'),
+  (5, 'FE Bank Upload', 'Bank Upload'),
+  (6, 'Payment Approval (Director)', 'Payment Approval'),
+  (7, 'Zoho Books Posting', 'Zoho Post'),
+  (8, 'FP&A Sub-Ledger', 'FP&A Ledger'),
+  (9, 'Audit Package Assembly', 'Audit Package'),
+  (10, 'Compliance Controls', 'Compliance'),
+] %}
+
+<div class="pf-layout">
+  {# ── Step tracker sidebar ── #}
+  <div class="pf-tracker">
+    {% for sn, stitle, sshort in STEP_DEFS %}
+    {% set state = step_state(sn, kase) %}
+    {% set is_selected = selected_step == sn %}
+    <button class="pf-tracker-step pf-state-{{ state }} {% if is_selected %}pf-step-selected{% endif %}"
+        hx-get="/cases/{{ kase.id }}/step/{{ sn }}"
+        hx-target="#step-panel"
+        hx-swap="innerHTML">
+      <div class="pf-step-circle pf-circle-{{ state }}">
+        {% if state == 'done' %}
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+        {% elif state == 'rejected' %}
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        {% else %}
+        <span>{{ sn }}</span>
+        {% endif %}
+      </div>
+      <div class="pf-step-info">
+        <div class="pf-step-num-label">Step {{ sn }}</div>
+        <div class="pf-step-title-label">{{ sshort }}</div>
+      </div>
+      {% if sn < 10 %}<div class="pf-step-connector pf-conn-{{ state }}"></div>{% endif %}
+    </button>
+    {% endfor %}
+  </div>
+
+  {# ── Step panel ── #}
+  <div class="pf-panel" id="step-panel">
+    {% if selected_step == 1 %}{% include "payroll/steps/step1.html" %}
+    {% elif selected_step == 2 %}{% include "payroll/steps/step2.html" %}
+    {% elif selected_step == 3 %}{% include "payroll/steps/step3.html" %}
+    {% elif selected_step == 4 %}{% include "payroll/steps/step4.html" %}
+    {% elif selected_step == 5 %}{% include "payroll/steps/step5.html" %}
+    {% elif selected_step == 6 %}{% include "payroll/steps/step6.html" %}
+    {% elif selected_step == 7 %}{% include "payroll/steps/step7.html" %}
+    {% elif selected_step == 8 %}{% include "payroll/steps/step8.html" %}
+    {% elif selected_step == 9 %}{% include "payroll/steps/step9.html" %}
+    {% elif selected_step == 10 %}{% include "payroll/steps/step10.html" %}
+    {% endif %}
+  </div>
+</div>
