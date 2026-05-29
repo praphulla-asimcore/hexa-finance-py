@@ -339,48 +339,89 @@ async def _auto_book_payment(kase: dict, db) -> dict:
     if not bank_id:
         return {"success": False, "error": f"Account '{_BANK_CODE}'/'{_BANK_NAME}' not found in Zoho ({len(all_accounts)} accounts fetched)"}
 
-    entities = (kase.get("parsed_data") or {}).get("entities", [])
-    all_employees = [
-        {**emp, "entityName": ent["sheetName"]}
-        for ent in entities for emp in ent.get("employees", [])
-    ]
+    # Build payment rows from bank file (RCMS XLSX) if available,
+    # otherwise fall back to CSI parsed employee data
+    payment_rows = []  # list of (amount, description, reference)
 
-    line_items = []
-    for emp in all_employees:
-        amount = _round2(emp.get("netSalary", 0))
-        if amount <= 0:
-            continue
-        cust = emp.get("costCentre", "")
-        cons = emp.get("name", emp.get("employeeId", ""))
-        desc = f"{entity_code}_CSI_{cust}_{cons}_{mmm_yy}"
-        line_items.append({"account_id": payable_id, "debit_or_credit": "debit",
-                            "amount": amount, "description": desc})
-        line_items.append({"account_id": bank_id, "debit_or_credit": "credit",
-                            "amount": amount, "description": desc})
+    bank_data = kase.get("bank_file_data")
+    if bank_data:
+        try:
+            import io as _io
+            import openpyxl as _xl
+            xlsx_bytes = base64.b64decode(bank_data)
+            wb = _xl.load_workbook(_io.BytesIO(xlsx_bytes), read_only=True, data_only=True)
+            ws = wb.active
+            rows = list(ws.iter_rows(values_only=True))
+            wb.close()
+            # Headers: col 3=Favourite Beneficiary Code, col 4=Transaction Amount, col 15=Advice Detail
+            for row in rows[1:]:  # skip header
+                if not row or row[4] is None:
+                    continue
+                try:
+                    amount = _round2(float(row[4]))
+                except (TypeError, ValueError):
+                    continue
+                if amount <= 0:
+                    continue
+                advice     = str(row[15] or "").strip() if len(row) > 15 else ""
+                bene_code  = str(row[3] or "").strip()  if len(row) > 3  else ""
+                description = advice or bene_code or f"PMT-{kase['reference']}"
+                reference   = bene_code or advice or f"PMT-{kase['reference']}"
+                payment_rows.append((amount, description, reference))
+        except Exception:
+            payment_rows = []  # fall back to CSI data
 
-    if not line_items:
-        return {"success": False, "error": "No employees with net salary > 0"}
+    if not payment_rows:
+        # Fallback: use CSI parsed employee net salaries
+        entities = (kase.get("parsed_data") or {}).get("entities", [])
+        for ent in entities:
+            for emp in ent.get("employees", []):
+                amount = _round2(emp.get("netSalary", 0))
+                if amount <= 0:
+                    continue
+                cons  = (emp.get("name") or emp.get("employeeId", "")).replace(" ", "_")
+                cust  = (emp.get("costCentre") or "").replace(" ", "_")
+                desc  = f"{cons}_{cust}_{mmm_yy}"
+                ref   = f"PMT-{kase['reference']}-{emp.get('employeeId','')}"
+                payment_rows.append((amount, desc, ref))
 
-    try:
-        journal = await post_journal_entry(org_id, {
-            "journal_date":     journal_date,
-            "reference_number": f"PMT-{kase['reference']}",
-            "notes": (
-                f"CSI Salary Payment – {kase.get('period')} – "
-                f"{kase.get('entity_name', entity_code)} – Ref: {kase['reference']}"
-            ),
-            "line_items": line_items,
-        })
-        j_id = journal.get("journal_id")
-        existing = kase.get("zoho_journal_ids") or []
-        db.from_("payroll_cases").update({
-            "zoho_org_id":      org_id,
-            "zoho_journal_ids": existing + ([j_id] if j_id else []),
-            "zoho_posted_at":   _now(),
-        }).eq("id", kase["id"]).execute()
-        return {"success": True, "journal_id": j_id}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+    if not payment_rows:
+        return {"success": False, "error": "No payment rows found (bank file empty and no employees with net salary > 0)"}
+
+    # Post ONE expense per consultant row (not a JV)
+    results = []
+    for amount, description, reference in payment_rows:
+        try:
+            expense = await create_expense(org_id, {
+                "account_id":              payable_id,
+                "paid_through_account_id": bank_id,
+                "date":                    journal_date,
+                "amount":                  amount,
+                "description":             description,
+                "reference_number":        reference,
+                "currency_code":           "MYR",
+                "exchange_rate":           1,
+                "is_billable":             False,
+            })
+            results.append({"ref": reference, "expense_id": expense.get("expense_id"), "success": True})
+        except Exception as e:
+            results.append({"ref": reference, "error": str(e), "success": False})
+
+    posted  = [r for r in results if r["success"]]
+    failed  = [r for r in results if not r["success"]]
+    exp_ids = [r["expense_id"] for r in posted if r.get("expense_id")]
+
+    if not posted:
+        return {"success": False, "error": f"All {len(results)} expenses failed. First: {results[0].get('error')}", "results": results}
+
+    existing = kase.get("zoho_journal_ids") or []
+    db.from_("payroll_cases").update({
+        "zoho_org_id":      org_id,
+        "zoho_journal_ids": existing + exp_ids,
+        "zoho_posted_at":   _now(),
+        "status":           "zoho_posted",
+    }).eq("id", kase["id"]).execute()
+    return {"success": True, "posted": len(posted), "failed": len(failed), "expense_ids": exp_ids, "results": results}
 
 
 def _approval_page_html(title: str, color: str, msg: str) -> str:
