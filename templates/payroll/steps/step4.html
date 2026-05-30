@@ -10,6 +10,19 @@
   </div>
 
   {% if has_files %}
+  {% set missing_accounts = (kase.check_data or {}).get('missingBankAccounts', []) %}
+  {% if missing_accounts %}
+  <div class="pf-flags-card pf-flags-warn" style="margin-bottom:14px">
+    <div class="pf-flags-header">{{ missing_accounts|length }} employee(s) with no bank account — excluded from bank file</div>
+    {% for m in missing_accounts %}
+    <div class="pf-flag-row">
+      <span class="pf-flag-code">MISSING_BANK</span>
+      <span>{{ m.name or m.employeeId }}</span>
+    </div>
+    {% endfor %}
+    <div style="font-size:12px;color:#92400e;margin-top:8px">Update bank account details and re-generate the bank file if needed.</div>
+  </div>
+  {% endif %}
   <div class="pf-info-banner pf-banner-ok">Bank files ready — download and upload to the bank portal.</div>
   <div class="pf-info-grid">
     <div class="pf-stamp-box"><span class="pf-stamp-label">RCMS XLSX</span><span class="pf-stamp-value">{{ kase.bank_file_name or '—' }}</span></div>

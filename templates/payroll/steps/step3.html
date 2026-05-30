@@ -1,9 +1,11 @@
 {% macro fmt_date(d) %}{% if d %}{{ d[:16].replace('T',' ') }}{% else %}—{% endif %}{% endmacro %}
+{% macro fmt_rm(n) %}{% if n is not none %}RM {{ "{:,.2f}".format(n|float) }}{% else %}—{% endif %}{% endmacro %}
 
 {% set can_send = kase.status == 'check_generated' %}
 {% set is_approved = kase.status in ['check_approved','bank_file_generated','bank_uploaded','payment_approval_sent','payment_approved','payment_rejected','zoho_posted'] %}
 {% set is_rejected = kase.status == 'check_rejected' %}
 {% set cert = kase.check_approval_cert or {} %}
+{% set check = kase.check_data or {} %}
 {% set audit_accrual = (logs | selectattr('event_type','equalto','ZOHO_ACCRUAL_AUTO') | list | last) if logs else none %}
 
 {% macro approver_box(name, role, status, ts) %}
@@ -23,6 +25,27 @@
     <h2 class="pf-panel-title">Approval Gate (Check)</h2>
     <p class="pf-panel-sub">Send for approval to trigger accrual posting. Reviewer → final approver chain.</p>
   </div>
+
+  {# ── Exceptions carry-over from Step 2 ── #}
+  {% if (check.flagCount or 0) > 0 %}
+  <div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:14px 16px;margin-bottom:16px">
+    <div style="font-weight:700;color:#92400e;margin-bottom:6px;font-size:13px">
+      ⚠ {{ check.flagCount }} Exception(s) Flagged — review before sending for approval
+    </div>
+    {% for f in (check.flags or [])[:10] %}
+    <div style="font-size:12px;color:#78350f;margin-bottom:3px;display:flex;gap:8px">
+      <span style="font-weight:600;font-family:monospace">{{ f.code }}</span>
+      <span>{{ f.employee or f.entity or '' }}</span>
+      {% if f.diff %}<span style="color:#b45309">Δ {{ fmt_rm(f.diff) }}</span>{% endif %}
+    </div>
+    {% endfor %}
+    {% if can_send %}
+    <div style="margin-top:10px;font-size:12px;color:#92400e;border-top:1px solid #fde68a;padding-top:8px">
+      To correct these, go to <strong>Step 2 → Return to Preparer</strong> before sending for approval.
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
 
   {# ── Accrual result banner ── #}
   {% if audit_accrual %}

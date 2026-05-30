@@ -14,7 +14,7 @@
 {# ── Auto-poll while waiting for email approvals ── #}
 {# Fires every 8 s and replaces this entire block when status changes.   #}
 {# The div is omitted once the case advances, so polling stops cleanly.  #}
-{% if kase.status in ['check_approval_sent', 'check_reviewer_approved', 'payment_approval_sent'] %}
+{% if kase.status in ['check_approval_sent', 'check_reviewer_approved', 'check_approved', 'payment_approval_sent'] %}
 <div id="approval-poller"
      hx-get="/cases/{{ kase.id }}"
      hx-target="#case-detail-inner"

@@ -1,11 +1,6 @@
 {% set label = 'CSI' if module == 'csi' else 'Payroll' %}
 {% set case_type = 'CSI' if module == 'csi' else 'PAYROLL' %}
 
-{% macro period_default() %}
-  {% set now = [] %}
-  {{- '' -}}
-{% endmacro %}
-
 <div class="pf-screen fade-in">
   <div class="screen-header">
     <button class="pf-back-btn"
@@ -70,9 +65,24 @@
         </div>
         <div class="pf-form-section">
           <label class="label">Period <span class="req">*</span></label>
-          <div style="display:flex;gap:8px;align-items:center">
-            <input class="input" name="period_ym" id="period-ym" placeholder="202506" maxlength="6"
-                   style="flex:1" required/>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <select class="input" id="period-month" style="flex:1;min-width:130px" onchange="buildPeriodYm()">
+              <option value="">— Month —</option>
+              <option value="01">January</option>
+              <option value="02">February</option>
+              <option value="03">March</option>
+              <option value="04">April</option>
+              <option value="05">May</option>
+              <option value="06">June</option>
+              <option value="07">July</option>
+              <option value="08">August</option>
+              <option value="09">September</option>
+              <option value="10">October</option>
+              <option value="11">November</option>
+              <option value="12">December</option>
+            </select>
+            <input class="input" id="period-year" placeholder="2026" maxlength="4" style="width:80px"
+                   oninput="buildPeriodYm()" required/>
             <select class="input" name="period_cycle" id="period-cycle" style="width:130px">
               <option value="25th">25th</option>
               <option value="EOM">End of Month</option>
@@ -80,7 +90,9 @@
               <option value="15th">15th</option>
             </select>
           </div>
-          <span class="pf-hint">YYYYMM + payment cycle. 7th/15th → Zoho date = prior month-end. Auto-detected from filename.</span>
+          {# Hidden field carries the YYYYMM value the server expects #}
+          <input type="hidden" name="period_ym" id="period-ym"/>
+          <span class="pf-hint">Select month + enter year. 7th/15th → Zoho date = prior month-end. Auto-detected from filename.</span>
         </div>
       </div>
 
@@ -103,6 +115,23 @@
 <script>
 const ORGS = {{ orgs | tojson }};
 
+function buildPeriodYm() {
+  const mo = document.getElementById('period-month').value;
+  const yr = document.getElementById('period-year').value.trim();
+  document.getElementById('period-ym').value = (yr.length === 4 && mo) ? yr + mo : '';
+}
+
+function setMonthYear(yyyymm) {
+  if (!yyyymm || yyyymm.length !== 6) return;
+  const yr = yyyymm.slice(0, 4);
+  const mo = yyyymm.slice(4, 6);
+  const mSel = document.getElementById('period-month');
+  const ySel = document.getElementById('period-year');
+  if (!mSel.value) mSel.value = mo;
+  if (!ySel.value) ySel.value = yr;
+  buildPeriodYm();
+}
+
 function updateDropZone(input) {
   const file = input.files[0];
   if (!file) return;
@@ -112,17 +141,14 @@ function updateDropZone(input) {
   document.getElementById('drop-filesize').textContent = '(' + (file.size / 1024).toFixed(0) + ' KB)';
   document.getElementById('drop-zone').classList.add('pf-drop-zone-filled');
 
-  // Auto-detect YYYYMM from filename
+  // Auto-detect YYYYMM from filename → set dropdowns
   const name = file.name;
   const m1 = name.match(/\b(20\d{2})(0[1-9]|1[0-2])\b/);
   const m2 = name.match(/\b(20\d{2})[-_](0[1-9]|1[0-2])\b/);
   const m3 = name.match(/\b(0[1-9]|1[0-2])[-_](20\d{2})\b/);
-  const ymInput = document.getElementById('period-ym');
-  if (!ymInput.value) {
-    if (m1) ymInput.value = m1[1] + m1[2];
-    else if (m2) ymInput.value = m2[1] + m2[2];
-    else if (m3) ymInput.value = m3[2] + m3[1];
-  }
+  if (m1)      setMonthYear(m1[1] + m1[2]);
+  else if (m2) setMonthYear(m2[1] + m2[2]);
+  else if (m3) setMonthYear(m3[2] + m3[1]);
 
   // Auto-detect entity from filename
   const upper = name.toUpperCase();
@@ -147,4 +173,14 @@ function updateEntityHint(select) {
     nameHidden.value = '';
   }
 }
+
+// Validate period_ym is set before submit
+document.getElementById('upload-form').addEventListener('submit', function(e) {
+  buildPeriodYm();
+  const ym = document.getElementById('period-ym').value;
+  if (!ym || ym.length !== 6) {
+    e.preventDefault();
+    alert('Please select a month and enter a 4-digit year for the Period.');
+  }
+});
 </script>

@@ -1463,8 +1463,13 @@ async def director_approve(token: str, action: str = "approve"):
 
     await _audit_log(db, kase["id"], "PAYMENT_APPROVED", tok["approver_name"], None, None, {"cert": cert})
 
-    # Auto-book payment journal in Zoho (DR Salary Payable / CR Bank)
-    fresh_kase = {**kase, "payment_approved_by": tok["approver_name"], "payment_approval_cert": cert}
+    # Auto-book payment journal in Zoho — use now[:10] as payment date (director approval date)
+    fresh_kase = {
+        **kase,
+        "payment_approved_by":   tok["approver_name"],
+        "payment_approval_cert": cert,
+        "payment_date":          now[:10],
+    }
     try:
         if kase.get("type") == "PAYROLL":
             pay_result = await _auto_book_payment_payroll(fresh_kase, db)
@@ -1529,8 +1534,13 @@ async def confirm_payment(case_id: str, request: Request):
 
     await _audit_log(db, case_id, "PAYMENT_CONFIRMED_INAPP", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"cert": cert})
 
-    # Auto-book payment journal in Zoho
-    fresh_kase = {**kase, "payment_approved_by": user.get("name") or user.get("email"), "payment_approval_cert": cert}
+    # Auto-book payment journal in Zoho — include confirmed payment_date so Zoho uses the right date
+    fresh_kase = {
+        **kase,
+        "payment_approved_by":   user.get("name") or user.get("email"),
+        "payment_approval_cert": cert,
+        "payment_date":          actual_payment_date,
+    }
     try:
         if kase.get("type") == "PAYROLL":
             pay_result = await _auto_book_payment_payroll(fresh_kase, db)

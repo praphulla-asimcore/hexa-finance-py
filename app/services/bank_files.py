@@ -193,15 +193,20 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
     txt_hash = _sha256(txt_bytes)
     txt_name = f"RCgen_Payment_DP_{ts_part}.txt"
 
+    missing = [{"name": b["name"], "employeeId": b["employeeId"]} for b in beneficiaries if not b["matched"]]
+    existing_check = dict(kase.get("check_data") or {})
+    existing_check["missingBankAccounts"] = missing
+
     db.from_("payroll_cases").update({
-        "status": "bank_file_generated",
-        "bank_file_name": xlsx_name,
-        "bank_file_hash": xlsx_hash,
-        "bank_file_data": base64.b64encode(xlsx_bytes).decode(),
+        "status":                 "bank_file_generated",
+        "bank_file_name":         xlsx_name,
+        "bank_file_hash":         xlsx_hash,
+        "bank_file_data":         base64.b64encode(xlsx_bytes).decode(),
         "bank_file_generated_at": now,
         "bank_file_triggered_by": triggered_by,
-        "bank_receipt_name": txt_name,
-        "bank_receipt_data": base64.b64encode(txt_bytes).decode(),
+        "bank_receipt_name":      txt_name,
+        "bank_receipt_data":      base64.b64encode(txt_bytes).decode(),
+        "check_data":             existing_check,
     }).eq("id", kase["id"]).execute()
 
     matched_count = sum(1 for b in beneficiaries if b["matched"])
@@ -212,6 +217,7 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
         "txtBytes": txt_bytes,
         "matched": matched_count,
         "total": len(beneficiaries),
+        "missing": missing,
     }
 
 
@@ -319,6 +325,10 @@ async def generate_and_store_bank_files_payroll(kase: dict, db, triggered_by: st
     txt_hash = _sha256(txt_bytes)
     txt_name = f"RCgen_Payment_DP_{ts_part}.txt"
 
+    missing = [{"name": b["name"], "employeeId": b["employeeId"]} for b in beneficiaries if not b["matched"]]
+    existing_check = dict(kase.get("check_data") or {})
+    existing_check["missingBankAccounts"] = missing
+
     db.from_("payroll_cases").update({
         "status":                   "bank_file_generated",
         "bank_file_name":           xlsx_name,
@@ -328,6 +338,7 @@ async def generate_and_store_bank_files_payroll(kase: dict, db, triggered_by: st
         "bank_file_triggered_by":   triggered_by,
         "bank_receipt_name":        txt_name,
         "bank_receipt_data":        base64.b64encode(txt_bytes).decode(),
+        "check_data":               existing_check,
     }).eq("id", kase["id"]).execute()
 
     matched_count = sum(1 for b in beneficiaries if b["matched"])
@@ -338,4 +349,5 @@ async def generate_and_store_bank_files_payroll(kase: dict, db, triggered_by: st
         "txtBytes":  txt_bytes,
         "matched":   matched_count,
         "total":     len(beneficiaries),
+        "missing":   missing,
     }
