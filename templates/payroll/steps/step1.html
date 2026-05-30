@@ -7,13 +7,32 @@
     <p class="pf-panel-sub">File received and locked in system.</p>
   </div>
 
+  {% if kase.status == 'returned' %}
+  <div class="pf-info-banner pf-banner-warning" style="margin-bottom:16px">
+    ⚠ This run was returned to you for correction. Review the flagged exceptions in Step 2, correct your source file, then re-upload below.
+  </div>
+  <div class="pf-action-zone" style="margin-bottom:20px">
+    <form hx-post="/cases/{{ kase.id }}/reupload"
+          hx-target="#case-detail-inner" hx-swap="innerHTML"
+          hx-encoding="multipart/form-data">
+      <label class="label">Re-upload Corrected File <span class="req">*</span></label>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <input type="file" name="file" accept=".xlsx,.xls" class="input" style="flex:1;min-width:200px" required/>
+        <button type="submit" class="btn btn-primary">
+          <span class="spinner htmx-indicator"></span>
+          Re-upload & Re-check
+        </button>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+
   <div class="pf-info-grid">
     <div class="pf-stamp-box"><span class="pf-stamp-label">Uploaded by</span><span class="pf-stamp-value">{{ kase.uploaded_by_name or '—' }}</span></div>
     <div class="pf-stamp-box"><span class="pf-stamp-label">Date-Time</span><span class="pf-stamp-value">{{ fmt_date(kase.uploaded_at) }}</span></div>
     <div class="pf-stamp-box"><span class="pf-stamp-label">IP Address</span><span class="pf-stamp-value">{{ kase.upload_ip or '—' }}</span></div>
     <div class="pf-stamp-box"><span class="pf-stamp-label">File</span><span class="pf-stamp-value">{{ kase.original_file_name or '—' }}</span></div>
     <div class="pf-stamp-box"><span class="pf-stamp-label">SHA-256 Hash</span><span class="pf-stamp-value" style="font-family:monospace;font-size:11px">{{ (kase.original_file_hash or '—')[:32] }}{% if kase.original_file_hash %}…{% endif %}</span></div>
-    <div class="pf-stamp-box"><span class="pf-stamp-label">Payment Date</span><span class="pf-stamp-value">{{ kase.payment_date or '—' }}</span></div>
     <div class="pf-stamp-box"><span class="pf-stamp-label">Reference</span><span class="pf-stamp-value" style="color:#6366f1;font-family:monospace">{{ kase.reference }}</span></div>
   </div>
 

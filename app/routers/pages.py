@@ -39,6 +39,10 @@ async def dashboard(request: Request):
             all_resp = db.from_("journal_posts").select("entity,module,total_amount,posted_at,journal_date").execute()
             all_posts = all_resp.data or []
 
+            # Exceptions per month: query all cases that have check_data
+            exc_resp = db.from_("payroll_cases").select("type,uploaded_at,period,check_data").not_.is_("check_data", "null").execute()
+            exc_cases = exc_resp.data or []
+
             by_entity: dict = {}
             by_module: dict = {}
             by_month: dict = {}
@@ -64,12 +68,26 @@ async def dashboard(request: Request):
                     by_month[ym]["count"] += 1
                     by_month[ym]["total"] += amount
 
+            # Build exceptions by month
+            exc_by_month: dict = {}
+            for c in exc_cases:
+                ym = (c.get("period") or c.get("uploaded_at") or "")[:7]
+                if not ym:
+                    continue
+                cd = c.get("check_data") or {}
+                flags = int(cd.get("flagCount") or 0)
+                mod = (c.get("type") or "CSI").lower()
+                if ym not in exc_by_month:
+                    exc_by_month[ym] = {"csi": 0, "payroll": 0}
+                exc_by_month[ym][mod] = exc_by_month[ym].get(mod, 0) + flags
+
             stats = {
                 "byEntity": sorted([{"entity": k, **v} for k, v in by_entity.items()], key=lambda x: x["total"], reverse=True),
                 "byModule": [{"module": k, **v} for k, v in by_module.items()],
                 "recentMonths": sorted([{"month": k, **v} for k, v in by_month.items()], key=lambda x: x["month"], reverse=True)[:12],
                 "totalPosts": len(all_posts),
                 "totalAmount": total_amount,
+                "excByMonth": sorted([{"month": k, **v} for k, v in exc_by_month.items()], key=lambda x: x["month"], reverse=True)[:12],
             }
         except Exception:
             recent_cases = []

@@ -22,8 +22,17 @@
       <form hx-post="/cases/{{ kase.id }}/log-bank-upload"
             hx-target="#case-detail-inner"
             hx-swap="innerHTML">
-        <label class="label">Bank Portal Reference Number</label>
-        <input class="input" name="bankPortalRef" placeholder="e.g. TXN-2026050001" style="margin-bottom:10px" required/>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px">
+          <div>
+            <label class="label">Bank Portal Reference Number <span class="req">*</span></label>
+            <input class="input" name="bankPortalRef" placeholder="e.g. TXN-2026050001" required/>
+          </div>
+          <div>
+            <label class="label">Actual Payment Date <span class="req">*</span></label>
+            <input type="date" class="input" name="actualPaymentDate" required/>
+            <span class="pf-hint">Date the bank executed the transfer — used for Zoho reconciliation.</span>
+          </div>
+        </div>
         <button type="submit" class="btn btn-primary">
           <span class="spinner htmx-indicator"></span>
           Log Bank Upload
@@ -34,7 +43,8 @@
     <div class="pf-sub-step-done">
       <div class="pf-stamp-box"><span class="pf-stamp-label">Uploaded by</span><span class="pf-stamp-value">{{ kase.bank_upload_by }}</span></div>
       <div class="pf-stamp-box"><span class="pf-stamp-label">Bank Portal Ref</span><span class="pf-stamp-value" style="font-family:monospace">{{ kase.bank_portal_ref }}</span></div>
-      <div class="pf-stamp-box"><span class="pf-stamp-label">Date-Time</span><span class="pf-stamp-value">{{ fmt_date(kase.bank_upload_at) }}</span></div>
+      <div class="pf-stamp-box"><span class="pf-stamp-label">Actual Payment Date</span><span class="pf-stamp-value">{{ kase.payment_date or '—' }}</span></div>
+      <div class="pf-stamp-box"><span class="pf-stamp-label">Logged at</span><span class="pf-stamp-value">{{ fmt_date(kase.bank_upload_at) }}</span></div>
     </div>
     {% else %}
     <div class="pf-sub-step-locked">Generate and download bank files first (Step 4).</div>

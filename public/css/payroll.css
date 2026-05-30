@@ -257,3 +257,22 @@
 .pf-empty-title{font-size:18px;font-weight:800;color:var(--text-primary);margin-bottom:6px}
 .pf-empty-sub{font-size:13px;color:var(--text-muted)}
 .pf-pending-step{font-size:13px;color:var(--text-muted);padding:24px 0}
+
+/* ── Step panel visibility (critical — panels hidden by default) ── */
+.pf-panels-container{overflow:hidden}
+.pf-step-panel{display:none}
+.pf-panel-active{display:block}
+
+/* Step panel enter animation (fade + slight rise) */
+@keyframes pf-panel-fadein{
+  from{opacity:0;transform:translateY(8px)}
+  to{opacity:1;transform:translateY(0)}
+}
+.pf-panel-enter{animation:pf-panel-fadein 0.20s ease}
+
+/* Active step circle pulse */
+@keyframes pf-circle-pulse{
+  0%,100%{box-shadow:0 0 10px rgba(156,39,176,0.45)}
+  50%{box-shadow:0 0 16px rgba(156,39,176,0.75)}
+}
+.pf-circle-animate.pf-circle-active{animation:pf-circle-pulse 2s ease-in-out infinite}

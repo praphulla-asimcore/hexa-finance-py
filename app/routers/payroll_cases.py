@@ -11,12 +11,13 @@ from fastapi.templating import Jinja2Templates
 from app.config import TEMPLATES_DIR, APP_URL, APPROVERS, ORGS
 from app.deps import get_current_user
 from app.services.db import get_db
-from app.services.parser import parse_excel_buffer
+from app.services.parser import parse_excel_buffer, parse_payroll_excel_buffer
 from app.services.zoho import post_journal_entry, create_expense, attach_journal_document, fetch_accounts
-from app.services.bank_files import generate_and_store_bank_files
+from app.services.bank_files import generate_and_store_bank_files, generate_and_store_bank_files_payroll
 from app.services.pdf import build_check_report_pdf, build_audit_package_pdf
 from app.services.email import (
     email_check_approval, email_payment_approval, email_notify,
+    email_return_to_preparer,
 )
 
 router = APIRouter()
@@ -207,6 +208,297 @@ _PAYABLE_CODE = "HSSB-041"
 _PAYABLE_NAME = "Consultant Salary Payable"
 _BANK_CODE    = "HSSB-003"
 _BANK_NAME    = "Cash at Bank - MBB_MYR"
+
+
+# ─── Payroll (internal employee) account IDs (HSSB org 762447369) ────────────
+# Sourced from Chart_of_Accounts.csv.
+# Statutory payable accounts (EPF/SOCSO/HRDF/PCB) are not in the exported CSV
+# and are resolved by name lookup via the Zoho API at runtime.
+
+_HSSB_PAYROLL = {
+    # DR: single expense account used for ALL components
+    "salary_exp":    "2877958000012773978",  # 3.1.1  Internal - Salaries and Benefits
+    # CR payables
+    "net_pay":       "2877958000005041067",  # HSSB-043  Internal Salary Payable
+    # Bank (same as CSI)
+    "bank":          "2877958000000096397",  # HSSB-003  Cash at Bank - MBB_MYR
+    # Fallback for statutory payables not yet in Zoho
+    "payable_fallback": "2877958000000098963",  # HSSB-052  Other payables and accruals
+}
+
+# Zoho account names for statutory payables (looked up by name at runtime)
+_PAYROLL_PAYABLE_NAMES = {
+    "epf":    "EPF, SSF, CPF, Pag-IBIG/HDMF Payable",
+    "socso":  "BPJS TK, SSC, SSS, SOCSO, EIS Payable",
+    "hrdf":   "HRDF, SDL Payable",
+    "pcb":    "TDS, PCB/MTD, PIT Payable",
+}
+
+_PAYROLL_ORG_MAP: dict = {
+    "762447369": _HSSB_PAYROLL,
+}
+
+
+# ─── Payroll check builder ────────────────────────────────────────────────────
+
+def _build_check_data_payroll(entities: list[dict]) -> dict:
+    flags = []
+    employees = gross = ctc = net = 0
+    stat: dict = {"eEPF": 0.0, "rEPF": 0.0, "eSOCSO": 0.0, "rSOCSO": 0.0,
+                  "eEIS": 0.0, "rEIS": 0.0, "hrdf": 0.0, "pcb": 0.0, "cp38": 0.0}
+
+    for ent in entities:
+        employees += len(ent.get("employees", []))
+        for emp in ent.get("employees", []):
+            gross += emp.get("grossEarnings", 0)
+            ctc   += emp.get("ctcHexa", 0)
+            net   += emp.get("netSalary", 0)
+            for k in stat:
+                stat[k] += emp.get(k, 0)
+
+            # Validate: Net Pay = Gross Earnings - Total employee deductions + Net additions
+            expected_net = (
+                emp.get("grossEarnings", 0)
+                - emp.get("totalEmpDedn", 0)
+                + emp.get("netAdditions", 0)
+            )
+            if abs(emp.get("netSalary", 0) - expected_net) > 0.05:
+                flags.append({
+                    "code": "NET_PAY_VARIANCE",
+                    "employee": emp.get("name") or emp.get("employeeId"),
+                    "entity": ent["sheetName"],
+                    "expected": _round2(expected_net),
+                    "actual": emp.get("netSalary"),
+                    "diff": _round2(abs(emp.get("netSalary", 0) - expected_net)),
+                })
+
+            if emp.get("netSalary", 0) == 0:
+                flags.append({"code": "ZERO_NET", "employee": emp.get("name"), "entity": ent["sheetName"]})
+            if not emp.get("bankAccount"):
+                flags.append({"code": "MISSING_BANK_ACCOUNT", "employee": emp.get("name") or emp.get("employeeId"), "entity": ent["sheetName"]})
+
+        if ent.get("missingColumns"):
+            flags.append({"code": "MISSING_COLUMNS", "entity": ent["sheetName"], "columns": ent["missingColumns"]})
+
+    return {
+        "consultantCount": employees,
+        "entityCount": len(entities),
+        "grossPayrollTotal": _round2(gross),
+        "ctcTotal": _round2(ctc),
+        "netSalaryTotal": _round2(net),
+        "statutory": {k: _round2(v) for k, v in stat.items()},
+        "flagCount": len(flags),
+        "flags": flags,
+        "generatedAt": _now(),
+        "generatedBy": "Hexa Check Engine v1.0 (Payroll)",
+    }
+
+
+# ─── Payroll accrual booking ──────────────────────────────────────────────────
+
+async def _auto_book_accruals_payroll(kase: dict, db) -> dict:
+    """
+    Posts ONE Zoho journal for the payroll accrual:
+      DR  Internal - Salaries and Benefits = Total CTC
+      CR  Internal Salary Payable          = Total Net Pay
+      CR  EPF Payable                      = Total eEPF + rEPF
+      CR  SOCSO+EIS Payable                = Total eSOCSO + rSOCSO + eEIS + rEIS
+      CR  HRDF Payable                     = Total HRDF
+      CR  PCB Payable                      = Total PCB + CP38
+    """
+    org_cfg = ORGS.get(kase.get("entity", ""), {})
+    org_id  = org_cfg.get("id")
+    if not org_id:
+        return {"success": False, "error": f"No Zoho org ID for entity {kase.get('entity')}"}
+
+    maps = _PAYROLL_ORG_MAP.get(org_id)
+    if not maps:
+        return {"success": False, "error": f"Payroll account map not configured for org {org_id}. Add it to _PAYROLL_ORG_MAP."}
+
+    journal_date = _compute_journal_date(kase.get("period", ""))
+    mmm_yy       = _period_mmm_yy(kase.get("period", ""))
+    entity_code  = kase.get("entity", "HSSB")
+    description  = f"{entity_code}_Salary_Internal_Employees_{mmm_yy}"
+
+    # Resolve statutory payable IDs via Zoho API (names not in CSV export)
+    try:
+        all_accounts = await fetch_accounts(org_id)
+    except Exception as e:
+        return {"success": False, "error": f"Could not fetch Zoho accounts: {e}"}
+    by_name = {a["name"]: a["id"] for a in all_accounts if a.get("name")}
+
+    def _payable_id(key: str) -> str:
+        name = _PAYROLL_PAYABLE_NAMES[key]
+        return by_name.get(name) or maps["payable_fallback"]
+
+    epf_payable   = _payable_id("epf")
+    socso_payable = _payable_id("socso")
+    hrdf_payable  = _payable_id("hrdf")
+    pcb_payable   = _payable_id("pcb")
+
+    entities = (kase.get("parsed_data") or {}).get("entities", [])
+    all_employees = [emp for ent in entities for emp in ent.get("employees", [])]
+
+    totals = {
+        "ctc":    _round2(sum(e.get("ctcHexa", 0) for e in all_employees)),
+        "net":    _round2(sum(e.get("netSalary", 0) for e in all_employees)),
+        "epf":    _round2(sum(e.get("eEPF", 0) + e.get("epfEmployer", 0) for e in all_employees)),
+        "socso":  _round2(sum(e.get("eSOCSO", 0) + e.get("socsoEmployer", 0) + e.get("eEIS", 0) + e.get("eisEmployer", 0) for e in all_employees)),
+        "hrdf":   _round2(sum(e.get("hrdf", 0) for e in all_employees)),
+        "pcb":    _round2(sum(e.get("pcb", 0) + e.get("cp38", 0) for e in all_employees)),
+    }
+
+    if totals["ctc"] == 0:
+        return {"success": False, "error": "Total CTC is zero — check payroll file data."}
+
+    line_items = [
+        {"account_id": maps["salary_exp"], "debit_or_credit": "debit",  "amount": totals["ctc"],   "description": description},
+        {"account_id": maps["net_pay"],    "debit_or_credit": "credit", "amount": totals["net"],   "description": description},
+        {"account_id": epf_payable,        "debit_or_credit": "credit", "amount": totals["epf"],   "description": description},
+        {"account_id": socso_payable,      "debit_or_credit": "credit", "amount": totals["socso"], "description": description},
+        {"account_id": hrdf_payable,       "debit_or_credit": "credit", "amount": totals["hrdf"],  "description": description},
+        {"account_id": pcb_payable,        "debit_or_credit": "credit", "amount": totals["pcb"],   "description": description},
+    ]
+    # Remove zero-amount lines
+    line_items = [li for li in line_items if li["amount"] > 0]
+
+    try:
+        journal = await post_journal_entry(org_id, {
+            "journal_date":     journal_date,
+            "reference_number": f"ACCR-{kase['reference']}",
+            "notes": (
+                f"Payroll Accrual – {kase.get('period')} – "
+                f"{kase.get('entity_name', entity_code)} – Ref: {kase['reference']}"
+            ),
+            "line_items": line_items,
+        })
+        j_id = journal.get("journal_id")
+        db.from_("payroll_cases").update({
+            "zoho_org_id":      org_id,
+            "zoho_journal_ids": [j_id] if j_id else [],
+        }).eq("id", kase["id"]).execute()
+        return {"success": True, "journal_id": j_id, "totals": totals,
+                "epf_payable_resolved": epf_payable != maps["payable_fallback"]}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# ─── Payroll payment booking ──────────────────────────────────────────────────
+
+async def _auto_book_payment_payroll(kase: dict, db) -> dict:
+    """
+    Posts Zoho expense entries clearing each payroll liability:
+      - Per-employee net salary: DR Internal Salary Payable → CR Bank
+      - Aggregate EPF:           DR EPF Payable → CR Bank
+      - Aggregate SOCSO+EIS:     DR SOCSO+EIS Payable → CR Bank
+      - Aggregate HRDF:          DR HRDF Payable → CR Bank
+      - Aggregate PCB:           DR PCB Payable → CR Bank
+    Uses payment_date (actual payment date) NOT the period cycle date.
+    """
+    org_cfg = ORGS.get(kase.get("entity", ""), {})
+    org_id  = org_cfg.get("id") or kase.get("zoho_org_id")
+    if not org_id:
+        return {"success": False, "error": f"No Zoho org ID for entity {kase.get('entity')}"}
+
+    maps = _PAYROLL_ORG_MAP.get(org_id)
+    if not maps:
+        return {"success": False, "error": f"Payroll account map not configured for org {org_id}."}
+
+    payment_date = (
+        kase.get("payment_date")
+        or (kase.get("payment_approved_at") or _now())[:10]
+    )
+    mmm_yy      = _period_mmm_yy(kase.get("period", ""))
+    entity_code = kase.get("entity", "HSSB")
+    description = f"{entity_code}_Salary_Internal_Employees_{mmm_yy}"
+
+    # Resolve statutory payable IDs
+    try:
+        all_accounts = await fetch_accounts(org_id)
+    except Exception as e:
+        return {"success": False, "error": f"Could not fetch Zoho accounts: {e}"}
+    by_name = {a["name"]: a["id"] for a in all_accounts if a.get("name")}
+
+    def _payable_id(key: str) -> str:
+        return by_name.get(_PAYROLL_PAYABLE_NAMES[key]) or maps["payable_fallback"]
+
+    epf_payable   = _payable_id("epf")
+    socso_payable = _payable_id("socso")
+    hrdf_payable  = _payable_id("hrdf")
+    pcb_payable   = _payable_id("pcb")
+    bank_id       = maps["bank"]
+    net_payable   = maps["net_pay"]
+
+    entities    = (kase.get("parsed_data") or {}).get("entities", [])
+    all_emps    = [emp for ent in entities for emp in ent.get("employees", [])]
+
+    results = []
+
+    # Per-employee net salary clearance
+    for emp in all_emps:
+        amount = _round2(emp.get("netSalary", 0))
+        if amount <= 0:
+            continue
+        ref = f"PMT-{kase['reference']}-{emp.get('employeeId', '')}"
+        desc = f"{(emp.get('name') or emp.get('employeeId', '')).replace(' ', '_')}_{mmm_yy}"
+        try:
+            expense = await create_expense(org_id, {
+                "account_id":              net_payable,
+                "paid_through_account_id": bank_id,
+                "date":                    payment_date,
+                "amount":                  amount,
+                "description":             desc,
+                "reference_number":        ref,
+                "currency_code":           "MYR",
+                "exchange_rate":           1,
+                "is_billable":             False,
+            })
+            results.append({"type": "net_salary", "ref": ref, "expense_id": expense.get("expense_id"), "success": True})
+        except Exception as e:
+            results.append({"type": "net_salary", "ref": ref, "error": str(e), "success": False})
+
+    # Aggregate statutory payments
+    statutory_payments = [
+        ("epf",   epf_payable,   _round2(sum(e.get("eEPF", 0) + e.get("epfEmployer", 0) for e in all_emps)),   "EPF"),
+        ("socso", socso_payable, _round2(sum(e.get("eSOCSO", 0) + e.get("socsoEmployer", 0) + e.get("eEIS", 0) + e.get("eisEmployer", 0) for e in all_emps)), "SOCSO+EIS"),
+        ("hrdf",  hrdf_payable,  _round2(sum(e.get("hrdf", 0) for e in all_emps)), "HRDF"),
+        ("pcb",   pcb_payable,   _round2(sum(e.get("pcb", 0) + e.get("cp38", 0) for e in all_emps)), "PCB"),
+    ]
+    for stat_key, acct_id, amount, label in statutory_payments:
+        if amount <= 0:
+            continue
+        ref = f"PMT-{kase['reference']}-{label}"
+        try:
+            expense = await create_expense(org_id, {
+                "account_id":              acct_id,
+                "paid_through_account_id": bank_id,
+                "date":                    payment_date,
+                "amount":                  amount,
+                "description":             f"{description}_{label}",
+                "reference_number":        ref,
+                "currency_code":           "MYR",
+                "exchange_rate":           1,
+                "is_billable":             False,
+            })
+            results.append({"type": stat_key, "ref": ref, "expense_id": expense.get("expense_id"), "success": True})
+        except Exception as e:
+            results.append({"type": stat_key, "ref": ref, "error": str(e), "success": False})
+
+    posted  = [r for r in results if r["success"]]
+    failed  = [r for r in results if not r["success"]]
+    exp_ids = [r["expense_id"] for r in posted if r.get("expense_id")]
+
+    if not posted:
+        return {"success": False, "error": f"All {len(results)} payment entries failed. First: {results[0].get('error')}", "results": results}
+
+    existing = kase.get("zoho_journal_ids") or []
+    db.from_("payroll_cases").update({
+        "zoho_org_id":      org_id,
+        "zoho_journal_ids": existing + exp_ids,
+        "zoho_posted_at":   _now(),
+        "status":           "zoho_posted",
+    }).eq("id", kase["id"]).execute()
+    return {"success": True, "posted": len(posted), "failed": len(failed), "expense_ids": exp_ids, "results": results}
 
 
 # ─── Auto accrual booking (Step 2 → 3) ───────────────────────────────────────
@@ -470,7 +762,7 @@ def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None) -
 def _get_active_step(status: str) -> int:
     # Steps shown: 1, 2, 3, 4, 5, 6, 9  (7/8/10 removed)
     mapping = {
-        "uploaded": 2, "check_generated": 3,
+        "uploaded": 2, "returned": 1, "check_generated": 3,
         "check_approval_sent": 3, "check_reviewer_approved": 3, "check_rejected": 3,
         "check_approved": 4, "bank_file_generated": 5, "bank_uploaded": 5,
         "payment_approval_sent": 6, "payment_rejected": 6,
@@ -482,7 +774,8 @@ def _get_active_step(status: str) -> int:
 def _step_state(step_num: int, kase: dict) -> str:
     s = kase.get("status", "")
     DONE_AFTER = {
-        1: True,
+        # Step 1 is "active" when returned (re-upload needed), otherwise always done
+        1: s != "returned",
         2: {"check_generated","check_approval_sent","check_reviewer_approved","check_approved","check_rejected","bank_file_generated","bank_uploaded","payment_approval_sent","payment_approved","payment_rejected","zoho_posted"},
         3: {"check_approved","bank_file_generated","bank_uploaded","payment_approval_sent","payment_approved","payment_rejected","zoho_posted"},
         4: {"bank_file_generated","bank_uploaded","payment_approval_sent","payment_approved","payment_rejected","zoho_posted"},
@@ -565,8 +858,8 @@ async def upload_case(
         return HTMLResponse('<div class="error-msg">Database not configured.</div>')
 
     import re as _re
-    if not file or not file.filename.endswith((".xlsx", ".xls")):
-        return HTMLResponse('<div class="error-msg">Please upload an Excel file (.xlsx or .xls).</div>')
+    if not file or not file.filename.endswith((".xlsx", ".xls", ".xlsm")):
+        return HTMLResponse('<div class="error-msg">Please upload an Excel file (.xlsx, .xlsm, or .xls).</div>')
 
     # Combine and validate period: YYYYMM + named cycle
     period_ym    = period_ym.strip()
@@ -579,7 +872,10 @@ async def upload_case(
 
     content = await file.read()
     try:
-        parsed_entities = parse_excel_buffer(content)
+        if type_up == "PAYROLL":
+            parsed_entities = parse_payroll_excel_buffer(content)
+        else:
+            parsed_entities = parse_excel_buffer(content)
     except Exception as e:
         return HTMLResponse(f'<div class="error-msg">Parse error: {str(e)}</div>')
 
@@ -704,7 +1000,13 @@ async def gen_check(case_id: str, request: Request):
     if kase.get("status") != "uploaded":
         return await _refresh_detail(case_id, db, request, user, _get_active_step(kase.get("status","")))
 
-    check_data = _build_check_data((kase.get("parsed_data") or {}).get("entities", []))
+    case_type = kase.get("type", "CSI")
+    entities  = (kase.get("parsed_data") or {}).get("entities", [])
+    check_data = (
+        _build_check_data_payroll(entities)
+        if case_type == "PAYROLL"
+        else _build_check_data(entities)
+    )
     now = _now()
     db.from_("payroll_cases").update({
         "status": "check_generated", "check_data": check_data, "check_generated_at": now,
@@ -715,17 +1017,107 @@ async def gen_check(case_id: str, request: Request):
         "consultantCount": check_data["consultantCount"], "flagCount": check_data["flagCount"],
     })
 
-    # Auto-book accruals in Zoho (non-blocking — failure logged, workflow continues)
-    fresh_kase = {**kase, "check_data": check_data}
-    try:
-        accrual_result = await _auto_book_accruals(fresh_kase, db)
-    except Exception as e:
-        accrual_result = {"success": False, "error": str(e)}
+    # Zoho accrual is intentionally deferred to Step 3 (send-check-approval).
+    # This allows the user to review flagged exceptions before booking to Zoho.
 
-    await _audit_log(db, case_id, "ZOHO_ACCRUAL_AUTO", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), accrual_result)
-
-    # Advance to Step 3 (check approval) after generating check
     return await _refresh_detail(case_id, db, request, user, 3)
+
+
+# ─── Step 2b: Return to preparer ─────────────────────────────────────────────
+
+@router.post("/cases/{case_id}/return-to-preparer")
+async def return_to_preparer(case_id: str, request: Request):
+    user = get_current_user(request)
+    db = get_db()
+    resp = db.from_("payroll_cases").select("*").eq("id", case_id).single().execute()
+    kase = resp.data
+    if not kase:
+        return HTMLResponse('<div class="error-msg">Case not found.</div>')
+    if kase.get("status") != "check_generated":
+        return HTMLResponse(f'<div class="error-msg">Can only return cases in check_generated status. Current: {kase["status"]}</div>')
+
+    check = kase.get("check_data") or {}
+    if not check.get("flagCount", 0):
+        return HTMLResponse('<div class="error-msg">No exceptions flagged — nothing to return to preparer.</div>')
+
+    now = _now()
+    returned_by = user.get("name") or user.get("email", "")
+    db.from_("payroll_cases").update({
+        "status": "returned",
+        "check_data": None,  # clear check so they must re-generate after re-upload
+    }).eq("id", case_id).execute()
+
+    await _audit_log(db, case_id, "RETURNED_TO_PREPARER", returned_by, user.get("id"), _get_ip(request), {
+        "returnedBy": returned_by,
+        "flagCount": check.get("flagCount"),
+        "flags": check.get("flags", []),
+        "stamp": f"Returned by: {returned_by} | Flags: {check.get('flagCount')} | Date-Time: {now}",
+    })
+
+    try:
+        email_return_to_preparer(kase.get("uploaded_by_email", ""), kase, returned_by)
+    except Exception:
+        pass
+
+    return await _refresh_detail(case_id, db, request, user, 1)
+
+
+# ─── Step 1b: Re-upload (after return to preparer) ────────────────────────────
+
+@router.post("/cases/{case_id}/reupload")
+async def reupload_case(
+    case_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+):
+    user = get_current_user(request)
+    db = get_db()
+    resp = db.from_("payroll_cases").select("*").eq("id", case_id).single().execute()
+    kase = resp.data
+    if not kase:
+        return HTMLResponse('<div class="error-msg">Case not found.</div>')
+    if kase.get("status") not in ("returned", "uploaded"):
+        return HTMLResponse(f'<div class="error-msg">Re-upload only allowed for returned cases. Current: {kase["status"]}</div>')
+    if not file or not file.filename.endswith((".xlsx", ".xls", ".xlsm")):
+        return HTMLResponse('<div class="error-msg">Please upload an Excel file (.xlsx, .xlsm, or .xls).</div>')
+
+    content = await file.read()
+    try:
+        if kase.get("type") == "PAYROLL":
+            parsed_entities = parse_payroll_excel_buffer(content)
+        else:
+            parsed_entities = parse_excel_buffer(content)
+    except Exception as e:
+        return HTMLResponse(f'<div class="error-msg">Parse error: {str(e)}</div>')
+
+    if not parsed_entities:
+        return HTMLResponse('<div class="error-msg">No valid data found. Check column headers.</div>')
+
+    file_hash = _sha256(content)
+    ip = _get_ip(request)
+    now = _now()
+
+    db.from_("payroll_cases").update({
+        "status":             "uploaded",
+        "original_file_name": file.filename,
+        "original_file_hash": file_hash,
+        "parsed_data":        {"entities": parsed_entities},
+        "check_data":         None,
+        "zoho_journal_ids":   [],
+        "uploaded_at":        now,
+        "uploaded_by_id":     str(user.get("id", "")),
+        "uploaded_by_name":   user.get("name") or user.get("email", ""),
+        "uploaded_by_email":  user.get("email", ""),
+        "upload_ip":          ip,
+    }).eq("id", case_id).execute()
+
+    await _audit_log(db, case_id, "REUPLOAD", user.get("name") or user.get("email"), user.get("id"), ip, {
+        "fileName": file.filename, "fileHash": file_hash,
+        "stamp": f"Re-uploaded by: {user.get('name')} | Date-Time: {now} | IP: {ip} | File: {file.filename}",
+        "entityCount": len(parsed_entities),
+    })
+
+    return await _refresh_detail(case_id, db, request, user, 2)
 
 
 # ─── Step 3a: Send check approval ────────────────────────────────────────────
@@ -765,7 +1157,20 @@ async def send_check_approval(case_id: str, request: Request):
 
     await _audit_log(db, case_id, "CHECK_APPROVAL_SENT", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"sentTo": APPROVERS["reviewer"]["email"]})
 
-    return await _refresh_detail(case_id, db, request, user, 4)
+    # Auto-book accruals in Zoho now that the check has been reviewed and sent for approval.
+    # Non-blocking — failure is logged but does not block the approval workflow.
+    fresh_kase = db.from_("payroll_cases").select("*").eq("id", case_id).single().execute().data or kase
+    case_type  = kase.get("type", "CSI")
+    try:
+        if case_type == "PAYROLL":
+            accrual_result = await _auto_book_accruals_payroll(fresh_kase, db)
+        else:
+            accrual_result = await _auto_book_accruals(fresh_kase, db)
+    except Exception as e:
+        accrual_result = {"success": False, "error": str(e)}
+    await _audit_log(db, case_id, "ZOHO_ACCRUAL_AUTO", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), accrual_result)
+
+    return await _refresh_detail(case_id, db, request, user, 3)
 
 
 # ─── Step 3b: Email approve/reject token ─────────────────────────────────────
@@ -854,8 +1259,12 @@ async def email_approve(token: str, action: str = "approve"):
     fresh_kase = {**kase, "check_final_approver_name": tok["approver_name"], "check_approval_cert": cert}
     bank_msg = "Log in to generate the bank upload file (Step 4)."
     try:
-        result = await generate_and_store_bank_files(fresh_kase, db, tok["approver_name"])
-        bank_msg = f"Bank upload files have been auto-generated ({result['matched']}/{result['total']} consultants matched from Airtable). Log in to download and proceed to Step 5."
+        if kase.get("type") == "PAYROLL":
+            result = await generate_and_store_bank_files_payroll(fresh_kase, db, tok["approver_name"])
+            bank_msg = f"Payroll bank files auto-generated ({result['matched']}/{result['total']} employees with bank accounts). Log in to download and proceed to Step 5."
+        else:
+            result = await generate_and_store_bank_files(fresh_kase, db, tok["approver_name"])
+            bank_msg = f"Bank upload files have been auto-generated ({result['matched']}/{result['total']} consultants matched from Airtable). Log in to download and proceed to Step 5."
         await _audit_log(db, kase["id"], "BANK_FILE_AUTO_GENERATED", tok["approver_name"], None, None, {
             "xlsxName": result["xlsxName"], "matched": result["matched"], "total": result["total"],
         })
@@ -920,7 +1329,11 @@ async def gen_bank_file(case_id: str, request: Request):
         return HTMLResponse(f'<div class="error-msg">Bank file requires check approval. Status: {kase["status"]}</div>')
 
     try:
-        await generate_and_store_bank_files(kase, db, user.get("name") or user.get("email", ""))
+        triggered_by = user.get("name") or user.get("email", "")
+        if kase.get("type") == "PAYROLL":
+            await generate_and_store_bank_files_payroll(kase, db, triggered_by)
+        else:
+            await generate_and_store_bank_files(kase, db, triggered_by)
     except Exception as e:
         return HTMLResponse(f'<div class="error-msg">Bank file error: {str(e)}</div>')
 
@@ -934,10 +1347,13 @@ async def log_bank_upload(case_id: str, request: Request):
     user = get_current_user(request)
     db = get_db()
     body = await request.form()
-    bank_portal_ref = str(body.get("bankPortalRef", "")).strip()
+    bank_portal_ref    = str(body.get("bankPortalRef", "")).strip()
+    actual_payment_date = str(body.get("actualPaymentDate", "")).strip()
 
     if not bank_portal_ref:
         return HTMLResponse('<div class="error-msg">Bank portal reference number is required.</div>')
+    if not actual_payment_date:
+        return HTMLResponse('<div class="error-msg">Actual payment date is required.</div>')
 
     resp = db.from_("payroll_cases").select("id,status").eq("id", case_id).single().execute()
     kase = resp.data
@@ -948,15 +1364,17 @@ async def log_bank_upload(case_id: str, request: Request):
 
     now = _now()
     db.from_("payroll_cases").update({
-        "status": "bank_uploaded",
-        "bank_upload_by": user.get("name") or user.get("email"),
-        "bank_portal_ref": bank_portal_ref,
-        "bank_upload_at": now,
+        "status":           "bank_uploaded",
+        "bank_upload_by":   user.get("name") or user.get("email"),
+        "bank_portal_ref":  bank_portal_ref,
+        "bank_upload_at":   now,
+        "payment_date":     actual_payment_date,  # overwrite with actual date for Zoho reconciliation
     }).eq("id", case_id).execute()
 
     await _audit_log(db, case_id, "BANK_UPLOADED", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {
-        "bankPortalRef": bank_portal_ref,
-        "stamp": f"Uploaded to bank by: {user.get('name')} | Bank Portal Ref: {bank_portal_ref} | Date-Time: {now}",
+        "bankPortalRef":     bank_portal_ref,
+        "actualPaymentDate": actual_payment_date,
+        "stamp": f"Uploaded to bank by: {user.get('name')} | Bank Portal Ref: {bank_portal_ref} | Actual Payment Date: {actual_payment_date} | Date-Time: {now}",
     })
 
     return await _refresh_detail(case_id, db, request, user, 5)
@@ -996,7 +1414,7 @@ async def send_payment_approval(case_id: str, request: Request):
 
     await _audit_log(db, case_id, "PAYMENT_APPROVAL_SENT", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"sentTo": APPROVERS["director"]["email"]})
 
-    return await _refresh_detail(case_id, db, request, user, 5)
+    return await _refresh_detail(case_id, db, request, user, 6)
 
 
 # ─── Step 6b: Director email link ────────────────────────────────────────────
@@ -1054,7 +1472,10 @@ async def director_approve(token: str, action: str = "approve"):
     # Auto-book payment journal in Zoho (DR Salary Payable / CR Bank)
     fresh_kase = {**kase, "payment_approved_by": tok["approver_name"], "payment_approval_cert": cert}
     try:
-        pay_result = await _auto_book_payment(fresh_kase, db)
+        if kase.get("type") == "PAYROLL":
+            pay_result = await _auto_book_payment_payroll(fresh_kase, db)
+        else:
+            pay_result = await _auto_book_payment(fresh_kase, db)
     except Exception as e:
         pay_result = {"success": False, "error": str(e)}
     await _audit_log(db, kase["id"], "ZOHO_PAYMENT_AUTO", tok["approver_name"], None, None, pay_result)
@@ -1110,12 +1531,15 @@ async def confirm_payment(case_id: str, request: Request):
     # Auto-book payment journal in Zoho
     fresh_kase = {**kase, "payment_approved_by": user.get("name") or user.get("email"), "payment_approval_cert": cert}
     try:
-        pay_result = await _auto_book_payment(fresh_kase, db)
+        if kase.get("type") == "PAYROLL":
+            pay_result = await _auto_book_payment_payroll(fresh_kase, db)
+        else:
+            pay_result = await _auto_book_payment(fresh_kase, db)
     except Exception as e:
         pay_result = {"success": False, "error": str(e)}
     await _audit_log(db, case_id, "ZOHO_PAYMENT_AUTO", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), pay_result)
 
-    return await _refresh_detail(case_id, db, request, user, 7)
+    return await _refresh_detail(case_id, db, request, user, 9)
 
 
 # ─── Step 7: Post to Zoho ─────────────────────────────────────────────────────
@@ -1212,7 +1636,7 @@ async def post_zoho(case_id: str, request: Request):
         "stamp": f"Posted by: System API | Initiated by: {user.get('name')} | {len(posted)} journals | Ref: {kase['reference']} | Date-Time: {now}",
     })
 
-    return await _refresh_detail(case_id, db, request, user, 7)
+    return await _refresh_detail(case_id, db, request, user, 9)
 
 
 # ─── Audit package PDF download ───────────────────────────────────────────────

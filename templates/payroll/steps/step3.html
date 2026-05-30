@@ -21,7 +21,7 @@
   <div class="pf-panel-header">
     <span class="pf-panel-step">Step 3</span>
     <h2 class="pf-panel-title">Approval Gate (Check)</h2>
-    <p class="pf-panel-sub">Approval email sent to reviewer → final approver. Accruals auto-posted.</p>
+    <p class="pf-panel-sub">Send for approval to trigger accrual posting. Reviewer → final approver chain.</p>
   </div>
 
   {# ── Accrual result banner ── #}
@@ -52,7 +52,7 @@
   {# ── Send approval button ── #}
   {% if can_send %}
   <div class="pf-action-zone">
-    <p class="pf-action-desc">Accruals have been auto-posted to Zoho. Send the check file to the reviewer for approval.</p>
+    <p class="pf-action-desc">Send the check file to the reviewer for approval. The accrual journal will be automatically posted to Zoho Books when you click this button.</p>
     <form hx-post="/cases/{{ kase.id }}/send-check-approval"
           hx-target="#case-detail-inner" hx-swap="innerHTML">
       <button type="submit" class="btn btn-primary">

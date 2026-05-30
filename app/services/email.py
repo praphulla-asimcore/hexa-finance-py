@@ -86,24 +86,41 @@ def email_check_approval(to: str, name: str, role: str, kase: dict, approve_url:
     else:
         flag_section = '<div style="background:#f0fdf4;border-left:4px solid #22c55e;padding:10px 14px;margin-bottom:20px;font-size:13px;color:#166534">✓ No exceptions — all checks passed.</div>'
 
+    is_final = role.lower().startswith("final")
+    reviewer_line = (
+        f'{_row("Reviewed by", kase.get("check_reviewer_name") or "—")}'
+        if is_final else ""
+    )
+    intro = (
+        f'<b>{kase.get("check_reviewer_name") or "The reviewer"}</b> has reviewed and approved the payroll check for <b>{kase["reference"]}</b>.<br/>'
+        f'Your final sign-off is required to generate the bank payment file and post accruals to Zoho Books.'
+        if is_final else
+        f'A payroll check file for <b>{kase.get("entity_name") or kase.get("entity","")}</b> ({kase.get("period","")}) is pending your review.<br/>'
+        f'Please review the summary below and approve or reject.'
+    )
     _send(to, f"[Hexa Finance] {label} Check — {role} Required | {kase['reference']}", _wrap(f"""
-        <h2 style="font-size:18px;font-weight:700;color:#111;margin:0 0 4px">Check File Approval — {role}</h2>
-        <p style="color:#555;margin:0 0 20px">Hi {name}, you are assigned as <strong>{role}</strong> for this payroll run.</p>
-        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:20px">
+        <h2 style="font-size:18px;font-weight:700;color:#111;margin:0 0 8px">Payroll Check — {role}</h2>
+        <p style="color:#555;font-size:14px;line-height:1.6;margin:0 0 20px">Hi {name},<br/><br/>{intro}</p>
+
+        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px">
           {_row('Reference', f'<span style="color:#6366f1;font-weight:700">{kase["reference"]}</span>')}
-          {_row('Type', label)}
           {_row('Entity', kase.get('entity_name') or kase.get('entity', ''))}
           {_row('Period', kase.get('period', ''))}
           {_row('Payment Date', kase.get('payment_date') or '—')}
           {_row('Consultants', str(check.get('consultantCount', '—')))}
           {_row('Gross Payroll', _fmt_rm(check.get('grossPayrollTotal')))}
           {_row('Net Salary', _fmt_rm(check.get('netSalaryTotal')))}
-          {_row('Total CTC', f'<strong style="font-size:16px;color:#111">{_fmt_rm(check.get("ctcTotal"))}</strong>')}
+          {_row('Total CTC', f'<strong style="font-size:15px;color:#111">{_fmt_rm(check.get("ctcTotal"))}</strong>')}
           {_row('Exceptions', f'<span style="color:{flag_color};font-weight:700">{check.get("flagCount",0)} flag(s)</span>')}
+          {reviewer_line}
         </table>
-        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:20px">{stat_rows}</table>
+
+        <p style="font-size:12px;font-weight:700;color:#6366f1;text-transform:uppercase;margin:16px 0 6px">Statutory Breakdown</p>
+        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px">{stat_rows}</table>
+
         {flag_section}
-        <h3 style="font-size:13px;font-weight:700;color:#6366f1;margin:16px 0 8px;text-transform:uppercase">Full Consultant List ({len(all_employees)})</h3>
+
+        <p style="font-size:12px;font-weight:700;color:#6366f1;text-transform:uppercase;margin:16px 0 6px">Full Consultant List ({len(all_employees)})</p>
         <div style="overflow-x:auto;margin-bottom:24px">
           <table style="width:100%;border-collapse:collapse;font-size:12px">
             <thead><tr style="background:#f1f5f9">
@@ -126,10 +143,12 @@ def email_check_approval(to: str, name: str, role: str, kase: dict, approve_url:
             </tr></tfoot>
           </table>
         </div>
-        <div style="margin-bottom:24px">
+
+        <div style="margin:24px 0">
           <a href="{approve_url}" style="display:inline-block;background:#22c55e;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;margin-right:12px">Approve</a>
           <a href="{reject_url}" style="display:inline-block;background:#ef4444;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">Reject</a>
         </div>
+        <p style="color:#999;font-size:12px">Single-use link — do not forward.</p>
     """))
 
 
@@ -137,24 +156,84 @@ def email_payment_approval(kase: dict, approve_url: str, reject_url: str, direct
     check = kase.get("check_data") or {}
     label = "CSI Payroll" if kase.get("type") == "CSI" else "Internal Payroll"
     _send(director["email"], f"[Hexa Finance] Payment Approval Required | {kase['reference']} | {_fmt_rm(check.get('ctcTotal'))}", _wrap(f"""
-        <h2 style="font-size:18px;font-weight:700;color:#111;margin:0 0 4px">Payment Approval Required</h2>
-        <p style="color:#555;margin:0 0 20px">Hi {director['name']}, the payroll run has been approved and uploaded to the bank portal. Your payment approval is required.</p>
+        <h2 style="font-size:18px;font-weight:700;color:#111;margin:0 0 8px">Payment Approval Required</h2>
+        <p style="color:#555;font-size:14px;line-height:1.6;margin:0 0 20px">
+          Dear {director['name']},<br/><br/>
+          The payroll run for <b>{kase.get('entity_name') or kase.get('entity','')}</b> ({kase.get('period','')}) has been checked, approved, and uploaded to the bank portal (Ref: <b>{kase.get('bank_portal_ref') or '—'}</b>).<br/>
+          Your approval is required to release <b>{_fmt_rm(check.get('ctcTotal'))}</b> in salary payments to {check.get('consultantCount','—')} consultants.
+        </p>
         <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:20px">
-          {_row('Reference', f'<span style="color:#6366f1">{kase["reference"]}</span>')}
-          {_row('Type', label)}
+          {_row('Reference', f'<span style="color:#6366f1;font-weight:700">{kase["reference"]}</span>')}
           {_row('Entity', kase.get('entity_name') or kase.get('entity',''))}
           {_row('Period', kase.get('period',''))}
           {_row('Consultants', str(check.get('consultantCount','—')))}
           {_row('Gross Payroll', _fmt_rm(check.get('grossPayrollTotal')))}
-          {_row('Total CTC', f'<strong style="font-size:16px">{_fmt_rm(check.get("ctcTotal"))}</strong>')}
+          {_row('Total CTC', f'<strong style="font-size:15px;color:#111">{_fmt_rm(check.get("ctcTotal"))}</strong>')}
           {_row('Bank Portal Ref', kase.get('bank_portal_ref') or '—')}
-          {_row('Check Approved by', kase.get('check_final_approver_name') or '—')}
-          {_row('Reviewed by', kase.get('check_reviewer_name') or '—')}
+          {_row('Checked by', kase.get('check_reviewer_name') or '—')}
+          {_row('Approved by', kase.get('check_final_approver_name') or '—')}
         </table>
-        <div style="margin-bottom:24px">
+        <div style="margin:24px 0">
           <a href="{approve_url}" style="display:inline-block;background:#22c55e;color:#fff;padding:14px 36px;border-radius:8px;text-decoration:none;font-weight:700;font-size:15px;margin-right:12px">Approve Payment</a>
           <a href="{reject_url}" style="display:inline-block;background:#ef4444;color:#fff;padding:14px 36px;border-radius:8px;text-decoration:none;font-weight:700;font-size:15px">Reject</a>
         </div>
+        <p style="color:#999;font-size:12px">Single-use link — do not forward.</p>
+    """))
+
+
+def email_return_to_preparer(to: str, kase: dict, returned_by: str) -> None:
+    if not to:
+        return
+    check = kase.get("check_data") or {}
+    label = "CSI Payroll" if kase.get("type") == "CSI" else "Internal Payroll"
+    flags = check.get("flags") or []
+    flag_rows = "".join(
+        f'<tr style="background:{"#fff" if i % 2 == 0 else "#fef2f2"}">'
+        f'<td style="padding:6px 10px;border-bottom:1px solid #fecaca;font-size:13px;color:#991b1b;font-weight:600">{f["code"]}</td>'
+        f'<td style="padding:6px 10px;border-bottom:1px solid #fecaca;font-size:13px">{f.get("employee") or "—"}</td>'
+        f'<td style="padding:6px 10px;border-bottom:1px solid #fecaca;font-size:13px">{f.get("entity") or "—"}</td>'
+        f'<td style="padding:6px 10px;border-bottom:1px solid #fecaca;font-size:13px;text-align:right">'
+        f'{_fmt_rm(f["diff"]) if f.get("diff") else "—"}</td>'
+        f'</tr>'
+        for i, f in enumerate(flags)
+    )
+    case_url = f"{APP_URL}/cases/{kase['id']}"
+    _send(to, f"[Hexa Finance] Action Required — Exceptions in {kase['reference']}", _wrap(f"""
+        <h2 style="font-size:18px;font-weight:700;color:#ef4444;margin:0 0 8px">Action Required: Exceptions Flagged</h2>
+        <p style="color:#555;font-size:14px;line-height:1.6;margin:0 0 20px">
+          Your {label} run <strong>{kase['reference']}</strong> ({kase.get('entity_name') or kase.get('entity','')} — {kase.get('period','')})
+          has been returned to you by <strong>{returned_by}</strong> for correction.<br/><br/>
+          <strong>{check.get('flagCount', 0)} exception(s)</strong> were detected. Please review the flags below,
+          correct your source file, and re-upload via the system.
+        </p>
+
+        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:16px;margin-bottom:20px">
+          <p style="margin:0 0 10px;font-weight:700;color:#991b1b;font-size:14px">Flagged Exceptions ({check.get('flagCount',0)})</p>
+          <div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:13px">
+              <thead><tr style="background:#fee2e2">
+                <th style="padding:6px 10px;text-align:left;border-bottom:2px solid #fecaca">Code</th>
+                <th style="padding:6px 10px;text-align:left;border-bottom:2px solid #fecaca">Employee</th>
+                <th style="padding:6px 10px;text-align:left;border-bottom:2px solid #fecaca">Entity</th>
+                <th style="padding:6px 10px;text-align:right;border-bottom:2px solid #fecaca">Variance</th>
+              </tr></thead>
+              <tbody>{flag_rows}</tbody>
+            </table>
+          </div>
+        </div>
+
+        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:20px">
+          {_row('Reference', f'<span style="color:#6366f1;font-weight:700">{kase["reference"]}</span>')}
+          {_row('Entity', kase.get('entity_name') or kase.get('entity',''))}
+          {_row('Period', kase.get('period',''))}
+          {_row('Returned by', returned_by)}
+          {_row('Total CTC', _fmt_rm(check.get('ctcTotal')))}
+        </table>
+
+        <a href="{case_url}" style="display:inline-block;background:#6366f1;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">
+          Open Case &amp; Re-upload →
+        </a>
+        <p style="color:#999;font-size:12px;margin-top:16px">Fix the source file, then use the Re-upload button in Step 1 of the case.</p>
     """))
 
 

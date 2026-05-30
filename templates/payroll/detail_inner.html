@@ -66,32 +66,19 @@
   function switchStep(n, btn) {
     if (n === _current) return;
 
-    var dir = n > _current ? 1 : -1;
-
-    // Animate out current panel
+    // Hide current panel
     var oldPanel = document.getElementById('step-panel-' + _current);
-    if (oldPanel) {
-      oldPanel.classList.add(dir > 0 ? 'pf-panel-exit-left' : 'pf-panel-exit-right');
-      setTimeout(function() {
-        oldPanel.classList.remove('pf-panel-active', 'pf-panel-exit-left', 'pf-panel-exit-right');
-      }, 220);
-    }
+    if (oldPanel) oldPanel.classList.remove('pf-panel-active', 'pf-panel-enter');
 
-    // Animate in new panel
+    // Show new panel with fade-in animation
     var newPanel = document.getElementById('step-panel-' + n);
     if (newPanel) {
-      newPanel.classList.add(dir > 0 ? 'pf-panel-enter-right' : 'pf-panel-enter-left');
-      newPanel.classList.add('pf-panel-active');
-      // Force reflow so the enter class is applied before removal
-      newPanel.offsetHeight;
-      requestAnimationFrame(function() {
-        requestAnimationFrame(function() {
-          newPanel.classList.remove('pf-panel-enter-right', 'pf-panel-enter-left');
-        });
-      });
+      newPanel.classList.remove('pf-panel-enter'); // reset to restart animation
+      newPanel.offsetHeight;                        // force reflow
+      newPanel.classList.add('pf-panel-active', 'pf-panel-enter');
     }
 
-    // Update tracker button highlight
+    // Update tracker highlight
     document.querySelectorAll('.pf-tracker-step').forEach(function(b) {
       b.classList.remove('pf-step-selected');
     });
@@ -100,14 +87,6 @@
     _current = n;
   }
 
-  // Expose globally so HTMX-refreshed content can re-initialise
   window.switchStep = switchStep;
-
-  // After any HTMX swap into #case-detail-inner, re-run scripts in new panels
-  document.body.addEventListener('htmx:afterSwap', function(e) {
-    if (e.detail.target && e.detail.target.id === 'case-detail-inner') {
-      // The new detail_inner already has the correct selected step highlighted
-    }
-  });
 })();
 </script>

@@ -35,6 +35,43 @@
     </div>
   </div>
 
+  {# ── Exceptions bar chart ── #}
+  {% set exc_months = stats.excByMonth or [] %}
+  {% if exc_months %}
+  <div class="dash-panel card" style="margin-bottom:20px">
+    <div class="dash-panel-title">Exceptions Flagged per Month</div>
+    {% set max_exc = namespace(val=1) %}
+    {% for m in exc_months %}{% set total_exc = (m.csi or 0) + (m.payroll or 0) %}{% if total_exc > max_exc.val %}{% set max_exc.val = total_exc %}{% endif %}{% endfor %}
+    <div class="dash-bars">
+      {% for m in exc_months %}
+      {% set csi_flags = m.csi or 0 %}
+      {% set pay_flags = m.payroll or 0 %}
+      {% set total_exc = csi_flags + pay_flags %}
+      <div class="dash-bar-row">
+        <div class="dash-bar-label">{{ m.month }}</div>
+        <div class="dash-bar-track" style="position:relative">
+          {% if csi_flags > 0 %}
+          <div class="dash-bar-fill" style="width:{{ ((csi_flags / max_exc.val) * 100)|int }}%;background:#6366f1;display:inline-block;height:100%"></div>
+          {% endif %}
+          {% if pay_flags > 0 %}
+          <div class="dash-bar-fill" style="width:{{ ((pay_flags / max_exc.val) * 100)|int }}%;background:#f59e0b;display:inline-block;height:100%"></div>
+          {% endif %}
+        </div>
+        <div class="dash-bar-value" style="min-width:80px">
+          {% if csi_flags > 0 %}<span style="color:#6366f1">CSI:{{ csi_flags }}</span>{% endif %}
+          {% if pay_flags > 0 %}<span style="color:#f59e0b;margin-left:6px">PR:{{ pay_flags }}</span>{% endif %}
+          {% if total_exc == 0 %}<span style="color:#22c55e">✓ 0</span>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <div style="margin-top:10px;font-size:12px;color:#888;display:flex;gap:16px">
+      <span><span style="color:#6366f1;font-weight:700">■</span> CSI</span>
+      <span><span style="color:#f59e0b;font-weight:700">■</span> Payroll</span>
+    </div>
+  </div>
+  {% endif %}
+
   <div class="dash-grid">
     <div class="dash-panel card">
       <div class="dash-panel-title">Journals by Entity</div>
