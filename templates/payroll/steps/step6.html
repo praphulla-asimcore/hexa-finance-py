@@ -41,13 +41,19 @@
     <p class="pf-action-desc">
       If the Director has confirmed payment approval verbally or through another channel, confirm it here to proceed to Zoho posting.
     </p>
-    <button class="btn btn-primary"
-        hx-post="/cases/{{ kase.id }}/confirm-payment"
-        hx-target="#case-detail-inner"
-        hx-swap="innerHTML">
-      <span class="spinner htmx-indicator"></span>
-      Payment Approved in Bank ✓
-    </button>
+    <form hx-post="/cases/{{ kase.id }}/confirm-payment"
+          hx-target="#case-detail-inner"
+          hx-swap="innerHTML">
+      <div style="margin-bottom:12px">
+        <label class="label">Actual Payment Date <span class="req">*</span></label>
+        <input type="date" class="input" name="actualPaymentDate" style="max-width:200px" required/>
+        <span class="pf-hint">Date the bank executed the transfer — used for Zoho reconciliation.</span>
+      </div>
+      <button type="submit" class="btn btn-primary">
+        <span class="spinner htmx-indicator"></span>
+        Payment Approved in Bank ✓
+      </button>
+    </form>
   </div>
   {% endif %}
 
@@ -61,6 +67,7 @@
     <div class="pf-stamp-box"><span class="pf-stamp-label">Approved by</span><span class="pf-stamp-value">{{ cert.approvedBy }}</span></div>
     <div class="pf-stamp-box"><span class="pf-stamp-label">Amount</span><span class="pf-stamp-value">{{ cert.amount }}</span></div>
     <div class="pf-stamp-box"><span class="pf-stamp-label">Bank Portal Ref</span><span class="pf-stamp-value">{{ cert.bankPortalRef or '—' }}</span></div>
+    <div class="pf-stamp-box"><span class="pf-stamp-label">Payment Date</span><span class="pf-stamp-value">{{ kase.payment_date or '—' }}</span></div>
     <div class="pf-stamp-box"><span class="pf-stamp-label">Confirmed via</span><span class="pf-stamp-value">{{ cert.confirmedVia or 'email link' }}</span></div>
     <div class="pf-stamp-box"><span class="pf-stamp-label">Date-Time</span><span class="pf-stamp-value">{{ fmt_date(cert.timestamp) }}</span></div>
   </div>

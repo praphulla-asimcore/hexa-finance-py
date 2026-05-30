@@ -1348,13 +1348,10 @@ async def log_bank_upload(case_id: str, request: Request):
     user = get_current_user(request)
     db = get_db()
     body = await request.form()
-    bank_portal_ref    = str(body.get("bankPortalRef", "")).strip()
-    actual_payment_date = str(body.get("actualPaymentDate", "")).strip()
+    bank_portal_ref = str(body.get("bankPortalRef", "")).strip()
 
     if not bank_portal_ref:
         return HTMLResponse('<div class="error-msg">Bank portal reference number is required.</div>')
-    if not actual_payment_date:
-        return HTMLResponse('<div class="error-msg">Actual payment date is required.</div>')
 
     resp = db.from_("payroll_cases").select("id,status").eq("id", case_id).single().execute()
     kase = resp.data
@@ -1365,17 +1362,15 @@ async def log_bank_upload(case_id: str, request: Request):
 
     now = _now()
     db.from_("payroll_cases").update({
-        "status":           "bank_uploaded",
-        "bank_upload_by":   user.get("name") or user.get("email"),
-        "bank_portal_ref":  bank_portal_ref,
-        "bank_upload_at":   now,
-        "payment_date":     actual_payment_date,  # overwrite with actual date for Zoho reconciliation
+        "status":          "bank_uploaded",
+        "bank_upload_by":  user.get("name") or user.get("email"),
+        "bank_portal_ref": bank_portal_ref,
+        "bank_upload_at":  now,
     }).eq("id", case_id).execute()
 
     await _audit_log(db, case_id, "BANK_UPLOADED", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {
-        "bankPortalRef":     bank_portal_ref,
-        "actualPaymentDate": actual_payment_date,
-        "stamp": f"Uploaded to bank by: {user.get('name')} | Bank Portal Ref: {bank_portal_ref} | Actual Payment Date: {actual_payment_date} | Date-Time: {now}",
+        "bankPortalRef": bank_portal_ref,
+        "stamp": f"Uploaded to bank by: {user.get('name')} | Bank Portal Ref: {bank_portal_ref} | Date-Time: {now}",
     })
 
     return await _refresh_detail(case_id, db, request, user, 5)
@@ -1462,10 +1457,11 @@ async def director_approve(token: str, action: str = "approve"):
 
     db.from_("payroll_approval_tokens").update({"status": "approved", "action_at": now}).eq("id", tok["id"]).execute()
     db.from_("payroll_cases").update({
-        "status": "payment_approved",
-        "payment_approved_by": tok["approver_name"],
-        "payment_approved_at": now,
+        "status":                "payment_approved",
+        "payment_approved_by":   tok["approver_name"],
+        "payment_approved_at":   now,
         "payment_approval_cert": cert,
+        "payment_date":          now[:10],  # director email approval — use approval date as payment date
     }).eq("id", kase["id"]).execute()
 
     await _audit_log(db, kase["id"], "PAYMENT_APPROVED", tok["approver_name"], None, None, {"cert": cert})
@@ -1500,6 +1496,12 @@ async def director_approve(token: str, action: str = "approve"):
 async def confirm_payment(case_id: str, request: Request):
     user = get_current_user(request)
     db = get_db()
+    body = await request.form()
+    actual_payment_date = str(body.get("actualPaymentDate", "")).strip()
+
+    if not actual_payment_date:
+        return HTMLResponse('<div class="error-msg">Actual payment date is required.</div>')
+
     resp = db.from_("payroll_cases").select("*").eq("id", case_id).single().execute()
     kase = resp.data
     if not kase:
@@ -1517,14 +1519,15 @@ async def confirm_payment(case_id: str, request: Request):
         "bankPortalRef": kase.get("bank_portal_ref"),
         "entity": kase.get("entity_name") or kase.get("entity"), "period": kase.get("period"),
         "timestamp": now, "confirmedVia": "in-app",
-        "stamp": f"Payment Approved in Bank by: {user.get('name')} | Ref: {kase['reference']} | Date-Time: {now} | Confirmed via: In-App",
+        "stamp": f"Payment Approved in Bank by: {user.get('name')} | Ref: {kase['reference']} | Payment Date: {actual_payment_date} | Date-Time: {now} | Confirmed via: In-App",
     }
 
     db.from_("payroll_cases").update({
-        "status": "payment_approved",
-        "payment_approved_by": user.get("name") or user.get("email"),
-        "payment_approved_at": now,
+        "status":                "payment_approved",
+        "payment_approved_by":   user.get("name") or user.get("email"),
+        "payment_approved_at":   now,
         "payment_approval_cert": cert,
+        "payment_date":          actual_payment_date,  # confirmed actual date for Zoho reconciliation
     }).eq("id", case_id).execute()
 
     await _audit_log(db, case_id, "PAYMENT_CONFIRMED_INAPP", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"cert": cert})
