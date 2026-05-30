@@ -870,6 +870,9 @@ async def upload_case(
         return HTMLResponse('<div class="error-msg">Cycle must be 25th, EOM, 7th, or 15th.</div>')
     period = f"{period_ym}-{period_cycle}"
 
+    type_up = case_type.upper()
+    entity_code = entity.upper().replace(r"[^A-Z0-9]", "")[:10]
+
     content = await file.read()
     try:
         if type_up == "PAYROLL":
@@ -884,8 +887,6 @@ async def upload_case(
 
     file_hash = _sha256(content)
     ip = _get_ip(request)
-    type_up = case_type.upper()
-    entity_code = entity.upper().replace(r"[^A-Z0-9]", "")[:10]
 
     ref, seq = await _generate_ref(db, type_up, entity_code, period)
 
