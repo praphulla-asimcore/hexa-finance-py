@@ -1,34 +1,16 @@
 {% macro fmt_date(d) %}{% if d %}{{ d[:16].replace('T',' ') }}{% else %}—{% endif %}{% endmacro %}
 
-{% set can_generate = kase.status == 'check_approved' %}
-{% set is_done = kase.status in ['bank_file_generated','bank_uploaded','payment_approval_sent','payment_approved','payment_rejected','zoho_posted'] %}
+{% set has_files = kase.status in ['bank_file_generated','bank_uploaded','payment_approval_sent','payment_approved','payment_rejected','zoho_posted'] %}
 
 <div class="pf-panel-body">
   <div class="pf-panel-header">
     <span class="pf-panel-step">Step 4</span>
-    <h2 class="pf-panel-title">Bulk Bank Upload File Generation</h2>
-    <p class="pf-panel-sub">Generates RCMS XLSX + RCgen TXT from Airtable consultant bank data. SHA-256 hashes recorded.</p>
+    <h2 class="pf-panel-title">Bank Upload Files</h2>
+    <p class="pf-panel-sub">RCMS XLSX + RCgen TXT auto-generated on check approval. SHA-256 hashes recorded.</p>
   </div>
 
-  {% if can_generate %}
-  <div class="pf-action-zone">
-    <p class="pf-action-desc">
-      Generates two files from Airtable-matched consultant bank data:<br/>
-      • <strong>RCMS XLSX</strong> — RCMS bank upload report format<br/>
-      • <strong>RCgen TXT</strong> — RCgen pipe-delimited payment file
-    </p>
-    <button class="btn btn-primary"
-        hx-post="/cases/{{ kase.id }}/gen-bank-file"
-        hx-target="#case-detail-inner"
-        hx-swap="innerHTML">
-      <span class="spinner htmx-indicator"></span>
-      Generate Bank Files
-    </button>
-  </div>
-  {% endif %}
-
-  {% if is_done %}
-  <div class="pf-info-banner pf-banner-ok">Both bank files generated and locked.</div>
+  {% if has_files %}
+  <div class="pf-info-banner pf-banner-ok">Bank files ready — download and upload to the bank portal.</div>
   <div class="pf-info-grid">
     <div class="pf-stamp-box"><span class="pf-stamp-label">RCMS XLSX</span><span class="pf-stamp-value">{{ kase.bank_file_name or '—' }}</span></div>
     <div class="pf-stamp-box"><span class="pf-stamp-label">XLSX SHA-256</span><span class="pf-stamp-value" style="font-family:monospace;font-size:11px">{{ (kase.bank_file_hash or '—')[:32] }}{% if kase.bank_file_hash %}…{% endif %}</span></div>
@@ -44,9 +26,13 @@
     <a href="/cases/{{ kase.id }}/bank-file-txt" class="btn btn-secondary">⬇ RCgen Payment File (TXT)</a>
     {% endif %}
   </div>
-  {% endif %}
-
-  {% if not can_generate and not is_done %}
-  <div class="pf-info-banner pf-banner-warning">Check approval (Step 3) required before generating bank files.</div>
+  {% elif kase.status == 'check_approved' %}
+  {# Auto-generation triggered; files should appear within seconds via polling #}
+  <div class="pf-info-banner pf-banner-waiting">
+    Generating bank files…
+    <span id="bank-file-spinner" class="spinner" style="margin-left:8px;display:inline-block"></span>
+  </div>
+  {% else %}
+  <div class="pf-info-banner pf-banner-warning">Check approval (Step 3) required before bank files are generated.</div>
   {% endif %}
 </div>

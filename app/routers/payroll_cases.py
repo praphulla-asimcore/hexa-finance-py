@@ -439,8 +439,10 @@ async def _auto_book_payment_payroll(kase: dict, db) -> dict:
         amount = _round2(emp.get("netSalary", 0))
         if amount <= 0:
             continue
-        ref = f"PMT-{kase['reference']}-{emp.get('employeeId', '')}"
-        desc = f"{(emp.get('name') or emp.get('employeeId', '')).replace(' ', '_')}_{mmm_yy}"
+        ref  = f"PMT-{kase['reference']}-{emp.get('employeeId', '')}"
+        cust = (emp.get("costCentre") or "").replace(" ", "_")
+        cons = (emp.get("name") or emp.get("employeeId", "")).replace(" ", "_")
+        desc = f"{entity_code}_Salary_{cust}_{cons}_{mmm_yy}"
         try:
             expense = await create_expense(org_id, {
                 "account_id":              net_payable,
@@ -652,51 +654,20 @@ async def _auto_book_payment(kase: dict, db) -> dict:
         if not bank_id:
             return {"success": False, "error": f"Account '{_BANK_NAME}' not found in Zoho. Add org {org_id} to _ORG_ACCOUNT_MAPS."}
 
-    # Build payment rows from bank file (RCMS XLSX) if available,
-    # otherwise fall back to CSI parsed employee data
+    # Build payment rows from parsed employee data.
+    # Description matches accrual format exactly: {entity_code}_CSI_{costCentre}_{name}_{mmm_yy}
     payment_rows = []  # list of (amount, description, reference)
-
-    bank_data = kase.get("bank_file_data")
-    if bank_data:
-        try:
-            import io as _io
-            import openpyxl as _xl
-            xlsx_bytes = base64.b64decode(bank_data)
-            wb = _xl.load_workbook(_io.BytesIO(xlsx_bytes), read_only=True, data_only=True)
-            ws = wb.active
-            rows = list(ws.iter_rows(values_only=True))
-            wb.close()
-            # Headers: col 3=Favourite Beneficiary Code, col 4=Transaction Amount, col 15=Advice Detail
-            for row in rows[1:]:  # skip header
-                if not row or row[4] is None:
-                    continue
-                try:
-                    amount = _round2(float(row[4]))
-                except (TypeError, ValueError):
-                    continue
-                if amount <= 0:
-                    continue
-                advice     = str(row[15] or "").strip() if len(row) > 15 else ""
-                bene_code  = str(row[3] or "").strip()  if len(row) > 3  else ""
-                description = advice or bene_code or f"PMT-{kase['reference']}"
-                reference   = bene_code or advice or f"PMT-{kase['reference']}"
-                payment_rows.append((amount, description, reference))
-        except Exception:
-            payment_rows = []  # fall back to CSI data
-
-    if not payment_rows:
-        # Fallback: use CSI parsed employee net salaries
-        entities = (kase.get("parsed_data") or {}).get("entities", [])
-        for ent in entities:
-            for emp in ent.get("employees", []):
-                amount = _round2(emp.get("netSalary", 0))
-                if amount <= 0:
-                    continue
-                cons  = (emp.get("name") or emp.get("employeeId", "")).replace(" ", "_")
-                cust  = (emp.get("costCentre") or "").replace(" ", "_")
-                desc  = f"{cons}_{cust}_{mmm_yy}"
-                ref   = f"PMT-{kase['reference']}-{emp.get('employeeId','')}"
-                payment_rows.append((amount, desc, ref))
+    entities = (kase.get("parsed_data") or {}).get("entities", [])
+    for ent in entities:
+        for emp in ent.get("employees", []):
+            amount = _round2(emp.get("netSalary", 0))
+            if amount <= 0:
+                continue
+            cust = (emp.get("costCentre") or "").replace(" ", "_")
+            cons = (emp.get("name") or emp.get("employeeId", "")).replace(" ", "_")
+            desc = f"{entity_code}_CSI_{cust}_{cons}_{mmm_yy}"
+            ref  = f"PMT-{kase['reference']}-{emp.get('employeeId', '')}"
+            payment_rows.append((amount, desc, ref))
 
     if not payment_rows:
         return {"success": False, "error": "No payment rows found (bank file empty and no employees with net salary > 0)"}
@@ -885,40 +856,54 @@ async def upload_case(
     if not parsed_entities:
         return HTMLResponse('<div class="error-msg">No valid data found in file. Check column headers.</div>')
 
+    # Auto-generate check immediately — no manual step needed
+    check_data = (
+        _build_check_data_payroll(parsed_entities)
+        if type_up == "PAYROLL"
+        else _build_check_data(parsed_entities)
+    )
+
     file_hash = _sha256(content)
     ip = _get_ip(request)
+    now_ts = _now()
 
     ref, seq = await _generate_ref(db, type_up, entity_code, period)
 
     insert_resp = db.from_("payroll_cases").insert({
         "reference": ref, "type": type_up, "entity": entity_code,
         "entity_name": entity_name or parsed_entities[0].get("sheetName", entity_code),
-        "period": period, "seq_no": seq, "status": "uploaded",
+        "period": period, "seq_no": seq, "status": "check_generated",
         "original_file_name": file.filename,
         "original_file_hash": file_hash,
         "parsed_data": {"entities": parsed_entities},
+        "check_data": check_data,
+        "check_generated_at": now_ts,
         "uploaded_by_id": str(user.get("id", "")),
         "uploaded_by_name": user.get("name") or user.get("email", ""),
         "uploaded_by_email": user.get("email", ""),
-        "uploaded_at": _now(), "upload_ip": ip,
-        "payment_date": payment_date or None,
+        "uploaded_at": now_ts, "upload_ip": ip,
     }).select().execute()
 
     kase = (insert_resp.data or [None])[0]
     if not kase:
         return HTMLResponse('<div class="error-msg">Failed to create case.</div>')
 
-    await _audit_log(db, kase["id"], "UPLOAD", user.get("name") or user.get("email"), user.get("id"), ip, {
+    uploader = user.get("name") or user.get("email")
+    await _audit_log(db, kase["id"], "UPLOAD", uploader, user.get("id"), ip, {
         "fileName": file.filename, "fileHash": file_hash,
-        "stamp": f"Uploaded by: {user.get('name')} | Date-Time: {_now()} | IP: {ip} | File Hash: {file_hash}",
+        "stamp": f"Uploaded by: {uploader} | Date-Time: {now_ts} | IP: {ip} | File Hash: {file_hash}",
         "entityCount": len(parsed_entities),
         "consultantCount": sum(len(e.get("employees", [])) for e in parsed_entities),
     })
+    await _audit_log(db, kase["id"], "CHECK_GENERATED", uploader, user.get("id"), ip, {
+        "stamp": f"Auto-generated by: Hexa Check Engine | Ref: {ref} | Generated: {now_ts}",
+        "consultantCount": check_data["consultantCount"], "flagCount": check_data["flagCount"],
+    })
 
-    # Return case detail directly — use fragment for HTMX, full page for direct load
+    # Return case detail directly — open at Step 3 (check result + send-for-approval)
     logs_resp = db.from_("payroll_audit_log").select("*").eq("case_id", kase["id"]).order("created_at").execute()
     logs = logs_resp.data or []
-    ctx = {**_case_detail_ctx(kase, logs, 1), "request": request, "user": user,
+    ctx = {**_case_detail_ctx(kase, logs, 3), "request": request, "user": user,
            "module": module, "section": module,
            "step_state": _step_state, "get_active_step": _get_active_step, "orgs": ORGS}
     tmpl = "payroll/detail.html" if request.headers.get("HX-Request") else "payroll/detail_page.html"
@@ -1094,31 +1079,43 @@ async def reupload_case(
     if not parsed_entities:
         return HTMLResponse('<div class="error-msg">No valid data found. Check column headers.</div>')
 
+    check_data = (
+        _build_check_data_payroll(parsed_entities)
+        if kase.get("type") == "PAYROLL"
+        else _build_check_data(parsed_entities)
+    )
+
     file_hash = _sha256(content)
     ip = _get_ip(request)
     now = _now()
+    uploader = user.get("name") or user.get("email", "")
 
     db.from_("payroll_cases").update({
-        "status":             "uploaded",
+        "status":             "check_generated",
         "original_file_name": file.filename,
         "original_file_hash": file_hash,
         "parsed_data":        {"entities": parsed_entities},
-        "check_data":         None,
+        "check_data":         check_data,
+        "check_generated_at": now,
         "zoho_journal_ids":   [],
         "uploaded_at":        now,
         "uploaded_by_id":     str(user.get("id", "")),
-        "uploaded_by_name":   user.get("name") or user.get("email", ""),
+        "uploaded_by_name":   uploader,
         "uploaded_by_email":  user.get("email", ""),
         "upload_ip":          ip,
     }).eq("id", case_id).execute()
 
-    await _audit_log(db, case_id, "REUPLOAD", user.get("name") or user.get("email"), user.get("id"), ip, {
+    await _audit_log(db, case_id, "REUPLOAD", uploader, user.get("id"), ip, {
         "fileName": file.filename, "fileHash": file_hash,
-        "stamp": f"Re-uploaded by: {user.get('name')} | Date-Time: {now} | IP: {ip} | File: {file.filename}",
+        "stamp": f"Re-uploaded by: {uploader} | Date-Time: {now} | IP: {ip} | File: {file.filename}",
         "entityCount": len(parsed_entities),
     })
+    await _audit_log(db, case_id, "CHECK_GENERATED", uploader, user.get("id"), ip, {
+        "stamp": f"Auto-generated by: Hexa Check Engine | Ref: {kase['reference']} | Generated: {now}",
+        "consultantCount": check_data["consultantCount"], "flagCount": check_data["flagCount"],
+    })
 
-    return await _refresh_detail(case_id, db, request, user, 2)
+    return await _refresh_detail(case_id, db, request, user, 3)
 
 
 # ─── Step 3a: Send check approval ────────────────────────────────────────────
