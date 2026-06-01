@@ -687,13 +687,24 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
         desc = f"{entity_code}_CSI_{cust}_{cons}_{mmm_yy}"
 
         components = [
-            ("basic",     _round2(emp.get("grossSalary", 0))),
+            # 2.6.1.1/2.6.2.1 — Net Salary minus bonus and claims (residual salary component)
+            ("basic",     _round2((emp.get("netSalary") or 0)
+                                  - (emp.get("bonus") or 0)
+                                  - (emp.get("claim") or 0))),
+            # 2.6.1.2/2.6.2.2 — Claims
             ("claim",     _round2(emp.get("claim", 0))),
+            # 2.6.1.3/2.6.2.3 — Bonus / Commission
             ("bonus",     _round2(emp.get("bonus", 0))),
+            # 2.6.1.6/2.6.2.6 — Cash Advance Deduction
             ("ca_dedn",   _round2(emp.get("caDedn", 0))),
-            ("epf",       _round2(emp.get("epfEmployer", 0))),
-            ("socso_eis", _round2((emp.get("eisEmployer") or 0) + (emp.get("socsoEmployer") or 0))),
+            # 2.6.1.10.1/2.6.2.10.1 — EPF employee + employer
+            ("epf",       _round2((emp.get("epfEmployee") or 0) + (emp.get("epfEmployer") or 0))),
+            # 2.6.1.10.3/2.6.2.10.3 — SOCSO + EIS employee + employer
+            ("socso_eis", _round2((emp.get("socsoEmployee") or 0) + (emp.get("socsoEmployer") or 0)
+                                  + (emp.get("eisEmployee") or 0) + (emp.get("eisEmployer") or 0))),
+            # 2.6.1.10.4/2.6.2.10.4 — HRDF
             ("hrdf",      _round2(emp.get("hrdf", 0))),
+            # 2.6.1.10.7/2.6.2.10.7 — MTD / PCB
             ("mtd",       _round2(emp.get("mtd", 0))),
         ]
 

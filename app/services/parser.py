@@ -82,8 +82,11 @@ def _parse_employee(row, col_map) -> dict | None:
                              "Retirement contribution"]),
         "caDedn":        sum(_get(row, col_map, c) for c in [
                              "Deduction", "Deduction (from Net Salary)"]),
+        "epfEmployee":   _get(row, col_map, "EPF Employee"),
         "epfEmployer":   _get(row, col_map, "EPF Employer"),
+        "eisEmployee":   _get(row, col_map, "EIS Employee"),
         "eisEmployer":   _get(row, col_map, "EIS Employer"),
+        "socsoEmployee": _get(row, col_map, "SOCSO Employee"),
         "socsoEmployer": _get(row, col_map, "SOCSO Employer"),
         "hrdf":          _get(row, col_map, "HRDF"),
         "mtd":           _get(row, col_map, "MTD"),
