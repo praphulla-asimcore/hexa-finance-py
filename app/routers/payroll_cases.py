@@ -194,15 +194,17 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None) -
                                "entity": entity,
                                "claim": _round2(clm), "gross": _round2(g)})
 
-            # ── Consultant not in Airtable DB / missing bank details ──────────
+            # ── Missing bank account: not in Airtable DB or account blank ──────
             if airtable_list is not None:
                 matched = match_consultant(emp, airtable_list)
                 if matched is None:
-                    flags.append({"code": "CONSULTANT_NOT_IN_DB", "employee": name,
-                                  "entity": entity, "employeeId": emp_id})
+                    flags.append({"code": "MISSING_BANK_ACCOUNT", "employee": name,
+                                  "entity": entity, "employeeId": emp_id,
+                                  "reason": "Consultant not found in database"})
                 elif not (matched.get("accountNo") or "").strip():
                     flags.append({"code": "MISSING_BANK_ACCOUNT", "employee": name,
-                                  "entity": entity, "employeeId": emp_id})
+                                  "entity": entity, "employeeId": emp_id,
+                                  "reason": "Bank account number not on file"})
 
     return {
         "consultantCount": consultants, "entityCount": len(entities),
