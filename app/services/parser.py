@@ -1,6 +1,18 @@
 import io
+from datetime import datetime, date
 from openpyxl import load_workbook
 import xlrd
+
+
+def _json_safe(obj):
+    """Recursively convert any non-JSON-serializable values (datetime, date, etc.) to strings."""
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    return obj
 
 # ─── CSI parser ───────────────────────────────────────────────────────────────
 
@@ -116,7 +128,7 @@ def parse_excel_buffer(data: bytes) -> list[dict]:
             for name in wb.sheetnames
         ]
         wb.close()
-        return _process_sheets(sheets)
+        return _json_safe(_process_sheets(sheets))
     except Exception as e:
         if "zip" not in str(e).lower() and "openpyxl" not in str(e).lower():
             raise  # unexpected error — re-raise
@@ -128,7 +140,7 @@ def parse_excel_buffer(data: bytes) -> list[dict]:
             (ws.name, [ws.row_values(r) for r in range(ws.nrows)])
             for ws in wb.sheets()
         ]
-        return _process_sheets(sheets)
+        return _json_safe(_process_sheets(sheets))
     except Exception as e:
         raise ValueError(
             f"Could not read file as .xlsx or .xls: {e}. "
@@ -257,10 +269,10 @@ def parse_payroll_excel_buffer(data: bytes) -> list[dict]:
         )
 
     entity_name = company_name or "HSSB Payroll"
-    return [{
+    return _json_safe([{
         "sheetName":      entity_name,
         "employees":      employees,
         "totalCTC":       round(sum(e["ctcHexa"] for e in employees), 2),
         "totalNetPay":    round(sum(e["netSalary"] for e in employees), 2),
         "missingColumns": missing_cols,
-    }]
+    }])

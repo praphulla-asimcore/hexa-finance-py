@@ -851,6 +851,22 @@ async def upload_case(
             headers={"HX-Retarget": "#upload-error", "HX-Reswap": "textContent"},
         )
 
+    try:
+        return await _upload_case_inner(
+            request, file, case_type, entity, entity_name,
+            period_ym, period_cycle, payment_date, module,
+            user, db, _upload_err,
+        )
+    except Exception as e:
+        import traceback
+        return _upload_err(f"{type(e).__name__}: {e} | {traceback.format_exc()[-300:]}")
+
+
+async def _upload_case_inner(
+    request, file, case_type, entity, entity_name,
+    period_ym, period_cycle, payment_date, module,
+    user, db, _upload_err,
+):
     if not db:
         return _upload_err("Database not configured.")
 
