@@ -843,20 +843,28 @@ async def upload_case(
 ):
     user = get_current_user(request)
     db = get_db()
+
+    def _upload_err(msg: str) -> HTMLResponse:
+        """Return error into the inline #upload-error div without wiping the form."""
+        return HTMLResponse(
+            msg,
+            headers={"HX-Retarget": "#upload-error", "HX-Reswap": "textContent"},
+        )
+
     if not db:
-        return HTMLResponse('<div class="error-msg">Database not configured.</div>')
+        return _upload_err("Database not configured.")
 
     import re as _re
     if not file or not file.filename.endswith((".xlsx", ".xls", ".xlsm")):
-        return HTMLResponse('<div class="error-msg">Please upload an Excel file (.xlsx, .xlsm, or .xls).</div>')
+        return _upload_err("Please upload an Excel file (.xlsx, .xlsm, or .xls).")
 
     # Combine and validate period: YYYYMM + named cycle
     period_ym    = period_ym.strip()
     period_cycle = period_cycle.strip()
     if not _re.match(r"^\d{6}$", period_ym):
-        return HTMLResponse('<div class="error-msg">Period must be 6 digits YYYYMM (e.g. 202506).</div>')
+        return _upload_err("Period must be 6 digits YYYYMM (e.g. 202506).")
     if period_cycle not in ("25th", "EOM", "7th", "15th"):
-        return HTMLResponse('<div class="error-msg">Cycle must be 25th, EOM, 7th, or 15th.</div>')
+        return _upload_err("Cycle must be 25th, EOM, 7th, or 15th.")
     period = f"{period_ym}-{period_cycle}"
 
     type_up = case_type.upper()
@@ -869,10 +877,10 @@ async def upload_case(
         else:
             parsed_entities = parse_excel_buffer(content)
     except Exception as e:
-        return HTMLResponse(f'<div class="error-msg">Parse error: {str(e)}</div>')
+        return _upload_err(f"Parse error: {str(e)}")
 
     if not parsed_entities:
-        return HTMLResponse('<div class="error-msg">No valid data found in file. Check column headers.</div>')
+        return _upload_err("No valid data found in file. Check column headers.")
 
     # Auto-generate check immediately — no manual step needed
     check_data = (
@@ -904,7 +912,7 @@ async def upload_case(
 
     kase = (insert_resp.data or [None])[0]
     if not kase:
-        return HTMLResponse('<div class="error-msg">Failed to create case.</div>')
+        return _upload_err("Failed to create case — database error. Please try again.")
 
     uploader = user.get("name") or user.get("email")
     await _audit_log(db, kase["id"], "UPLOAD", uploader, user.get("id"), ip, {

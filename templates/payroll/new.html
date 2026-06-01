@@ -103,7 +103,7 @@
         </div>
       </div>
 
-      <div id="upload-error" class="error-msg" style="display:none"></div>
+      <div id="upload-error" class="error-msg" style="display:none;margin-bottom:12px"></div>
 
       <div class="pf-form-actions">
         <button type="button" class="btn btn-secondary"
@@ -181,13 +181,40 @@ function updateEntityHint(select) {
   }
 }
 
-// Validate period_ym is set before submit
+function showFormError(msg) {
+  const el = document.getElementById('upload-error');
+  el.textContent = msg;
+  el.style.display = 'block';
+  el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// Show the error div when the server writes into it via HX-Retarget
+document.getElementById('upload-error').addEventListener('htmx:afterSwap', function() {
+  this.style.display = 'block';
+});
+
 document.getElementById('upload-form').addEventListener('submit', function(e) {
+  document.getElementById('upload-error').style.display = 'none';
   buildPeriodYm();
+
+  const fileInput = document.getElementById('pf-file-input');
+  if (!fileInput.files || !fileInput.files.length) {
+    e.preventDefault();
+    showFormError('Please select an Excel file (.xlsx or .xls) to upload.');
+    return;
+  }
+
   const ym = document.getElementById('period-ym').value;
   if (!ym || ym.length !== 6) {
     e.preventDefault();
-    alert('Please select a month and enter a 4-digit year for the Period.');
+    showFormError('Please select a month and year for the period.');
+    return;
+  }
+
+  if (!document.getElementById('entity-select').value) {
+    e.preventDefault();
+    showFormError('Please select an entity.');
+    return;
   }
 });
 </script>
