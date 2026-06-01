@@ -192,58 +192,31 @@ def email_payment_approval(kase: dict, approve_url: str, reject_url: str, direct
 
 
 def email_return_to_preparer(to: str, kase: dict, returned_by: str) -> None:
+    """Notify the Preparer that their run was returned — Arranger is fixing the data."""
     if not to:
         return
     check = kase.get("check_data") or {}
     label = "CSI Payroll" if kase.get("type") == "CSI" else "Internal Payroll"
-    flags = check.get("flags") or []
-    flag_rows = "".join(
-        f'<tr style="background:{"#fff" if i % 2 == 0 else "#fef2f2"}">'
-        f'<td style="padding:6px 10px;border-bottom:1px solid #fecaca;font-size:13px;color:#991b1b;font-weight:600">{f["code"]}</td>'
-        f'<td style="padding:6px 10px;border-bottom:1px solid #fecaca;font-size:13px">{f.get("employee") or "—"}</td>'
-        f'<td style="padding:6px 10px;border-bottom:1px solid #fecaca;font-size:13px">{f.get("entity") or "—"}</td>'
-        f'<td style="padding:6px 10px;border-bottom:1px solid #fecaca;font-size:13px;text-align:right">'
-        f'{_fmt_rm(f["diff"]) if f.get("diff") else "—"}</td>'
-        f'</tr>'
-        for i, f in enumerate(flags)
-    )
     case_url = f"{APP_URL}/cases/{kase['id']}"
-    _send(to, f"[Hexa Finance] Action Required — Exceptions in {kase['reference']}", _wrap(f"""
-        <h2 style="font-size:18px;font-weight:700;color:#ef4444;margin:0 0 8px">Action Required: Exceptions Flagged</h2>
+    _send(to, f"[Hexa Finance] Run Returned — Awaiting Arranger Fix | {kase['reference']}", _wrap(f"""
+        <h2 style="font-size:18px;font-weight:700;color:#d97706;margin:0 0 8px">Run Returned for Data Correction</h2>
         <p style="color:#555;font-size:14px;line-height:1.6;margin:0 0 20px">
           Your {label} run <strong>{kase['reference']}</strong> ({kase.get('entity_name') or kase.get('entity','')} — {kase.get('period','')})
-          has been returned to you by <strong>{returned_by}</strong> for correction.<br/><br/>
-          <strong>{check.get('flagCount', 0)} exception(s)</strong> were detected. Please review the flags below,
-          correct your source file, and re-upload via the system.
+          has been returned by <strong>{returned_by}</strong> due to <strong>{check.get('flagCount', 0)} exception(s)</strong>.<br/><br/>
+          The <strong>Arranger</strong> has been notified to fix the consultant records in the database.
+          Once the data is corrected, please re-upload the updated file using the Re-upload button in Step 1.
         </p>
-
-        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:16px;margin-bottom:20px">
-          <p style="margin:0 0 10px;font-weight:700;color:#991b1b;font-size:14px">Flagged Exceptions ({check.get('flagCount',0)})</p>
-          <div style="overflow-x:auto">
-            <table style="width:100%;border-collapse:collapse;font-size:13px">
-              <thead><tr style="background:#fee2e2">
-                <th style="padding:6px 10px;text-align:left;border-bottom:2px solid #fecaca">Code</th>
-                <th style="padding:6px 10px;text-align:left;border-bottom:2px solid #fecaca">Employee</th>
-                <th style="padding:6px 10px;text-align:left;border-bottom:2px solid #fecaca">Entity</th>
-                <th style="padding:6px 10px;text-align:right;border-bottom:2px solid #fecaca">Variance</th>
-              </tr></thead>
-              <tbody>{flag_rows}</tbody>
-            </table>
-          </div>
-        </div>
-
         <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:20px">
           {_row('Reference', f'<span style="color:#6366f1;font-weight:700">{kase["reference"]}</span>')}
           {_row('Entity', kase.get('entity_name') or kase.get('entity',''))}
           {_row('Period', kase.get('period',''))}
+          {_row('Exceptions', str(check.get('flagCount', 0)))}
           {_row('Returned by', returned_by)}
-          {_row('Total CTC', _fmt_rm(check.get('ctcTotal')))}
         </table>
-
         <a href="{case_url}" style="display:inline-block;background:#6366f1;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">
-          Open Case &amp; Re-upload →
+          View Case →
         </a>
-        <p style="color:#999;font-size:12px;margin-top:16px">Fix the source file, then use the Re-upload button in Step 1 of the case.</p>
+        <p style="color:#999;font-size:12px;margin-top:16px">Wait for the Arranger to confirm the data is fixed, then re-upload via Step 1.</p>
     """))
 
 

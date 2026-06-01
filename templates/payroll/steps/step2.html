@@ -64,16 +64,16 @@
     {% if can_return %}
     <div style="margin-top:14px;padding:14px 16px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px">
       <p style="margin:0 0 10px;font-size:13px;color:#92400e">
-        <strong>Exceptions detected.</strong> You may proceed to Step 3 (approve with exceptions acknowledged), or return this run to the preparer for correction.
+        <strong>Exceptions detected.</strong> You may proceed to Step 3 (approve with exceptions acknowledged), or return this run to the Arranger to fix the consultant data.
       </p>
       <button class="btn btn-secondary"
           style="border-color:#f59e0b;color:#92400e"
           hx-post="/cases/{{ kase.id }}/return-to-preparer"
           hx-target="#case-detail-inner"
           hx-swap="innerHTML"
-          hx-confirm="Return this run to the preparer? An email will be sent with the exception list. The preparer must re-upload the corrected file.">
+          hx-confirm="Return this run to the Arranger? The Arranger will be notified to fix the consultant data in the database. The Preparer will be notified to wait.">
         <span class="spinner htmx-indicator"></span>
-        Return to Preparer
+        Return to Arranger
       </button>
     </div>
     {% endif %}

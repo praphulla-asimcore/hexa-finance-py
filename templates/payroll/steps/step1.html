@@ -9,7 +9,7 @@
 
   {% if kase.status == 'returned' %}
   <div class="pf-info-banner pf-banner-warning" style="margin-bottom:16px">
-    ⚠ This run was returned to you for correction. Review the flagged exceptions in Step 2, correct your source file, then re-upload below.
+    ⚠ This run was returned for data correction. The Arranger has been notified to fix the consultant records. Once confirmed, correct your source file and re-upload below.
   </div>
   <div class="pf-action-zone" style="margin-bottom:20px">
     <form hx-post="/cases/{{ kase.id }}/reupload"
