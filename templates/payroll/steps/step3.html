@@ -47,20 +47,50 @@
   </div>
   {% endif %}
 
-  {# ── Accrual result banner ── #}
-  {% if audit_accrual %}
+  {# ── Accrual result banner + manual post button ── #}
+  {% set accrual_ok = audit_accrual and (audit_accrual.metadata or {}).get('success') %}
+  {% set accrual_attempted = audit_accrual is not none %}
+  {% set can_post_accrual = kase.status in ['check_approval_sent','check_reviewer_approved','check_approved',
+      'bank_file_generated','bank_uploaded','payment_approval_sent','payment_approved','payment_rejected','zoho_posted'] %}
+
+  {% if accrual_ok %}
   {% set meta = audit_accrual.metadata or {} %}
-  {% if meta.get('success') %}
   <div class="pf-info-banner pf-banner-ok" style="margin-bottom:16px">
     ✓ Accrual journal posted to Zoho Books
     {% if meta.get('journal_id') %}<span style="font-family:monospace;margin-left:8px;font-size:12px">JV: {{ meta.journal_id }}</span>{% endif %}
     {% if meta.get('skipped') %}<span style="margin-left:8px;opacity:.7">({{ meta.skipped }} line items skipped — account codes not found)</span>{% endif %}
   </div>
-  {% else %}
-  <div class="pf-info-banner pf-banner-warning" style="margin-bottom:16px">
-    ⚠ Accrual auto-posting failed: {{ meta.get('error','Unknown error') }}
+
+  {% elif accrual_attempted %}
+  {% set meta = audit_accrual.metadata or {} %}
+  <div style="background:#fef3c7;border:1px solid #fde68a;border-radius:10px;padding:14px 16px;margin-bottom:16px">
+    <div style="font-weight:700;color:#92400e;margin-bottom:6px;font-size:13px">
+      ⚠ Accrual not posted to Zoho Books
+    </div>
+    <div style="font-size:12px;color:#78350f;margin-bottom:10px">{{ meta.get('error', 'Unknown error') }}</div>
+    <button class="btn btn-primary btn-sm"
+        hx-post="/cases/{{ kase.id }}/post-accrual"
+        hx-target="#case-detail-inner"
+        hx-swap="innerHTML">
+      <span class="spinner htmx-indicator"></span>
+      Retry — Post Accrual to Zoho
+    </button>
   </div>
-  {% endif %}
+
+  {% elif can_post_accrual %}
+  <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:14px 16px;margin-bottom:16px">
+    <div style="font-weight:700;color:#1e40af;margin-bottom:6px;font-size:13px">Zoho Accrual Not Posted</div>
+    <div style="font-size:12px;color:#1e3a8a;margin-bottom:10px">
+      The accrual journal entry for this run has not been posted to Zoho Books yet.
+    </div>
+    <button class="btn btn-primary btn-sm"
+        hx-post="/cases/{{ kase.id }}/post-accrual"
+        hx-target="#case-detail-inner"
+        hx-swap="innerHTML">
+      <span class="spinner htmx-indicator"></span>
+      Post Accrual to Zoho Books
+    </button>
+  </div>
   {% endif %}
 
   {# ── Approver chain ── #}

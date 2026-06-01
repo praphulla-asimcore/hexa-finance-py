@@ -1211,6 +1211,40 @@ async def send_check_approval(case_id: str, request: Request):
     return await _refresh_detail(case_id, db, request, user, 3)
 
 
+# ─── Step 3a2: Manual accrual post (retry) ───────────────────────────────────
+
+@router.post("/cases/{case_id}/post-accrual")
+async def post_accrual_manual(case_id: str, request: Request):
+    user = get_current_user(request)
+    db = get_db()
+    resp = db.from_("payroll_cases").select("*").eq("id", case_id).single().execute()
+    kase = resp.data
+    if not kase:
+        return HTMLResponse('<div class="error-msg">Case not found.</div>')
+
+    # Allow retry from any post-approval-sent status
+    ALLOWED = {"check_approval_sent", "check_reviewer_approved", "check_approved",
+               "bank_file_generated", "bank_uploaded", "payment_approval_sent",
+               "payment_approved", "payment_rejected", "zoho_posted"}
+    if kase.get("status") not in ALLOWED:
+        return await _refresh_detail(case_id, db, request, user, 3)
+
+    case_type = kase.get("type", "CSI")
+    try:
+        if case_type == "PAYROLL":
+            accrual_result = await _auto_book_accruals_payroll(kase, db)
+        else:
+            accrual_result = await _auto_book_accruals(kase, db)
+    except Exception as e:
+        accrual_result = {"success": False, "error": str(e)}
+
+    await _audit_log(db, case_id, "ZOHO_ACCRUAL_AUTO",
+                     user.get("name") or user.get("email"), user.get("id"),
+                     _get_ip(request), accrual_result)
+
+    return await _refresh_detail(case_id, db, request, user, 3)
+
+
 # ─── Step 3b: Email approve/reject token ─────────────────────────────────────
 
 @router.get("/api/payroll-cases/approve/{token}")
