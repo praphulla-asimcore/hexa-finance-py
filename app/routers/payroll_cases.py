@@ -882,37 +882,40 @@ async def upload_case(
     if not parsed_entities:
         return _upload_err("No valid data found in file. Check column headers.")
 
-    # Auto-generate check immediately — no manual step needed
-    check_data = (
-        _build_check_data_payroll(parsed_entities)
-        if type_up == "PAYROLL"
-        else _build_check_data(parsed_entities)
-    )
+    try:
+        # Auto-generate check immediately — no manual step needed
+        check_data = (
+            _build_check_data_payroll(parsed_entities)
+            if type_up == "PAYROLL"
+            else _build_check_data(parsed_entities)
+        )
 
-    file_hash = _sha256(content)
-    ip = _get_ip(request)
-    now_ts = _now()
+        file_hash = _sha256(content)
+        ip = _get_ip(request)
+        now_ts = _now()
 
-    ref, seq = await _generate_ref(db, type_up, entity_code, period)
+        ref, seq = await _generate_ref(db, type_up, entity_code, period)
 
-    insert_resp = db.from_("payroll_cases").insert({
-        "reference": ref, "type": type_up, "entity": entity_code,
-        "entity_name": entity_name or parsed_entities[0].get("sheetName", entity_code),
-        "period": period, "seq_no": seq, "status": "check_generated",
-        "original_file_name": file.filename,
-        "original_file_hash": file_hash,
-        "parsed_data": {"entities": parsed_entities},
-        "check_data": check_data,
-        "check_generated_at": now_ts,
-        "uploaded_by_id": str(user.get("id", "")),
-        "uploaded_by_name": user.get("name") or user.get("email", ""),
-        "uploaded_by_email": user.get("email", ""),
-        "uploaded_at": now_ts, "upload_ip": ip,
-    }).select().execute()
+        insert_resp = db.from_("payroll_cases").insert({
+            "reference": ref, "type": type_up, "entity": entity_code,
+            "entity_name": entity_name or parsed_entities[0].get("sheetName", entity_code),
+            "period": period, "seq_no": seq, "status": "check_generated",
+            "original_file_name": file.filename,
+            "original_file_hash": file_hash,
+            "parsed_data": {"entities": parsed_entities},
+            "check_data": check_data,
+            "check_generated_at": now_ts,
+            "uploaded_by_id": str(user.get("id", "")),
+            "uploaded_by_name": user.get("name") or user.get("email", ""),
+            "uploaded_by_email": user.get("email", ""),
+            "uploaded_at": now_ts, "upload_ip": ip,
+        }).select().execute()
+    except Exception as e:
+        return _upload_err(f"Failed to create case: {type(e).__name__}: {e}")
 
     kase = (insert_resp.data or [None])[0]
     if not kase:
-        return _upload_err("Failed to create case — database error. Please try again.")
+        return _upload_err("Failed to create case — database returned no data. Please try again.")
 
     uploader = user.get("name") or user.get("email")
     await _audit_log(db, kase["id"], "UPLOAD", uploader, user.get("id"), ip, {

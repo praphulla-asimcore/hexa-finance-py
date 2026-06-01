@@ -179,19 +179,37 @@ function submitUploadForm() {
     headers: { 'HX-Request': 'true', 'HX-Current-URL': window.location.href },
   })
   .then(function(res) {
-    var pushUrl = res.headers.get('HX-Push-Url');
-    return res.text().then(function(html) { return { html: html, pushUrl: pushUrl, ok: res.ok }; });
+    var retarget = res.headers.get('HX-Retarget');
+    var pushUrl  = res.headers.get('HX-Push-Url');
+    return res.text().then(function(body) {
+      return { body: body, retarget: retarget, pushUrl: pushUrl, ok: res.ok, status: res.status };
+    });
   })
   .then(function(r) {
+    // Server sent an inline error (HX-Retarget → #upload-error)
+    if (r.retarget) {
+      btn.disabled = false;
+      spinner.style.display = 'none';
+      showFormError(r.body);
+      return;
+    }
+    // Server-side error (5xx) with no retarget — show inline
+    if (!r.ok) {
+      btn.disabled = false;
+      spinner.style.display = 'none';
+      showFormError('Server error (' + r.status + '). Please try again or contact support.');
+      return;
+    }
+    // Success — swap main content and push URL
     if (r.pushUrl) history.pushState({}, '', r.pushUrl);
     var target = document.getElementById('main-content');
-    target.innerHTML = r.html;
+    target.innerHTML = r.body;
     htmx.process(target);
   })
   .catch(function(err) {
     btn.disabled = false;
     spinner.style.display = 'none';
-    showFormError('Upload failed — please try again. (' + err.message + ')');
+    showFormError('Network error — please check your connection and try again.');
   });
 }
 
