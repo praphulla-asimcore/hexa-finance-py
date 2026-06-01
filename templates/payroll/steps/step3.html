@@ -6,7 +6,8 @@
 {% set is_rejected = kase.status == 'check_rejected' %}
 {% set cert = kase.check_approval_cert or {} %}
 {% set check = kase.check_data or {} %}
-{% set audit_accrual = (logs | selectattr('event_type','equalto','ZOHO_ACCRUAL_AUTO') | list | last) if logs else none %}
+{% set _accrual_logs = (logs | selectattr('event_type','equalto','ZOHO_ACCRUAL_AUTO') | list) if logs else [] %}
+{% set audit_accrual = _accrual_logs | last if _accrual_logs else none %}
 
 {% macro approver_box(name, role, status, ts) %}
 <div class="pf-approver-box">

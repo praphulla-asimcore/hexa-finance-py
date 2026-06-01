@@ -1,7 +1,8 @@
 {% macro fmt_rm(n) %}{% if n is not none %}RM {{ "{:,.2f}".format(n|float) }}{% else %}—{% endif %}{% endmacro %}
 {% macro fmt_date(d) %}{% if d %}{{ d[:16].replace('T',' ') }}{% else %}—{% endif %}{% endmacro %}
 
-{% set audit_payment = (logs | selectattr('event_type','equalto','ZOHO_PAYMENT_AUTO') | list | last) if logs else none %}
+{% set _payment_logs = (logs | selectattr('event_type','equalto','ZOHO_PAYMENT_AUTO') | list) if logs else [] %}
+{% set audit_payment = _payment_logs | last if _payment_logs else none %}
 
 <div class="pf-panel-body">
   <div class="pf-panel-header">
