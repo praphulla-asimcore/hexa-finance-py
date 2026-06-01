@@ -55,8 +55,8 @@ async def invite_user(request: Request):
     expires = (datetime.now(timezone.utc) + timedelta(hours=48)).isoformat()
 
     try:
-        existing = db.from_("users").select("id, name").eq("email", email).maybe_single().execute()
-        ex = existing.data
+        existing = db.from_("users").select("id, name").eq("email", email).limit(1).execute()
+        ex = (existing.data or [None])[0]
 
         if ex:
             db.from_("users").update({
