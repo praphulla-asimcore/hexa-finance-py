@@ -23,8 +23,7 @@ async def admin_panel(request: Request):
     if db and user.get("role") == "admin":
         resp = db.from_("users").select("id, email, name, role, status, created_at, last_login").order("created_at", desc=True).execute()
         users_list = resp.data or []
-    return templates.TemplateResponse("admin/panel.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "admin/panel.html", {
         "user": user,
         "users": users_list,
         "zoho_configured": bool(ZOHO_CLIENT_ID and ZOHO_CLIENT_SECRET and ZOHO_REFRESH_TOKEN),
