@@ -1,0 +1,29 @@
+{% macro fmt_rm(n) %}{% if n is not none %}RM {{ "{:,.2f}".format(n|float) }}{% else %}—{% endif %}{% endmacro %}
+{% macro fmt_date(d) %}{% if d %}{{ d[:16].replace('T',' ') }}{% else %}—{% endif %}{% endmacro %}
+
+<div class="pf-screen fade-in">
+  <div class="pf-detail-header">
+    <button class="pf-back-btn"
+      hx-get="/statutory" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="15 18 9 12 15 6"/>
+      </svg>
+      Back to Statutory
+    </button>
+    <div class="pf-detail-title">
+      {% set si = status_info.get(sub.status, (sub.status,'neutral')) %}
+      <span class="pf-ref-tag pf-ref-large">{{ type_label }}</span>
+      <span class="badge badge-{{ si[1] }}">{{ si[0] }}</span>
+    </div>
+    <div class="pf-detail-meta">
+      {{ sub.entity_name or sub.entity }}
+      · Wage Month: {{ sub.wage_month[:4] }}-{{ sub.wage_month[4:] }}
+      · Contribution Month: {{ sub.contribution_month[:4] }}-{{ sub.contribution_month[4:] }}
+      · Due {{ sub.due_date }}
+    </div>
+  </div>
+
+  <div id="statutory-detail-inner">
+    {% include "statutory/detail_inner.html" %}
+  </div>
+</div>

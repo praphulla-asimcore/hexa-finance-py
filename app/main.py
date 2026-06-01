@@ -5,7 +5,7 @@ from fastapi.templating import Jinja2Templates
 from pathlib import Path
 
 from app.config import PUBLIC_DIR, TEMPLATES_DIR
-from app.routers import auth, users, payroll_cases, consultants, accounts, admin, journal_history, pages
+from app.routers import auth, users, payroll_cases, consultants, accounts, admin, journal_history, pages, statutory
 
 app = FastAPI(title="Hexa Finance", docs_url=None, redoc_url=None)
 
@@ -18,6 +18,7 @@ app.include_router(consultants.router)
 app.include_router(accounts.router)
 app.include_router(admin.router)
 app.include_router(journal_history.router)
+app.include_router(statutory.router)
 
 # --- Static assets served via Python (reliable in Vercel serverless) ---
 

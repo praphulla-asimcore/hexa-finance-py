@@ -162,6 +162,9 @@ async def fetch_airtable_consultants() -> list[dict]:
                     "bankName": str(f.get("Bank Name", "")).strip(),
                     "accountNo": str(f.get("Bank Account Number", "")).strip(),
                     "idNumber": str(f.get("ID Number", "")).strip(),
+                    "epfNumber":   str(f.get("EPF Number", "") or "").strip(),
+                    "socsoNumber": str(f.get("SOCSO Number", "") or "").strip(),
+                    "taxRefNumber":str(f.get("Tax Identification Number", "") or "").strip(),
                 })
             offset = data.get("offset")
             if not offset:

@@ -42,6 +42,14 @@ ORGS: dict = {
     "PTHIT": {"id": "768662733", "name": "PT Hexamatics Info Tech"},
 }
 
+STATUTORY_NOS: dict = {
+    "HSSB": {
+        "epf":   os.getenv("HSSB_EPF_NO", ""),
+        "socso": os.getenv("HSSB_SOCSO_NO", ""),
+        "hrdf":  os.getenv("HSSB_HRDF_CODE", ""),
+    },
+}
+
 APPROVERS: dict = {
     "reviewer": {"name": "Ikhram Merican",         "email": "ikhram.merican@hexamatics.com"},
     "final":    {"name": "Praphulla Subedi",        "email": "praphulla@hexamatics.com"},

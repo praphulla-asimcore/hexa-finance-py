@@ -1,0 +1,227 @@
+{% macro fmt_rm(n) %}{% if n is not none %}RM {{ "{:,.2f}".format(n|float) }}{% else %}—{% endif %}{% endmacro %}
+{% macro fmt_date(d) %}{% if d %}{{ d[:16].replace('T',' ') }}{% else %}—{% endif %}{% endmacro %}
+
+<div id="stat-error" class="error-msg" style="display:none;margin-bottom:12px"></div>
+
+<div class="card" style="margin-bottom:16px;padding:20px 24px">
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px">
+    <div class="pf-check-stat">
+      <div class="pf-check-val">{{ (sub.employee_data or []) | length }}</div>
+      <div class="pf-check-key">Employees</div>
+    </div>
+    {% if sub.total_ee_amount %}
+    <div class="pf-check-stat">
+      <div class="pf-check-val">{{ fmt_rm(sub.total_ee_amount) }}</div>
+      <div class="pf-check-key">Employee Share</div>
+    </div>
+    {% endif %}
+    {% if sub.total_er_amount %}
+    <div class="pf-check-stat">
+      <div class="pf-check-val">{{ fmt_rm(sub.total_er_amount) }}</div>
+      <div class="pf-check-key">Employer Share</div>
+    </div>
+    {% endif %}
+    <div class="pf-check-stat">
+      <div class="pf-check-val" style="color:var(--purple)">{{ fmt_rm(sub.total_amount) }}</div>
+      <div class="pf-check-key">Total to Pay</div>
+    </div>
+  </div>
+</div>
+
+{# ── Action zone ── #}
+<div class="card" style="margin-bottom:16px;padding:20px 24px">
+
+  {# Step 1: Download file #}
+  <div class="pf-sub-step" style="margin-bottom:16px">
+    <div class="pf-sub-step-header done">
+      <div class="pf-sub-step-num">✓</div>
+      <div>Submission File Generated</div>
+    </div>
+    <div class="pf-sub-step-body">
+      <a href="/statutory/{{ sub.id }}/download" class="btn btn-secondary" target="_blank">
+        ⬇ Download {{ type_label }} File
+      </a>
+      <span style="font-size:12px;color:var(--text-muted);margin-left:12px">
+        {{ sub.submission_file_name or '' }}
+      </span>
+    </div>
+  </div>
+
+  {# Step 2: Upload to portal + mark submitted #}
+  <div class="pf-sub-step" style="margin-bottom:16px">
+    <div class="pf-sub-step-header {% if sub.status in ['submitted','paid','zoho_posted'] %}done{% endif %}">
+      <div class="pf-sub-step-num">{% if sub.status in ['submitted','paid','zoho_posted'] %}✓{% else %}2{% endif %}</div>
+      <div>Upload to Portal & Mark as Submitted</div>
+    </div>
+    {% if sub.status == 'file_ready' %}
+    <div class="pf-sub-step-body">
+      <p class="pf-action-desc" style="font-size:13px">Upload the file to the relevant portal, then mark as submitted here.</p>
+      <button class="btn btn-primary btn-sm"
+          hx-post="/statutory/{{ sub.id }}/mark-submitted"
+          hx-target="#statutory-detail-inner"
+          hx-swap="innerHTML">
+        <span class="spinner htmx-indicator"></span>
+        Mark as Submitted to Portal
+      </button>
+    </div>
+    {% elif sub.status in ['submitted','paid','zoho_posted'] %}
+    <div class="pf-sub-step-done">
+      <div class="pf-stamp-box"><span class="pf-stamp-label">Status</span><span class="pf-stamp-value">Submitted to portal</span></div>
+    </div>
+    {% else %}
+    <div class="pf-sub-step-locked">Download the file first.</div>
+    {% endif %}
+  </div>
+
+  {# Step 3: Confirm payment #}
+  <div class="pf-sub-step" style="margin-bottom:16px">
+    <div class="pf-sub-step-header {% if sub.status in ['paid','zoho_posted'] %}done{% endif %}">
+      <div class="pf-sub-step-num">{% if sub.status in ['paid','zoho_posted'] %}✓{% else %}3{% endif %}</div>
+      <div>Confirm Payment</div>
+    </div>
+    {% if sub.status == 'submitted' %}
+    <div class="pf-sub-step-body">
+      <p class="pf-action-desc" style="font-size:13px">Enter the payment reference and date after completing the payment on the portal.</p>
+      <form hx-post="/statutory/{{ sub.id }}/confirm-payment"
+            hx-target="#statutory-detail-inner"
+            hx-swap="innerHTML">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;max-width:420px">
+          <div>
+            <label class="label">Payment Reference <span class="req">*</span></label>
+            <input type="text" class="input" name="paymentRef" placeholder="e.g. EPF-202606-001" required/>
+          </div>
+          <div>
+            <label class="label">Payment Date <span class="req">*</span></label>
+            <input type="date" class="input" name="paymentDate" required/>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">
+          <span class="spinner htmx-indicator"></span>
+          Confirm Payment & Post to Zoho
+        </button>
+      </form>
+    </div>
+    {% elif sub.status in ['paid','zoho_posted'] %}
+    <div class="pf-sub-step-done">
+      <div class="pf-stamp-box"><span class="pf-stamp-label">Payment Ref</span><span class="pf-stamp-value" style="font-family:monospace">{{ sub.payment_ref or '—' }}</span></div>
+      <div class="pf-stamp-box"><span class="pf-stamp-label">Payment Date</span><span class="pf-stamp-value">{{ sub.payment_date or '—' }}</span></div>
+      <div class="pf-stamp-box"><span class="pf-stamp-label">Confirmed by</span><span class="pf-stamp-value">{{ sub.confirmed_by or '—' }}</span></div>
+    </div>
+    {% else %}
+    <div class="pf-sub-step-locked">Mark as submitted first.</div>
+    {% endif %}
+  </div>
+
+  {# Step 4: Zoho posted #}
+  <div class="pf-sub-step">
+    <div class="pf-sub-step-header {% if sub.status == 'zoho_posted' %}done{% endif %}">
+      <div class="pf-sub-step-num">{% if sub.status == 'zoho_posted' %}✓{% else %}4{% endif %}</div>
+      <div>Zoho Books — Clearing Entry Posted</div>
+    </div>
+    {% if sub.status == 'zoho_posted' %}
+    <div class="pf-sub-step-done">
+      <div class="pf-info-banner pf-banner-ok">
+        ✓ DR HSSB-041 / CR HSSB-003 posted
+        {% if sub.zoho_journal_id %}<span style="font-family:monospace;margin-left:8px;font-size:12px">JV: {{ sub.zoho_journal_id }}</span>{% endif %}
+      </div>
+      <div class="pf-stamp-box"><span class="pf-stamp-label">Posted at</span><span class="pf-stamp-value">{{ fmt_date(sub.zoho_posted_at) }}</span></div>
+    </div>
+    {% elif sub.status == 'paid' %}
+    <div class="pf-sub-step-body">
+      <div class="pf-info-banner pf-banner-warning">
+        Zoho posting failed or pending. Retry by refreshing.
+        <button class="btn btn-secondary btn-sm" style="margin-left:10px"
+            hx-get="/statutory/{{ sub.id }}" hx-target="#statutory-detail-inner" hx-swap="innerHTML">
+          Refresh
+        </button>
+      </div>
+    </div>
+    {% else %}
+    <div class="pf-sub-step-locked">Confirm payment first.</div>
+    {% endif %}
+  </div>
+
+</div>
+
+{# ── Employee table ── #}
+{% set emps = sub.employee_data or [] %}
+{% if emps %}
+<div class="card" style="padding:20px 24px">
+  <div class="pf-detail-card-title" style="margin-bottom:12px">
+    Employees ({{ emps | length }}) — Wage Month {{ sub.wage_month[:4] }}-{{ sub.wage_month[4:] }}
+  </div>
+  <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="background:var(--surface-2,#f8fafc)">
+        <th style="padding:7px 10px;text-align:left;border-bottom:2px solid var(--border)">Employee</th>
+        <th style="padding:7px 10px;text-align:left;border-bottom:2px solid var(--border)">IC / Passport</th>
+        {% if sub.statutory_type == 'EPF' %}
+        <th style="padding:7px 10px;text-align:left;border-bottom:2px solid var(--border)">EPF No.</th>
+        <th style="padding:7px 10px;text-align:right;border-bottom:2px solid var(--border)">ee EPF</th>
+        <th style="padding:7px 10px;text-align:right;border-bottom:2px solid var(--border)">er EPF</th>
+        <th style="padding:7px 10px;text-align:right;border-bottom:2px solid var(--border)">Total</th>
+        {% elif sub.statutory_type == 'SOCSO_EIS' %}
+        <th style="padding:7px 10px;text-align:left;border-bottom:2px solid var(--border)">SOCSO No.</th>
+        <th style="padding:7px 10px;text-align:right;border-bottom:2px solid var(--border)">ee SOCSO</th>
+        <th style="padding:7px 10px;text-align:right;border-bottom:2px solid var(--border)">er SOCSO</th>
+        <th style="padding:7px 10px;text-align:right;border-bottom:2px solid var(--border)">ee EIS</th>
+        <th style="padding:7px 10px;text-align:right;border-bottom:2px solid var(--border)">er EIS</th>
+        <th style="padding:7px 10px;text-align:right;border-bottom:2px solid var(--border)">Total</th>
+        {% elif sub.statutory_type == 'HRDF' %}
+        <th style="padding:7px 10px;text-align:right;border-bottom:2px solid var(--border)">Gross Salary</th>
+        <th style="padding:7px 10px;text-align:right;border-bottom:2px solid var(--border)">HRDF Levy</th>
+        {% elif sub.statutory_type == 'MTD' %}
+        <th style="padding:7px 10px;text-align:left;border-bottom:2px solid var(--border)">Tax ID (TIN)</th>
+        <th style="padding:7px 10px;text-align:right;border-bottom:2px solid var(--border)">Gross Salary</th>
+        <th style="padding:7px 10px;text-align:right;border-bottom:2px solid var(--border)">MTD / PCB</th>
+        {% endif %}
+      </tr></thead>
+      <tbody>
+      {% for emp in emps %}
+      <tr style="background:{% if loop.index is odd %}#fff{% else %}#f8fafc{% endif %}">
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border)">{{ emp.name or emp.employeeId }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);font-family:monospace;font-size:11px">{{ emp.idNumber or '—' }}</td>
+        {% if sub.statutory_type == 'EPF' %}
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);font-family:monospace;font-size:11px">{{ emp.epfNumber or '—' }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">RM {{ "%.2f"|format(emp.epfEmployee|float) }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">RM {{ "%.2f"|format(emp.epfEmployer|float) }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right;font-weight:600">RM {{ "%.2f"|format((emp.epfEmployee|float)+(emp.epfEmployer|float)) }}</td>
+        {% elif sub.statutory_type == 'SOCSO_EIS' %}
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);font-family:monospace;font-size:11px">{{ emp.socsoNumber or '—' }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">RM {{ "%.2f"|format(emp.socsoEmployee|float) }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">RM {{ "%.2f"|format(emp.socsoEmployer|float) }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">RM {{ "%.2f"|format(emp.eisEmployee|float) }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">RM {{ "%.2f"|format(emp.eisEmployer|float) }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right;font-weight:600">RM {{ "%.2f"|format((emp.socsoEmployee|float)+(emp.socsoEmployer|float)+(emp.eisEmployee|float)+(emp.eisEmployer|float)) }}</td>
+        {% elif sub.statutory_type == 'HRDF' %}
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">RM {{ "%.2f"|format(emp.grossSalary|float) }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right;font-weight:600">RM {{ "%.2f"|format(emp.hrdf|float) }}</td>
+        {% elif sub.statutory_type == 'MTD' %}
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);font-family:monospace;font-size:11px">{{ emp.taxRefNumber or '—' }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">RM {{ "%.2f"|format(emp.grossSalary|float) }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right;font-weight:600">RM {{ "%.2f"|format(emp.mtd|float) }}</td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+      </tbody>
+      <tfoot><tr style="background:#f1f5f9;font-weight:700">
+        <td colspan="2" style="padding:7px 10px;border-top:2px solid var(--border)">TOTAL</td>
+        {% if sub.statutory_type == 'EPF' %}
+        <td style="padding:7px 10px;border-top:2px solid var(--border)"></td>
+        <td style="padding:7px 10px;border-top:2px solid var(--border);text-align:right">RM {{ "%.2f"|format(sub.total_ee_amount|float) }}</td>
+        <td style="padding:7px 10px;border-top:2px solid var(--border);text-align:right">RM {{ "%.2f"|format(sub.total_er_amount|float) }}</td>
+        <td style="padding:7px 10px;border-top:2px solid var(--border);text-align:right">RM {{ "%.2f"|format(sub.total_amount|float) }}</td>
+        {% elif sub.statutory_type == 'SOCSO_EIS' %}
+        <td style="padding:7px 10px;border-top:2px solid var(--border)"></td>
+        <td colspan="4" style="padding:7px 10px;border-top:2px solid var(--border);text-align:right">Total: RM {{ "%.2f"|format(sub.total_amount|float) }}</td>
+        <td style="padding:7px 10px;border-top:2px solid var(--border);text-align:right">RM {{ "%.2f"|format(sub.total_amount|float) }}</td>
+        {% elif sub.statutory_type in ['HRDF','MTD'] %}
+        {% if sub.statutory_type == 'MTD' %}<td style="padding:7px 10px;border-top:2px solid var(--border)"></td>{% endif %}
+        <td style="padding:7px 10px;border-top:2px solid var(--border);text-align:right"></td>
+        <td style="padding:7px 10px;border-top:2px solid var(--border);text-align:right">RM {{ "%.2f"|format(sub.total_amount|float) }}</td>
+        {% endif %}
+      </tr></tfoot>
+    </table>
+  </div>
+</div>
+{% endif %}

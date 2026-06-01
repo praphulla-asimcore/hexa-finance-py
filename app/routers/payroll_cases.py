@@ -8,7 +8,7 @@ from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse, HTMLResponse, Response, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from app.config import TEMPLATES_DIR, APP_URL, APPROVERS, ORGS
+from app.config import TEMPLATES_DIR, APP_URL, APPROVERS, ORGS, STATUTORY_NOS
 from app.deps import get_current_user
 from app.services.db import get_db
 from app.services.parser import parse_excel_buffer, parse_payroll_excel_buffer
@@ -71,6 +71,112 @@ def _get_arranger_emails(db) -> list:
         return [u["email"] for u in (resp.data or [])]
     except Exception:
         return []
+
+
+async def _create_or_update_statutory(kase: dict, db, triggered_by: str) -> None:
+    """Called on CSI check_approved: create/update statutory submissions for EPF/SOCSO_EIS/HRDF/MTD."""
+    from app.services.statutory_files import (
+        generate_epf_file, generate_socso_eis_file,
+        generate_hrdf_file, generate_mtd_file,
+    )
+
+    wage_month = (kase.get("period") or "")[:6]
+    if len(wage_month) != 6:
+        return
+
+    yr, mo = int(wage_month[:4]), int(wage_month[4:6])
+    contribution_month = f"{yr+1}01" if mo == 12 else f"{yr:04d}{mo+1:02d}"
+    due_date           = f"{contribution_month[:4]}-{contribution_month[4:6]}-15"
+
+    entity      = kase.get("entity", "")
+    entity_name = kase.get("entity_name", "")
+    case_id     = kase["id"]
+
+    # Fetch Airtable for statutory reference numbers (EPF No, SOCSO No, TIN)
+    try:
+        airtable_list = await fetch_airtable_consultants()
+    except Exception:
+        airtable_list = []
+
+    # Build enriched employee list — amounts taken EXACTLY from CSI data
+    entities_data = (kase.get("parsed_data") or {}).get("entities", [])
+    enriched = []
+    for ent in entities_data:
+        for emp in ent.get("employees", []):
+            matched = match_consultant(emp, airtable_list)
+            enriched.append({
+                "employeeId":    emp.get("employeeId", ""),
+                "name":          emp.get("name", ""),
+                "idNumber":      (matched.get("idNumber") if matched else None) or emp.get("idNumber", ""),
+                "epfNumber":     matched.get("epfNumber", "") if matched else "",
+                "socsoNumber":   matched.get("socsoNumber", "") if matched else "",
+                "taxRefNumber":  matched.get("taxRefNumber", "") if matched else "",
+                "grossSalary":   float(emp.get("grossSalary") or 0),
+                "netSalary":     float(emp.get("netSalary") or 0),
+                "epfEmployee":   float(emp.get("epfEmployee") or 0),
+                "epfEmployer":   float(emp.get("epfEmployer") or 0),
+                "eisEmployee":   float(emp.get("eisEmployee") or 0),
+                "eisEmployer":   float(emp.get("eisEmployer") or 0),
+                "socsoEmployee": float(emp.get("socsoEmployee") or 0),
+                "socsoEmployer": float(emp.get("socsoEmployer") or 0),
+                "hrdf":          float(emp.get("hrdf") or 0),
+                "mtd":           float(emp.get("mtd") or 0),
+            })
+
+    employer_nos = STATUTORY_NOS.get(entity, {})
+    generators = {
+        "EPF":       (generate_epf_file,       {"employer_epf_no":    employer_nos.get("epf", "")}),
+        "SOCSO_EIS": (generate_socso_eis_file,  {"employer_socso_no":  employer_nos.get("socso", "")}),
+        "HRDF":      (generate_hrdf_file,       {"employer_hrdf_code": employer_nos.get("hrdf", "")}),
+        "MTD":       (generate_mtd_file,        {}),
+    }
+
+    for stat_type, (gen_fn, gen_kwargs) in generators.items():
+        try:
+            sub_for_gen = {
+                "entity": entity, "entity_name": entity_name,
+                "statutory_type": stat_type,
+                "wage_month": wage_month,
+                "contribution_month": contribution_month,
+                "due_date": due_date,
+            }
+
+            existing_resp = db.from_("statutory_submissions").select("*").eq("entity", entity).eq("statutory_type", stat_type).eq("wage_month", wage_month).limit(1).execute()
+            existing = (existing_resp.data or [None])[0]
+
+            if existing:
+                # Merge employees — no duplicates by employeeId
+                existing_ids = {e["employeeId"] for e in (existing.get("employee_data") or [])}
+                merged       = (existing.get("employee_data") or []) + [
+                    e for e in enriched if e["employeeId"] not in existing_ids
+                ]
+                case_ids = list({*list(existing.get("case_ids") or []), case_id})
+                result   = gen_fn({**sub_for_gen, "employee_data": merged}, **gen_kwargs)
+                db.from_("statutory_submissions").update({
+                    "case_ids":             case_ids,
+                    "employee_data":        merged,
+                    "total_ee_amount":      result["total_ee_amount"],
+                    "total_er_amount":      result["total_er_amount"],
+                    "total_amount":         result["total_amount"],
+                    "submission_file":      result["file_data"],
+                    "submission_file_name": result["file_name"],
+                }).eq("id", existing["id"]).execute()
+            else:
+                result = gen_fn({**sub_for_gen, "employee_data": enriched}, **gen_kwargs)
+                db.from_("statutory_submissions").insert({
+                    **sub_for_gen,
+                    "status":               "file_ready",
+                    "case_ids":             [case_id],
+                    "employee_data":        enriched,
+                    "total_ee_amount":      result["total_ee_amount"],
+                    "total_er_amount":      result["total_er_amount"],
+                    "total_amount":         result["total_amount"],
+                    "submission_file":      result["file_data"],
+                    "submission_file_name": result["file_name"],
+                    "created_by":           triggered_by,
+                }).execute()
+        except Exception:
+            pass   # Non-blocking — statutory failure never blocks CSI approval
 
 
 async def _generate_ref(db, case_type: str, entity: str, period: str) -> tuple[str, int]:
@@ -1522,6 +1628,13 @@ async def email_approve(token: str, action: str = "approve"):
         )
     except Exception:
         pass
+
+    # Create / update statutory submissions (CSI only)
+    if kase.get("type") == "CSI":
+        try:
+            await _create_or_update_statutory(fresh_kase, db, tok["approver_name"])
+        except Exception:
+            pass
 
     return HTMLResponse(_approval_page_html("Fully Approved", "#22c55e", f"Check file for {kase['reference']} has been approved and bank files have been auto-generated."))
 

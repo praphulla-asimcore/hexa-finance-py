@@ -68,6 +68,21 @@
         </button>
         {% endif %}
 
+        {% if user.role != 'arranger' %}
+        <button class="sidebar-item {% if section=='statutory' %}sidebar-item-active{% endif %}"
+          hx-get="/statutory" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+          <span class="sidebar-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 14l-4-4 4-4"/><path d="M5 10h11a4 4 0 0 1 0 8h-1"/>
+            </svg>
+          </span>
+          <span class="sidebar-label">
+            <span>Statutory</span>
+            <span class="sidebar-sub">EPF · SOCSO · HRDF · MTD</span>
+          </span>
+        </button>
+        {% endif %}
+
         <button class="sidebar-item {% if section=='beneficiaries' %}sidebar-item-active{% endif %}"
           hx-get="/consultants" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
           <span class="sidebar-icon">

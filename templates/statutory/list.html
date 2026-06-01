@@ -1,0 +1,62 @@
+{% macro fmt_rm(n) %}{% if n is not none %}RM {{ "{:,.2f}".format(n|float) }}{% else %}—{% endif %}{% endmacro %}
+{% macro fmt_date(d) %}{% if d %}{{ d[:10] }}{% else %}—{% endif %}{% endmacro %}
+
+<div class="pf-screen fade-in">
+  <div class="pf-list-header">
+    <div>
+      <h1 class="screen-title">Statutory Submissions</h1>
+      <p class="screen-subtitle">EPF · SOCSO+EIS · HRDF · MTD — generated automatically on check approval</p>
+    </div>
+  </div>
+
+  {% if not submissions %}
+  <div class="pf-empty card">
+    <div class="pf-empty-icon">📋</div>
+    <div class="pf-empty-title">No statutory submissions yet</div>
+    <div class="pf-empty-sub">Submissions are created automatically when a CSI run is approved.</div>
+  </div>
+
+  {% else %}
+  {# Group by contribution_month #}
+  {% set months_seen = [] %}
+  {% for sub in submissions %}
+    {% if sub.contribution_month not in months_seen %}
+      {% set _ = months_seen.append(sub.contribution_month) %}
+    {% endif %}
+  {% endfor %}
+
+  {% for cm in months_seen %}
+  {% set month_subs = submissions | selectattr('contribution_month','equalto',cm) | list %}
+  <div style="margin-bottom:28px">
+    <div style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">
+      Contribution Month: {{ cm[:4] }}-{{ cm[4:6] }}
+      <span style="font-weight:400;margin-left:8px">· Due 15 {{ cm[4:6] }}/{{ cm[:4] }}</span>
+    </div>
+    <div class="pf-case-list">
+      {% for sub in month_subs %}
+      {% set si = status_info.get(sub.status, (sub.status,'neutral')) %}
+      <div class="pf-case-row card" style="cursor:pointer"
+           hx-get="/statutory/{{ sub.id }}"
+           hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <div class="pf-case-ref">
+          <span class="pf-ref-tag">{{ type_labels.get(sub.statutory_type, sub.statutory_type) }}</span>
+          <span class="badge badge-{{ si[1] }}">{{ si[0] }}</span>
+        </div>
+        <div class="pf-case-meta">
+          <span>{{ sub.entity_name or sub.entity }}</span>
+          <span class="pf-dot"></span>
+          <span>Wage: {{ sub.wage_month[:4] }}-{{ sub.wage_month[4:] }}</span>
+          <span class="pf-dot"></span>
+          <span>{{ fmt_rm(sub.total_amount) }}</span>
+        </div>
+        <div class="pf-case-by">
+          Due {{ fmt_date(sub.due_date) }}
+          {% if sub.status == 'zoho_posted' %} · Zoho posted ✓{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+  {% endif %}
+</div>
