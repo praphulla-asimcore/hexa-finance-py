@@ -10,6 +10,8 @@ from app.config import APP_URL
 
 router = APIRouter(prefix="/api/users")
 
+VALID_ROLES = {"preparer", "reviewer", "approver", "admin"}
+
 
 def _require_admin(request: Request) -> dict:
     user = get_current_user(request)
@@ -18,9 +20,13 @@ def _require_admin(request: Request) -> dict:
     return user
 
 
+def _err(msg: str, status: int = 400) -> JSONResponse:
+    return JSONResponse({"error": msg}, status_code=status)
+
+
 @router.get("")
 async def list_users(request: Request):
-    admin = _require_admin(request)
+    _require_admin(request)
     db = get_db()
     if not db:
         return JSONResponse({"users": []})
@@ -33,33 +39,49 @@ async def invite_user(request: Request):
     admin = _require_admin(request)
     body = await request.json()
     email = body.get("email", "").lower().strip()
-    name = body.get("name", "")
-    role = body.get("role", "preparer")
+    name  = body.get("name", "").strip()
+    role  = body.get("role", "preparer")
 
-    VALID_ROLES = {"preparer", "reviewer", "approver", "admin"}
     if not email:
-        raise HTTPException(400, "Email is required.")
+        return _err("Email is required.")
     if role not in VALID_ROLES:
-        raise HTTPException(400, f"Role must be one of: {', '.join(sorted(VALID_ROLES))}.")
+        return _err(f"Role must be one of: {', '.join(sorted(VALID_ROLES))}.")
 
     db = get_db()
     if not db:
-        raise HTTPException(503, "Database not configured.")
+        return _err("Database not configured.", 503)
 
-    token = secrets.token_hex(32)
+    token   = secrets.token_hex(32)
     expires = (datetime.now(timezone.utc) + timedelta(hours=48)).isoformat()
 
-    existing = db.from_("users").select("id, name").eq("email", email).maybe_single().execute()
-    ex = existing.data
+    try:
+        existing = db.from_("users").select("id, name").eq("email", email).maybe_single().execute()
+        ex = existing.data
 
-    if ex:
-        db.from_("users").update({"name": name or ex.get("name", ""), "role": role, "status": "invited", "invite_token": token, "invite_expires": expires}).eq("id", ex["id"]).execute()
-        user_id = ex["id"]
-    else:
-        res = db.from_("users").insert({"email": email, "name": name or "", "role": role, "invite_token": token, "invite_expires": expires}).select("id").execute()
-        if not res.data:
-            raise HTTPException(500, "Failed to create user.")
-        user_id = res.data[0]["id"]
+        if ex:
+            db.from_("users").update({
+                "name": name or ex.get("name", ""),
+                "role": role,
+                "status": "invited",
+                "invite_token": token,
+                "invite_expires": expires,
+            }).eq("id", ex["id"]).execute()
+            user_id = ex["id"]
+        else:
+            res = db.from_("users").insert({
+                "email": email,
+                "name": name,
+                "role": role,
+                "status": "invited",
+                "invite_token": token,
+                "invite_expires": expires,
+            }).execute()
+            rows = res.data or []
+            if not rows:
+                return _err("Failed to create user — check database permissions.", 500)
+            user_id = rows[0]["id"]
+    except Exception as e:
+        return _err(f"Database error: {e}", 500)
 
     invite_url = f"{APP_URL}/accept-invite?token={token}"
     try:
@@ -74,10 +96,10 @@ async def invite_user(request: Request):
 async def delete_user(user_id: str, request: Request):
     admin = _require_admin(request)
     if user_id == admin.get("id"):
-        raise HTTPException(400, "Cannot delete yourself.")
+        return _err("Cannot delete yourself.")
     db = get_db()
     if not db:
-        raise HTTPException(503)
+        return _err("Database not configured.", 503)
     db.from_("users").delete().eq("id", user_id).execute()
     return JSONResponse({"ok": True})
 
