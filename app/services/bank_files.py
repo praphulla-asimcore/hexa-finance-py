@@ -34,6 +34,102 @@ def bank_name_to_code(name: str) -> str:
     return MY_BANK_CODES.get(name.strip().lower(), "")
 
 
+def _payment_mode(bank_code: str) -> str:
+    """IT = Interbank Transfer (Maybank-to-Maybank). IG = IBG (to other banks)."""
+    return "IT" if bank_code == "MBBEMYKL" else "IG"
+
+
+def _id_fields(id_number: str) -> tuple:
+    """Return (new_ic, biz_reg, passport) for fields 25, 27, 28 of the 01 record."""
+    id_str = (id_number or "").strip()
+    if not id_str:
+        return ("", "", "")
+    if id_str.isdigit() and len(id_str) == 12:
+        return (id_str, "", "")   # Malaysian NRIC → New IC No (field 25)
+    # Count leading alpha chars to distinguish passport from company reg
+    lead = 0
+    for c in id_str:
+        if c.isalpha():
+            lead += 1
+        else:
+            break
+    if lead == 1:
+        return ("", "", id_str)   # Single-letter prefix → Passport/Police/Army (field 28)
+    return ("", id_str, "")       # 0 or 2+ leading letters → Business Reg No (field 27)
+
+
+def _rcgen_01(b: dict, value_date: str, advice: str, amount_str: str) -> str:
+    """Build a correctly-formatted RCgen 01 body record matching the Maybank R3 spec."""
+    pmode              = _payment_mode(b.get("bankCode", ""))
+    new_ic, biz_reg, passport = _id_fields(b.get("idNumber", ""))
+    emp_code           = (b.get("employeeCode") or b.get("employeeId") or "").strip()
+
+    # Build a 220-element field array then join with |
+    f = [""] * 220
+    f[0]  = "01"
+    f[1]  = pmode                         # IT or IG
+    f[2]  = "Domestic Payments (MY)"      # Product
+    # f[3] empty                          # Sub-product
+    f[4]  = value_date                    # Value Date DDMMYYYY
+    # f[5], f[6] empty
+    f[7]  = str(b["seq"])                 # Customer Reference Number
+    # f[8] empty
+    f[9]  = advice                        # Payment Description / Advice
+    f[10] = "MYR"
+    f[11] = amount_str
+    f[12] = "Y"
+    f[13] = "MYR"
+    f[14] = BANK_DEBIT_ACCOUNT            # Debit Account
+    f[15] = b["accountNumber"]            # Credit Account
+    f[16] = emp_code                      # Beneficiary Code / Employee Number (e.g. HS123)
+    # f[17] empty
+    f[18] = "Y"
+    f[19] = b["name"]                     # Beneficiary Name 1
+    # f[20], f[21] empty  (Beneficiary Name 2/3)
+    # f[22], f[23], f[24] empty
+    f[25] = new_ic                        # New IC No  (Malaysian 12-digit NRIC)
+    # f[26] empty                         # Old IC No
+    f[27] = biz_reg                       # Business Registration Number
+    f[28] = passport                      # Police/Army ID / Passport No
+    # f[29]-f[37] empty
+    f[38] = b.get("bankCode", "")         # Beneficiary Bank SWIFT Code
+    # f[39]-f[106] empty (68 fields)
+    f[107] = advice                       # Payment Advice Detail (second occurrence)
+    # f[108]-f[114] empty (7 fields)
+    f[115] = "01"                         # Payment Advice Indicator
+    # f[116]-f[219] trailing empty fields
+    return "|".join(f)
+
+
+def _rcgen_02(b: dict, seq: int, advice: str, amount_str: str, notify_emails: list) -> str:
+    """Build RCgen 02 payment advice record."""
+    email1 = notify_emails[0] if len(notify_emails) > 0 else ""
+    email2 = notify_emails[1] if len(notify_emails) > 1 else ""
+    email3 = notify_emails[2] if len(notify_emails) > 2 else ""
+    f = [""] * 45
+    f[0]  = "02"
+    f[1]  = "PA"
+    f[2]  = str(seq)
+    f[3]  = email1
+    # f[4], f[5] empty
+    f[6]  = advice
+    # f[7]-f[12] empty (6 fields)
+    f[13] = amount_str
+    # f[14]-f[20] empty (7 fields)
+    f[21] = email2
+    f[22] = email3
+    # f[23]-f[44] empty (trailing)
+    return "|".join(f)
+
+
+def _rcgen_trailer(count: int, total: float) -> str:
+    f = [""] * 28
+    f[0] = "99"
+    f[1] = str(count)
+    f[2] = f"{total:.2f}"
+    return "|".join(f)
+
+
 async def fetch_airtable_consultants() -> list[dict]:
     if not AIRTABLE_API_KEY or not AIRTABLE_BASE_ID or not AIRTABLE_TABLE_NAME:
         return []
@@ -117,6 +213,7 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
             beneficiaries.append({
                 "seq": seq_ref,
                 "employeeId": emp["employeeId"],
+                "employeeCode": matched["employeeNumber"] if matched else emp.get("employeeId", ""),
                 "name": matched["name"] if matched else emp["name"],
                 "costCentre": emp.get("costCentre", ""),
                 "amount": emp.get("netSalary", 0),
@@ -125,9 +222,7 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
                 "bankCode": bank_name_to_code(matched["bankName"] if matched else ""),
                 "idNumber": matched["idNumber"] if matched else "",
                 "advicePrefix": (matched["name"] if matched else emp["name"]).replace(" ", "_"),
-                "email": notify_emails[0] if notify_emails else "",
                 "entity": ent["sheetName"],
-                "paymentMode": "IT",
                 "matched": matched is not None,
             })
             seq_ref += 1
@@ -178,17 +273,16 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
     ts_now = datetime.now(timezone.utc)
     ts_part = ts_now.strftime("%Y%m%d%H%M%S")
     txt_lines = [f"00|{BANK_CORPORATE_ID}|{BANK_GROUP_ID}||B||||||||||||||||||||||||"]
+    total_amount = 0.0
     for b in beneficiaries:
+        if not b["accountNumber"]:
+            continue  # skip employees with no bank account
         advice = f"{b['advicePrefix']}_{mmyy}"
-        amount = f"{float(b['amount'] or 0):.2f}"
-        empty_pipes = "|" * 200
-        email2 = notify_emails[1] if len(notify_emails) > 1 else ""
-        txt_lines.append(
-            f"01|{b['paymentMode']}|Domestic Payments (MY)||{value_date}|||{b['seq']}||{advice}|MYR|{amount}|Y|MYR|{BANK_DEBIT_ACCOUNT}|{b['accountNumber']}|||Y|{b['name']}||||{b['idNumber']}|||{b['bankCode']}||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||{advice}|||||||01{empty_pipes}"
-        )
-        txt_lines.append(
-            f"02|PA|{b['seq']}|{b['email']}|||{advice}|||||||{amount}|||||||{email2}|{'|'.join([''] * 30)}"
-        )
+        amount_str = f"{float(b['amount'] or 0):.2f}"
+        total_amount += float(b['amount'] or 0)
+        txt_lines.append(_rcgen_01(b, value_date, advice, amount_str))
+        txt_lines.append(_rcgen_02(b, b["seq"], advice, amount_str, notify_emails))
+    txt_lines.append(_rcgen_trailer(len(beneficiaries), total_amount))
     txt_bytes = "\n".join(txt_lines).encode("utf-8")
     txt_hash = _sha256(txt_bytes)
     txt_name = f"RCgen_Payment_DP_{ts_part}.txt"
@@ -251,16 +345,16 @@ async def generate_and_store_bank_files_payroll(kase: dict, db, triggered_by: st
             beneficiaries.append({
                 "seq":          seq_ref,
                 "employeeId":   emp["employeeId"],
+                "employeeCode": emp.get("employeeId", ""),
                 "name":         name,
                 "costCentre":   emp.get("costCentre", ""),
                 "amount":       emp.get("netSalary", 0),
                 "accountNumber": bank_account,
                 "bankName":     bank_name,
                 "bankCode":     bank_code,
+                "idNumber":     emp.get("idNumber", ""),
                 "advicePrefix": name.replace(" ", "_"),
-                "email":        notify_emails[0] if notify_emails else "",
                 "entity":       ent["sheetName"],
-                "paymentMode":  "IT",
                 "matched":      has_bank,
             })
             seq_ref += 1
@@ -310,17 +404,16 @@ async def generate_and_store_bank_files_payroll(kase: dict, db, triggered_by: st
     ts_now = datetime.now(timezone.utc)
     ts_part = ts_now.strftime("%Y%m%d%H%M%S")
     txt_lines = [f"00|{BANK_CORPORATE_ID}|{BANK_GROUP_ID}||B||||||||||||||||||||||||"]
+    total_amount = 0.0
     for b in beneficiaries:
+        if not b["accountNumber"]:
+            continue
         advice = f"{b['advicePrefix']}_{mmyy}"
-        amount = f"{float(b['amount'] or 0):.2f}"
-        empty_pipes = "|" * 200
-        email2 = notify_emails[1] if len(notify_emails) > 1 else ""
-        txt_lines.append(
-            f"01|{b['paymentMode']}|Domestic Payments (MY)||{value_date}|||{b['seq']}||{advice}|MYR|{amount}|Y|MYR|{BANK_DEBIT_ACCOUNT}|{b['accountNumber']}|||Y|{b['name']}|||||{b['bankCode']}||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||{advice}|||||||01{empty_pipes}"
-        )
-        txt_lines.append(
-            f"02|PA|{b['seq']}|{b['email']}|||{advice}|||||||{amount}|||||||{email2}|{'|'.join([''] * 30)}"
-        )
+        amount_str = f"{float(b['amount'] or 0):.2f}"
+        total_amount += float(b['amount'] or 0)
+        txt_lines.append(_rcgen_01(b, value_date, advice, amount_str))
+        txt_lines.append(_rcgen_02(b, b["seq"], advice, amount_str, notify_emails))
+    txt_lines.append(_rcgen_trailer(len(beneficiaries), total_amount))
     txt_bytes = "\n".join(txt_lines).encode("utf-8")
     txt_hash = _sha256(txt_bytes)
     txt_name = f"RCgen_Payment_DP_{ts_part}.txt"
