@@ -19,6 +19,8 @@
     <div class="error-msg" style="margin-bottom:16px">{{ error }}</div>
     {% endif %}
 
+    <div id="upload-error" class="error-msg" style="display:none;margin-bottom:12px"></div>
+
     <form id="upload-form"
           hx-post="/cases"
           hx-target="#main-content"
@@ -31,7 +33,7 @@
       <div class="pf-form-section">
         <label class="label">Payroll File <span class="req">*</span></label>
         <div class="pf-drop-zone" id="drop-zone" onclick="document.getElementById('pf-file-input').click()">
-          <input id="pf-file-input" type="file" name="file" accept=".xlsx,.xls" style="display:none"
+          <input id="pf-file-input" type="file" name="file" accept=".xlsx,.xls,.xlsm" style="display:none"
                  onchange="updateDropZone(this)"/>
           <div id="drop-placeholder" class="pf-drop-placeholder">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -54,7 +56,7 @@
       <div class="pf-form-row">
         <div class="pf-form-section" style="grid-column:span 2">
           <label class="label">Entity <span class="req">*</span></label>
-          <select name="entity" class="input" id="entity-select" required onchange="updateEntityHint(this)">
+          <select name="entity" class="input" id="entity-select" onchange="updateEntityHint(this)">
             <option value="">— select entity —</option>
             {% for code, cfg in orgs.items() %}
             <option value="{{ code }}">{{ code }} — {{ cfg.name }}</option>
@@ -81,7 +83,7 @@
               <option value="11">November</option>
               <option value="12">December</option>
             </select>
-            <select class="input" id="period-year" onchange="buildPeriodYm()" required style="width:90px">
+            <select class="input" id="period-year" onchange="buildPeriodYm()" style="width:90px">
               <option value="">Year</option>
               <option value="2025">2025</option>
               <option value="2026">2026</option>
@@ -97,21 +99,18 @@
               <option value="15th">15th</option>
             </select>
           </div>
-          {# Hidden field carries the YYYYMM value the server expects #}
           <input type="hidden" name="period_ym" id="period-ym"/>
           <span class="pf-hint">Select month + year. 7th/15th → Zoho date = prior month-end. Auto-detected from filename.</span>
         </div>
       </div>
-
-      <div id="upload-error" class="error-msg" style="display:none;margin-bottom:12px"></div>
 
       <div class="pf-form-actions">
         <button type="button" class="btn btn-secondary"
           hx-get="/{{ module }}" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
           Cancel
         </button>
-        <button type="submit" class="btn btn-primary" id="submit-btn">
-          <span id="upload-spinner" class="spinner htmx-indicator"></span>
+        <button type="button" class="btn btn-primary" id="submit-btn" onclick="submitUploadForm()">
+          <span id="upload-spinner" class="spinner" style="display:none"></span>
           Upload & Create Case
         </button>
       </div>
@@ -124,7 +123,7 @@ const ORGS = {{ orgs | tojson }};
 
 function buildPeriodYm() {
   const mo = document.getElementById('period-month').value;
-  const yr = document.getElementById('period-year').value.trim();
+  const yr = document.getElementById('period-year').value;
   document.getElementById('period-ym').value = (yr && mo) ? yr + mo : '';
 }
 
@@ -139,6 +138,43 @@ function setMonthYear(yyyymm) {
   buildPeriodYm();
 }
 
+function showFormError(msg) {
+  const el = document.getElementById('upload-error');
+  el.textContent = msg;
+  el.style.display = 'block';
+  el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function submitUploadForm() {
+  document.getElementById('upload-error').style.display = 'none';
+  buildPeriodYm();
+
+  const fileInput = document.getElementById('pf-file-input');
+  if (!fileInput.files || !fileInput.files.length) {
+    showFormError('Please select an Excel file (.xlsx or .xls) to upload.');
+    return;
+  }
+
+  const entity = document.getElementById('entity-select').value;
+  if (!entity) {
+    showFormError('Please select an entity.');
+    return;
+  }
+
+  const ym = document.getElementById('period-ym').value;
+  if (!ym || ym.length !== 6) {
+    showFormError('Please select a month and year for the period.');
+    return;
+  }
+
+  // All valid — show spinner and submit via HTMX
+  const btn = document.getElementById('submit-btn');
+  btn.disabled = true;
+  document.getElementById('upload-spinner').style.display = 'inline-block';
+
+  htmx.trigger('#upload-form', 'submit');
+}
+
 function updateDropZone(input) {
   const file = input.files[0];
   if (!file) return;
@@ -148,7 +184,6 @@ function updateDropZone(input) {
   document.getElementById('drop-filesize').textContent = '(' + (file.size / 1024).toFixed(0) + ' KB)';
   document.getElementById('drop-zone').classList.add('pf-drop-zone-filled');
 
-  // Auto-detect YYYYMM from filename → set dropdowns
   const name = file.name;
   const m1 = name.match(/\b(20\d{2})(0[1-9]|1[0-2])\b/);
   const m2 = name.match(/\b(20\d{2})[-_](0[1-9]|1[0-2])\b/);
@@ -157,7 +192,6 @@ function updateDropZone(input) {
   else if (m2) setMonthYear(m2[1] + m2[2]);
   else if (m3) setMonthYear(m3[2] + m3[1]);
 
-  // Auto-detect entity from filename
   const upper = name.toUpperCase();
   const sel = document.getElementById('entity-select');
   if (!sel.value) {
@@ -181,40 +215,11 @@ function updateEntityHint(select) {
   }
 }
 
-function showFormError(msg) {
-  const el = document.getElementById('upload-error');
-  el.textContent = msg;
-  el.style.display = 'block';
-  el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
-
-// Show the error div when the server writes into it via HX-Retarget
-document.getElementById('upload-error').addEventListener('htmx:afterSwap', function() {
-  this.style.display = 'block';
-});
-
-document.getElementById('upload-form').addEventListener('submit', function(e) {
-  document.getElementById('upload-error').style.display = 'none';
-  buildPeriodYm();
-
-  const fileInput = document.getElementById('pf-file-input');
-  if (!fileInput.files || !fileInput.files.length) {
-    e.preventDefault();
-    showFormError('Please select an Excel file (.xlsx or .xls) to upload.');
-    return;
-  }
-
-  const ym = document.getElementById('period-ym').value;
-  if (!ym || ym.length !== 6) {
-    e.preventDefault();
-    showFormError('Please select a month and year for the period.');
-    return;
-  }
-
-  if (!document.getElementById('entity-select').value) {
-    e.preventDefault();
-    showFormError('Please select an entity.');
-    return;
+// Re-enable button if server returns an error into the form
+document.body.addEventListener('htmx:afterRequest', function(e) {
+  if (e.detail.elt && e.detail.elt.id === 'upload-form') {
+    document.getElementById('submit-btn').disabled = false;
+    document.getElementById('upload-spinner').style.display = 'none';
   }
 });
 </script>
