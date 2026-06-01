@@ -5,7 +5,7 @@ import xlrd
 
 
 def _json_safe(obj):
-    """Recursively convert any non-JSON-serializable values (datetime, date, etc.) to strings."""
+    """Recursively convert non-JSON-serializable values (datetime, date) to strings."""
     if isinstance(obj, (datetime, date)):
         return obj.isoformat()
     if isinstance(obj, dict):
@@ -14,25 +14,11 @@ def _json_safe(obj):
         return [_json_safe(v) for v in obj]
     return obj
 
+
 # ─── CSI parser ───────────────────────────────────────────────────────────────
 
-REQUIRED_COLS = [
-    "Employee ID", "Nickname / Name", "Cost Centre",
-    "Gross Salary", "EPF Employer", "EIS Employer",
-    "SOCSO Employer", "HRDF", "MTD", "CTC Hexa", "Net Salary",
-]
-
-# Optional columns — present in some CSI files, summed into logical fields
-BONUS_COLS = [
-    "Commission (Daily/Weekly/Monthly)",
-    "Retirement Bonus (Monthly)",
-    "Retirement contribution",
-]
-CADEDN_COLS = [
-    "Deduction",
-    "Deduction (from Net Salary)",
-]
-
+# New template column names (HSSB_CSI Template_New.xlsx)
+# Old template column names kept as fallbacks for backwards compatibility.
 
 def _to_num(val) -> float:
     if val is None or val == "":
@@ -43,78 +29,132 @@ def _to_num(val) -> float:
         return 0.0
 
 
-def _get(row, col_map, key) -> float:
-    idx = col_map.get(key)
-    return _to_num(row[idx]) if idx is not None and idx < len(row) else 0.0
+def _get(row, col_map, *keys) -> float:
+    """Return numeric value for the first key found in col_map."""
+    for key in keys:
+        idx = col_map.get(key)
+        if idx is not None and idx < len(row):
+            return _to_num(row[idx])
+    return 0.0
 
 
-def _get_str(row, col_map, key) -> str:
-    idx = col_map.get(key)
-    if idx is None or idx >= len(row):
-        return ""
-    return str(row[idx] or "").strip()
+def _get_str(row, col_map, *keys) -> str:
+    """Return string value for the first key found in col_map."""
+    for key in keys:
+        idx = col_map.get(key)
+        if idx is not None and idx < len(row):
+            val = row[idx]
+            if val is not None:
+                return str(val).strip()
+    return ""
+
+
+def _build_col_map(header_row) -> dict:
+    return {str(cell).strip(): idx for idx, cell in enumerate(header_row) if cell is not None}
+
+
+def _parse_employee(row, col_map) -> dict | None:
+    """Parse one employee row. Returns None if row should be skipped."""
+    emp_id_idx = col_map.get("Employee ID")
+    if emp_id_idx is None or emp_id_idx >= len(row):
+        return None
+    emp_id_val = row[emp_id_idx]
+    if emp_id_val is None or str(emp_id_val).strip() == "":
+        return None
+
+    ctc_hexa = _get(row, col_map, "CTC Hexa")
+    if ctc_hexa == 0:
+        return None
+
+    return {
+        "employeeId":    str(emp_id_val).strip(),
+        # New template uses "Name"; old uses "Nickname / Name"
+        "name":          _get_str(row, col_map, "Nickname / Name", "Name"),
+        # New template uses "Client"; old uses "Cost Centre"
+        "costCentre":    _get_str(row, col_map, "Cost Centre", "Client"),
+        "clientType":    _get_str(row, col_map, "Client Type", "Margin Type").upper() or "CC",
+        "grossSalary":   _get(row, col_map, "Gross Salary"),
+        # New template uses "Claims Amount"; old uses "Claim"
+        "claim":         _get(row, col_map, "Claim", "Claims Amount"),
+        "bonus":         sum(_get(row, col_map, c) for c in [
+                             "Commission (Daily/Weekly/Monthly)",
+                             "Retirement Bonus (Monthly)",
+                             "Retirement contribution"]),
+        "caDedn":        sum(_get(row, col_map, c) for c in [
+                             "Deduction", "Deduction (from Net Salary)"]),
+        "epfEmployer":   _get(row, col_map, "EPF Employer"),
+        "eisEmployer":   _get(row, col_map, "EIS Employer"),
+        "socsoEmployer": _get(row, col_map, "SOCSO Employer"),
+        "hrdf":          _get(row, col_map, "HRDF"),
+        "mtd":           _get(row, col_map, "MTD"),
+        "ctcHexa":       ctc_hexa,
+        "netSalary":     _get(row, col_map, "Net Salary"),
+    }
 
 
 def _process_sheets(sheets: list[tuple[str, list]]) -> list[dict]:
-    """Build entities list from (sheet_name, rows) pairs. Shared by xlsx and xls paths."""
+    """Build entities list from (sheet_name, rows) pairs."""
     entities = []
     for sheet_name, rows in sheets:
         if not rows or len(rows) < 2:
             continue
 
-        header_row = rows[0]
-        col_map: dict[str, int] = {}
-        for idx, cell in enumerate(header_row):
-            if cell is not None:
-                col_map[str(cell).strip()] = idx
+        # Find header row — first row that contains "Employee ID"
+        header_idx = 0
+        for i, row in enumerate(rows):
+            if row and any(str(c or "").strip() == "Employee ID" for c in row):
+                header_idx = i
+                break
 
-        missing_cols = [c for c in REQUIRED_COLS if c not in col_map]
+        col_map = _build_col_map(rows[header_idx])
 
-        employees = []
-        for row in rows[1:]:
-            if not row:
-                continue
-            emp_id_idx = col_map.get("Employee ID")
-            if emp_id_idx is None:
-                continue
-            emp_id_val = row[emp_id_idx] if emp_id_idx < len(row) else None
-            if emp_id_val is None or str(emp_id_val).strip() == "":
-                continue
+        # New template format: has an "Entity" column → group rows by entity value
+        has_entity_col = "Entity" in col_map
+        entity_col_idx = col_map.get("Entity")
 
-            ctc_hexa = _get(row, col_map, "CTC Hexa")
-            if ctc_hexa == 0:
-                continue
+        # Old format required cols; new format has different names
+        required = ["Employee ID", "CTC Hexa", "Gross Salary", "Net Salary"]
+        missing_cols = [c for c in required if c not in col_map]
 
-            bonus  = sum(_get(row, col_map, c) for c in BONUS_COLS)
-            ca_dedn = sum(_get(row, col_map, c) for c in CADEDN_COLS)
+        if has_entity_col:
+            # Group employees by the Entity column value
+            from collections import defaultdict
+            groups: dict[str, list] = defaultdict(list)
+            for row in rows[header_idx + 1:]:
+                if not row:
+                    continue
+                emp = _parse_employee(row, col_map)
+                if emp is None:
+                    continue
+                entity_val = str(row[entity_col_idx] or "").strip() if entity_col_idx < len(row) else ""
+                group_key = entity_val or sheet_name.strip()
+                groups[group_key].append(emp)
 
-            employees.append({
-                "employeeId":    str(emp_id_val).strip(),
-                "name":          _get_str(row, col_map, "Nickname / Name"),
-                "costCentre":    _get_str(row, col_map, "Cost Centre"),
-                "clientType":    _get_str(row, col_map, "Client Type").upper() or "CC",
-                "grossSalary":   _get(row, col_map, "Gross Salary"),
-                "claim":         _get(row, col_map, "Claim"),
-                "bonus":         bonus,
-                "caDedn":        ca_dedn,
-                "epfEmployer":   _get(row, col_map, "EPF Employer"),
-                "eisEmployer":   _get(row, col_map, "EIS Employer"),
-                "socsoEmployer": _get(row, col_map, "SOCSO Employer"),
-                "hrdf":          _get(row, col_map, "HRDF"),
-                "mtd":           _get(row, col_map, "MTD"),
-                "ctcHexa":       ctc_hexa,
-                "netSalary":     _get(row, col_map, "Net Salary"),
-            })
+            for ent_name, emps in groups.items():
+                if emps:
+                    entities.append({
+                        "sheetName":      ent_name,
+                        "employees":      emps,
+                        "totalCTC":       round(sum(e["ctcHexa"] for e in emps), 2),
+                        "missingColumns": missing_cols,
+                    })
+        else:
+            # Old format: one entity per sheet
+            employees = []
+            for row in rows[header_idx + 1:]:
+                if not row:
+                    continue
+                emp = _parse_employee(row, col_map)
+                if emp:
+                    employees.append(emp)
 
-        if not employees:
-            continue
-
-        entities.append({
-            "sheetName":      sheet_name.strip(),
-            "employees":      employees,
-            "totalCTC":       round(sum(e["ctcHexa"] for e in employees), 2),
-            "missingColumns": missing_cols,
-        })
+            if employees:
+                entities.append({
+                    "sheetName":      sheet_name.strip(),
+                    "employees":      employees,
+                    "totalCTC":       round(sum(e["ctcHexa"] for e in employees), 2),
+                    "missingColumns": missing_cols,
+                })
 
     return entities
 
@@ -206,67 +246,52 @@ def parse_payroll_excel_buffer(data: bytes) -> list[dict]:
     for row in all_rows[header_idx + 1:]:
         if not row:
             continue
-        emp_id_idx = col_map.get("Employee ID")
-        if emp_id_idx is None or emp_id_idx >= len(row):
-            continue
-        raw_id = row[emp_id_idx]
-        if raw_id is None or str(raw_id).strip() == "":
+        raw_id = row[col_map["Employee ID"]] if "Employee ID" in col_map and col_map["Employee ID"] < len(row) else None
+        if raw_id is None:
             continue
         emp_id_str = str(raw_id).strip()
-        if _is_payroll_summary_row(emp_id_str):
+        if not emp_id_str or _is_payroll_summary_row(emp_id_str):
             continue
 
-        gross_earnings  = _pv(row, "Gross earnings")
-        net_additions   = _pv(row, "Net additions")
-        e_epf           = _pv(row, "eEPF")
-        e_socso         = _pv(row, "eSOCSO")
-        e_eis           = _pv(row, "eEIS")
-        pcb             = _pv(row, "PCB")
-        cp38            = _pv(row, "CP38")
-        net_pay         = _pv(row, "Net Pay")
-        r_epf           = _pv(row, "rEPF")
-        r_socso         = _pv(row, "rSOCSO")
-        r_eis           = _pv(row, "rEIS")
-        hrdf            = _pv(row, "HRDF")
-        total_employer  = _pv(row, "Total employer contribution")
-
-        # Skip fully empty rows (template filler)
-        if net_pay == 0 and gross_earnings == 0 and r_epf == 0:
+        net_pay = _pv(row, "Net Pay")
+        if net_pay == 0:
             continue
 
-        # Total CTC = what the company spends: gross + net extras + employer statutory
-        ctc = round(gross_earnings + net_additions + total_employer, 2)
+        bank_account = _sv(row, "Bank Account Number") or _sv(row, "Bank Account No")
+        bank_name    = _sv(row, "Bank Name")
+        id_number    = _sv(row, "IC Number") or _sv(row, "Passport Number") or _sv(row, "ID Number")
+
+        gross  = _pv(row, "Gross Salary") or _pv(row, "Gross Pay")
+        epf_ee = _pv(row, "rEPF") or _pv(row, "EPF Employee")
+        epf_er = _pv(row, "cEPF") or _pv(row, "EPF Employer")
+        eis_ee = _pv(row, "rEIS") or _pv(row, "EIS Employee")
+        eis_er = _pv(row, "cEIS") or _pv(row, "EIS Employer")
+        socso_ee = _pv(row, "rSOCSO") or _pv(row, "SOCSO Employee")
+        socso_er = _pv(row, "cSOCSO") or _pv(row, "SOCSO Employer")
+        hrdf   = _pv(row, "HRDF")
+        mtd    = _pv(row, "PCB") or _pv(row, "MTD")
+
+        ctc = gross + epf_er + eis_er + socso_er + hrdf
 
         employees.append({
-            "employeeId":          emp_id_str,
-            "name":                _sv(row, "Employee Name"),
-            "costCentre":          _sv(row, "Cost Center Name") or _sv(row, "Cost Center ID"),
-            "grossSalary":         _pv(row, "Monthly basic salary"),   # basic only
-            "grossEarnings":       gross_earnings,                      # basic + additions
-            "netAdditions":        net_additions,
-            "eEPF":                e_epf,
-            "eSOCSO":              e_socso,
-            "eEIS":                e_eis,
-            "pcb":                 pcb,
-            "cp38":                cp38,
-            "totalEmpDedn":        _pv(row, "Total employee deductions"),
-            # CSI-compatible field names so existing templates & check engine work:
-            "netSalary":           net_pay,
-            "epfEmployer":         r_epf,
-            "socsoEmployer":       r_socso,
-            "eisEmployer":         r_eis,
-            "hrdf":                hrdf,
-            "totalEmployerContrib": total_employer,
-            "ctcHexa":             ctc,
-            "bankName":            _sv(row, "Bank name"),
-            "bankAccount":         _sv(row, "Bank Account Number"),
+            "employeeId":    emp_id_str,
+            "name":          _sv(row, "Employee Name"),
+            "costCentre":    _sv(row, "Department") or _sv(row, "Cost Centre"),
+            "grossSalary":   round(gross, 2),
+            "netSalary":     round(net_pay, 2),
+            "epfEmployee":   round(epf_ee, 2),
+            "epfEmployer":   round(epf_er, 2),
+            "eisEmployee":   round(eis_ee, 2),
+            "eisEmployer":   round(eis_er, 2),
+            "socsoEmployee": round(socso_ee, 2),
+            "socsoEmployer": round(socso_er, 2),
+            "hrdf":          round(hrdf, 2),
+            "mtd":           round(mtd, 2),
+            "ctcHexa":       round(ctc, 2),
+            "bankName":      bank_name,
+            "bankAccount":   bank_account,
+            "idNumber":      id_number,
         })
-
-    if not employees:
-        raise ValueError(
-            "No employee data rows found. "
-            "Verify the payroll file contains rows with Employee IDs below the header."
-        )
 
     entity_name = company_name or "HSSB Payroll"
     return _json_safe([{
