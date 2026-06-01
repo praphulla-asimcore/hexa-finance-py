@@ -30,6 +30,64 @@
         </div>
       </div>
 
+      {# ── Roles & Access ── #}
+      <div class="modal-section">
+        <div class="modal-section-title">Roles &amp; Access</div>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-top:4px">
+
+          <div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+              <span class="badge badge-neutral">Preparer</span>
+            </div>
+            <ul style="margin:0;padding-left:16px;font-size:12px;color:var(--text-secondary);line-height:1.9">
+              <li>Upload payroll / CSI files to start a new run</li>
+              <li>Re-upload files when a case is returned for correction</li>
+              <li>View case status and progress across all steps</li>
+              <li>Download generated check files and bank upload files</li>
+            </ul>
+          </div>
+
+          <div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+              <span class="badge badge-purple">Reviewer</span>
+            </div>
+            <ul style="margin:0;padding-left:16px;font-size:12px;color:var(--text-secondary);line-height:1.9">
+              <li>All Preparer access</li>
+              <li>Receive check approval request emails (Step 3 — first in chain)</li>
+              <li>Review check file data and approve or reject via email link</li>
+              <li>Return cases to Preparer with rejection reason if corrections needed</li>
+            </ul>
+          </div>
+
+          <div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+              <span class="badge badge-warning">Approver</span>
+            </div>
+            <ul style="margin:0;padding-left:16px;font-size:12px;color:var(--text-secondary);line-height:1.9">
+              <li>All Reviewer access</li>
+              <li>Receive final check approval emails (Step 3 — second in chain, after Reviewer)</li>
+              <li>Give final sign-off to release the accrual journal to Zoho Books</li>
+              <li>Triggers automatic bank file generation on approval</li>
+            </ul>
+          </div>
+
+          <div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+              <span class="badge badge-info">Admin</span>
+            </div>
+            <ul style="margin:0;padding-left:16px;font-size:12px;color:var(--text-secondary);line-height:1.9">
+              <li>Full access to all modules and cases</li>
+              <li>Invite and remove users, assign roles</li>
+              <li>View system settings and integration status</li>
+            </ul>
+          </div>
+
+          <div style="font-size:11px;color:var(--text-muted);padding:4px 2px">
+            Note: Payment approval (Step 6) is sent to the Director and is handled separately via a secure email link — not through a system role.
+          </div>
+        </div>
+      </div>
+
       {# ── Zoho status ── #}
       <div class="modal-section">
         <div class="modal-section-title">Zoho Books</div>
