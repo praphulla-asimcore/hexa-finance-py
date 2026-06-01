@@ -116,7 +116,11 @@ def email_check_approval(to: str, name: str, role: str, kase: dict, approve_url:
           {_row('Consultants', str(check.get('consultantCount', '—')))}
           {_row('Gross Payroll', _fmt_rm(check.get('grossPayrollTotal')))}
           {_row('Net Salary', _fmt_rm(check.get('netSalaryTotal')))}
-          {_row('Total CTC', f'<strong style="font-size:15px;color:#111">{_fmt_rm(check.get("ctcTotal"))}</strong>')}
+          {_row('Total CTC (Hexa)', f'<strong style="font-size:15px;color:#111">{_fmt_rm(check.get("ctcTotal"))}</strong>')}
+          {_row('Total Billing', _fmt_rm(check.get('totalBilling'))) if check.get('totalBilling') else ''}
+          {_row('Total Mgmt Fee', _fmt_rm(check.get('totalMgmtFee'))) if check.get('totalMgmtFee') else ''}
+          {_row('Total GP', f'<strong style="color:#22c55e">{_fmt_rm(check.get("totalGP"))}</strong>') if check.get('totalGP') is not None else ''}
+          {_row('Avg GP Margin', f'<strong style="color:#22c55e">{check.get("gpMarginPct")}%</strong>') if check.get('gpMarginPct') is not None else ''}
           {_row('Exceptions', f'<span style="color:{flag_color};font-weight:700">{check.get("flagCount",0)} flag(s)</span>')}
           {reviewer_line}
         </table>

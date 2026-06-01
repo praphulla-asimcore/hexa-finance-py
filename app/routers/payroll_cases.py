@@ -83,6 +83,7 @@ async def _generate_ref(db, case_type: str, entity: str, period: str) -> tuple[s
 def _build_check_data(entities: list[dict], airtable_list: list | None = None) -> dict:
     flags = []
     consultants = gross = ctc = net = 0
+    total_billing = total_mgmt_fee = 0.0
     stat = {"epf": 0.0, "eis": 0.0, "socso": 0.0, "hrdf": 0.0, "mtd": 0.0}
     seen_ids: set = set()
 
@@ -113,6 +114,8 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None) -
             gross += g; ctc += c; net += n
             stat["epf"] += epf; stat["eis"] += eis
             stat["socso"] += soc; stat["hrdf"] += hrd; stat["mtd"] += mtd
+            total_billing  += float(emp.get("totalBilling", 0) or 0)
+            total_mgmt_fee += float(emp.get("mgmtFee", 0) or 0)
 
             # ── Duplicate employee ID ─────────────────────────────────────────
             if emp_id:
@@ -206,9 +209,15 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None) -
                                   "entity": entity, "employeeId": emp_id,
                                   "reason": "Bank account number not on file"})
 
+    gp          = _round2(total_billing - ctc) if total_billing > 0 else None
+    gp_margin   = _round2((gp / total_billing) * 100) if (gp is not None and total_billing > 0) else None
     return {
-        "consultantCount": consultants, "entityCount": len(entities),
+        "consultantCount":   consultants, "entityCount": len(entities),
         "grossPayrollTotal": _round2(gross), "ctcTotal": _round2(ctc), "netSalaryTotal": _round2(net),
+        "totalBilling":      _round2(total_billing) if total_billing > 0 else None,
+        "totalMgmtFee":      _round2(total_mgmt_fee) if total_mgmt_fee > 0 else None,
+        "totalGP":           gp,
+        "gpMarginPct":       gp_margin,
         "statutory": {k: _round2(v) for k, v in stat.items()},
         "flagCount": len(flags), "flags": flags,
         "generatedAt": _now(), "generatedBy": "Hexa Check Engine v1.0",

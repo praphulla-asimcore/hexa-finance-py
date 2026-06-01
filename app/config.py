@@ -43,7 +43,7 @@ ORGS: dict = {
 }
 
 APPROVERS: dict = {
-    "reviewer": {"name": "Asim Subedi",               "email": "asim.ovc977@gmail.com"},
-    "final":    {"name": "Praphulla Subedi",       "email": "praphulla@hexamatics.com"},
-    "director": {"name": "Dato Thiruchelvapalan",  "email": "tripathisonee@gmail.com"},
+    "reviewer": {"name": "Ikhram Merican",         "email": "ikhram.merican@hexamatics.com"},
+    "final":    {"name": "Praphulla Subedi",        "email": "praphulla@hexamatics.com"},
+    "director": {"name": "Dato Thiruchelvapalan",   "email": "thiruchelvapalan@hexamatics.com"},
 }

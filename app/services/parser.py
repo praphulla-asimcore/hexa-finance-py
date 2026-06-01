@@ -89,6 +89,9 @@ def _parse_employee(row, col_map) -> dict | None:
         "mtd":           _get(row, col_map, "MTD"),
         "ctcHexa":       ctc_hexa,
         "netSalary":     _get(row, col_map, "Net Salary"),
+        "ctcClient":     _get(row, col_map, "CTC Client"),
+        "totalBilling":  _get(row, col_map, "Total Billing"),
+        "mgmtFee":       _get(row, col_map, "Mgmt Fee (RM)"),
     }
 
 
