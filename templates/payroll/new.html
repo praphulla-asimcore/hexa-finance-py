@@ -154,25 +154,45 @@ function submitUploadForm() {
     showFormError('Please select an Excel file (.xlsx or .xls) to upload.');
     return;
   }
-
   const entity = document.getElementById('entity-select').value;
   if (!entity) {
     showFormError('Please select an entity.');
     return;
   }
-
   const ym = document.getElementById('period-ym').value;
   if (!ym || ym.length !== 6) {
     showFormError('Please select a month and year for the period.');
     return;
   }
 
-  // All valid — show spinner and submit via HTMX
+  // All valid — submit via fetch so FormData/file is serialised reliably
   const btn = document.getElementById('submit-btn');
   btn.disabled = true;
-  document.getElementById('upload-spinner').style.display = 'inline-block';
+  const spinner = document.getElementById('upload-spinner');
+  spinner.style.display = 'inline-block';
 
-  htmx.trigger('#upload-form', 'submit');
+  const formData = new FormData(document.getElementById('upload-form'));
+
+  fetch('/cases', {
+    method: 'POST',
+    body: formData,
+    headers: { 'HX-Request': 'true', 'HX-Current-URL': window.location.href },
+  })
+  .then(function(res) {
+    var pushUrl = res.headers.get('HX-Push-Url');
+    return res.text().then(function(html) { return { html: html, pushUrl: pushUrl, ok: res.ok }; });
+  })
+  .then(function(r) {
+    if (r.pushUrl) history.pushState({}, '', r.pushUrl);
+    var target = document.getElementById('main-content');
+    target.innerHTML = r.html;
+    htmx.process(target);
+  })
+  .catch(function(err) {
+    btn.disabled = false;
+    spinner.style.display = 'none';
+    showFormError('Upload failed — please try again. (' + err.message + ')');
+  });
 }
 
 function updateDropZone(input) {
@@ -215,11 +235,4 @@ function updateEntityHint(select) {
   }
 }
 
-// Re-enable button if server returns an error into the form
-document.body.addEventListener('htmx:afterRequest', function(e) {
-  if (e.detail.elt && e.detail.elt.id === 'upload-form') {
-    document.getElementById('submit-btn').disabled = false;
-    document.getElementById('upload-spinner').style.display = 'none';
-  }
-});
 </script>
