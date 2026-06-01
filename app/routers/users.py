@@ -34,10 +34,13 @@ async def invite_user(request: Request):
     body = await request.json()
     email = body.get("email", "").lower().strip()
     name = body.get("name", "")
-    role = body.get("role", "user")
+    role = body.get("role", "preparer")
 
+    VALID_ROLES = {"preparer", "reviewer", "approver", "admin"}
     if not email:
         raise HTTPException(400, "Email is required.")
+    if role not in VALID_ROLES:
+        raise HTTPException(400, f"Role must be one of: {', '.join(sorted(VALID_ROLES))}.")
 
     db = get_db()
     if not db:
@@ -46,7 +49,7 @@ async def invite_user(request: Request):
     token = secrets.token_hex(32)
     expires = (datetime.now(timezone.utc) + timedelta(hours=48)).isoformat()
 
-    existing = db.from_("users").select("id, name").eq("email", email).single().execute()
+    existing = db.from_("users").select("id, name").eq("email", email).maybe_single().execute()
     ex = existing.data
 
     if ex:
@@ -60,7 +63,7 @@ async def invite_user(request: Request):
 
     invite_url = f"{APP_URL}/accept-invite?token={token}"
     try:
-        send_invite(email, name, invite_url)
+        send_invite(email, name, invite_url, role)
     except Exception:
         pass
 

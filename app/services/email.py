@@ -35,12 +35,18 @@ def _send(to: str | list, subject: str, html: str) -> None:
     })
 
 
-def send_invite(to: str, name: str, invite_url: str) -> None:
-    _send(to, "You've been invited to Hexa Finance", _wrap(f"""
-        <h2 style="font-size:20px;font-weight:700;color:#111;margin:0 0 8px">You're invited</h2>
-        <p style="color:#555;margin:0 0 24px">Hi {name or to}, you have been invited to access the Hexa Finance system.</p>
-        <a href="{invite_url}" style="display:inline-block;background:#6366f1;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">Accept Invitation</a>
-        <p style="color:#999;font-size:12px;margin-top:24px">This link expires in 48 hours.</p>
+def send_invite(to: str, name: str, invite_url: str, role: str = "") -> None:
+    role_label = {"preparer": "Preparer", "reviewer": "Reviewer", "approver": "Approver", "admin": "Administrator"}.get(role, "User")
+    _send(to, f"You've been invited to Hexa Finance — {role_label}", _wrap(f"""
+        <h2 style="font-size:20px;font-weight:700;color:#111;margin:0 0 8px">You're invited to Hexa Finance</h2>
+        <p style="color:#555;font-size:14px;line-height:1.6;margin:0 0 16px">
+          Hi {name or to},<br/><br/>
+          You have been added to <strong>Hexa Finance</strong> as a <strong>{role_label}</strong>.
+          Click the button below to set your password and activate your account.
+        </p>
+        <a href="{invite_url}" style="display:inline-block;background:#6366f1;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">Accept Invitation</a>
+        <p style="color:#999;font-size:12px;margin-top:24px">This link expires in 48 hours. If you did not expect this invitation, you can ignore this email.</p>
+        <p style="color:#999;font-size:12px;margin-top:8px">© 2026 Hexamatics Nepal Private Limited</p>
     """))
 
 
