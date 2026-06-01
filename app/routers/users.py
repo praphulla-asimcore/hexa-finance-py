@@ -10,7 +10,7 @@ from app.config import APP_URL
 
 router = APIRouter(prefix="/api/users")
 
-VALID_ROLES = {"preparer", "reviewer", "approver", "admin"}
+VALID_ROLES = {"preparer", "reviewer", "approver", "arranger", "admin"}
 
 
 def _require_admin(request: Request) -> dict:

@@ -251,3 +251,64 @@ def email_notify(to: str, kase: dict, title: str, body: str) -> None:
         <p style="color:#555;margin:0 0 12px">{body}</p>
         <p style="color:#888;font-size:13px">Reference: <strong>{kase['reference']}</strong></p>
     """))
+
+
+def email_arranger_exceptions(to_list: list, kase: dict) -> None:
+    if not to_list:
+        return
+    check = kase.get("check_data") or {}
+    flags = check.get("flags") or []
+    flag_rows = "".join(
+        f'<tr style="background:{"#fff" if i % 2 == 0 else "#fef2f2"}">'
+        f'<td style="padding:6px 10px;border-bottom:1px solid #fecaca;font-size:13px;color:#b45309;font-weight:600">{f["code"]}</td>'
+        f'<td style="padding:6px 10px;border-bottom:1px solid #fecaca;font-size:13px">{f.get("employee") or "—"}</td>'
+        f'<td style="padding:6px 10px;border-bottom:1px solid #fecaca;font-size:13px">{f.get("entity") or "—"}</td>'
+        f'<td style="padding:6px 10px;border-bottom:1px solid #fecaca;font-size:13px;text-align:right">'
+        f'{_fmt_rm(f["diff"]) if f.get("diff") else "—"}</td>'
+        f'</tr>'
+        for i, f in enumerate(flags)
+    )
+    consultant_url = f"{APP_URL}/consultants"
+    _send(
+        to_list,
+        f"[Hexa Finance] CSI Exceptions Flagged — {kase['reference']} ({check.get('flagCount', 0)} issues)",
+        _wrap(f"""
+        <h2 style="font-size:18px;font-weight:700;color:#d97706;margin:0 0 8px">CSI Exceptions Flagged — Action Required</h2>
+        <p style="color:#555;font-size:14px;line-height:1.6;margin:0 0 20px">
+          A new CSI run <strong>{kase['reference']}</strong> for <strong>{kase.get('entity_name') or kase.get('entity','')}</strong>
+          ({kase.get('period','')}) has been processed and <strong>{check.get('flagCount', 0)} exception(s)</strong> were flagged.<br/><br/>
+          Please review the exceptions below and update the relevant consultant records in the Consultant Database so the preparer can re-upload a corrected file.
+        </p>
+
+        <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:16px;margin-bottom:20px">
+          <p style="margin:0 0 10px;font-weight:700;color:#92400e;font-size:14px">
+            Flagged Exceptions ({check.get('flagCount', 0)})
+          </p>
+          <div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:13px">
+              <thead><tr style="background:#fef3c7">
+                <th style="padding:6px 10px;text-align:left;border-bottom:2px solid #fde68a">Code</th>
+                <th style="padding:6px 10px;text-align:left;border-bottom:2px solid #fde68a">Consultant</th>
+                <th style="padding:6px 10px;text-align:left;border-bottom:2px solid #fde68a">Entity</th>
+                <th style="padding:6px 10px;text-align:right;border-bottom:2px solid #fde68a">Variance</th>
+              </tr></thead>
+              <tbody>{flag_rows}</tbody>
+            </table>
+          </div>
+        </div>
+
+        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:20px">
+          {_row('Reference', f'<span style="color:#6366f1;font-weight:700">{kase["reference"]}</span>')}
+          {_row('Entity', kase.get('entity_name') or kase.get('entity',''))}
+          {_row('Period', kase.get('period',''))}
+          {_row('Uploaded by', kase.get('uploaded_by_name') or '—')}
+          {_row('Total consultants', str(check.get('consultantCount','—')))}
+        </table>
+
+        <a href="{consultant_url}" style="display:inline-block;background:#d97706;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">
+          Open Consultant Database →
+        </a>
+        <p style="color:#999;font-size:12px;margin-top:16px">
+          Update the flagged consultant records, then notify the preparer to re-upload.
+        </p>
+    """))

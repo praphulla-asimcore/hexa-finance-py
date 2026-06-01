@@ -73,6 +73,19 @@
 
           <div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+              <span class="badge badge-orange">Arranger</span>
+            </div>
+            <ul style="margin:0;padding-left:16px;font-size:12px;color:var(--text-secondary);line-height:1.9">
+              <li>Access to CSI module and Consultant Database only</li>
+              <li>Payroll module is not visible</li>
+              <li>Receives email notification whenever a CSI check has exception flags</li>
+              <li>Also notified when a CSI case is returned to the preparer for correction</li>
+              <li>Reviews flagged exceptions and updates consultant records to resolve them</li>
+            </ul>
+          </div>
+
+          <div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
               <span class="badge badge-info">Admin</span>
             </div>
             <ul style="margin:0;padding-left:16px;font-size:12px;color:var(--text-secondary);line-height:1.9">
@@ -116,10 +129,11 @@
           </div>
           <div style="margin-bottom:10px">
             <label class="label">Role <span class="req">*</span></label>
-            <select class="input" id="invite-role" style="max-width:220px">
+            <select class="input" id="invite-role" style="max-width:240px">
               <option value="preparer">Preparer — uploads &amp; prepares files</option>
               <option value="reviewer">Reviewer — reviews check files</option>
               <option value="approver">Approver — final sign-off</option>
+              <option value="arranger">Arranger — fixes CSI exceptions</option>
               <option value="admin">Admin — full access</option>
             </select>
           </div>
@@ -152,6 +166,7 @@
                   'admin':    'badge-info',
                   'approver': 'badge-warning',
                   'reviewer': 'badge-purple',
+                  'arranger': 'badge-orange',
                   'preparer': 'badge-neutral',
                   'user':     'badge-neutral',
                 } %}
@@ -187,6 +202,7 @@
 
 <style>
 .badge-purple { background: rgba(156,39,176,0.12); color: #9c27b0; }
+.badge-orange { background: rgba(217,119,6,0.12);  color: #d97706; }
 </style>
 
 <script>
