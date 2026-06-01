@@ -3,7 +3,7 @@
 
 {% set docs = [
   (1, 'Original file', kase.original_file_name, kase.original_file_hash and (kase.original_file_hash[:16] + '…'), true),
-  (2, 'AI Check file', kase.check_generated_at and fmt_date(kase.check_generated_at), none, kase.check_generated_at is not none),
+  (2, 'Check file', kase.check_generated_at and fmt_date(kase.check_generated_at), none, kase.check_generated_at is not none),
   (3, 'Check Approval Certificate', kase.check_approved_at and ('Approved: ' ~ fmt_date(kase.check_approved_at)), none, (kase.check_approval_cert is not none)),
   (4, 'Bank upload file', kase.bank_file_name, kase.bank_file_hash and (kase.bank_file_hash[:16] + '…'), kase.bank_file_generated_at is not none),
   (5, 'Bank upload log', kase.bank_upload_at and ('Ref: ' ~ (kase.bank_portal_ref or '')), none, kase.bank_upload_at is not none),

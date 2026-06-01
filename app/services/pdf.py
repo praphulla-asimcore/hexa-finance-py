@@ -224,7 +224,7 @@ def build_audit_package_pdf(kase: dict, logs: list[dict]) -> bytes:
     doc_rows = [["#", "Document", "Detail", "Stamp / Hash"]]
     docs = [
         ("1", "Original File", kase.get("original_file_name") or "—", (kase.get("original_file_hash") or "")[:32] + "…"),
-        ("2", "AI Check File", str(kase.get("check_generated_at") or "—"), f"Flags: {check.get('flagCount', 0)}"),
+        ("2", "Check File", str(kase.get("check_generated_at") or "—"), f"Flags: {check.get('flagCount', 0)}"),
         ("3", "Check Approval Cert", str(kase.get("check_approved_at") or "—"), (kase.get("check_approval_cert") or {}).get("stamp", "")[:60]),
         ("4", "Bank Upload File (RCMS)", kase.get("bank_file_name") or "—", (kase.get("bank_file_hash") or "")[:32] + "…"),
         ("5", "RCgen TXT", kase.get("bank_receipt_name") or "—", ""),

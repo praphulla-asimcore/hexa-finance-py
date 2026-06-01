@@ -13,7 +13,10 @@ from app.deps import get_current_user
 from app.services.db import get_db
 from app.services.parser import parse_excel_buffer, parse_payroll_excel_buffer
 from app.services.zoho import post_journal_entry, create_expense, attach_journal_document, fetch_accounts
-from app.services.bank_files import generate_and_store_bank_files, generate_and_store_bank_files_payroll
+from app.services.bank_files import (
+    generate_and_store_bank_files, generate_and_store_bank_files_payroll,
+    fetch_airtable_consultants, match_consultant,
+)
 from app.services.pdf import build_check_report_pdf, build_audit_package_pdf
 from app.services.email import (
     email_check_approval, email_payment_approval, email_notify,
@@ -77,30 +80,129 @@ async def _generate_ref(db, case_type: str, entity: str, period: str) -> tuple[s
     return ref, seq
 
 
-def _build_check_data(entities: list[dict]) -> dict:
+def _build_check_data(entities: list[dict], airtable_list: list | None = None) -> dict:
     flags = []
     consultants = gross = ctc = net = 0
     stat = {"epf": 0.0, "eis": 0.0, "socso": 0.0, "hrdf": 0.0, "mtd": 0.0}
+    seen_ids: set = set()
 
     for ent in entities:
         consultants += len(ent.get("employees", []))
-        for emp in ent.get("employees", []):
-            gross += emp.get("grossSalary", 0)
-            ctc += emp.get("ctcHexa", 0)
-            net += emp.get("netSalary", 0)
-            stat["epf"] += emp.get("epfEmployer", 0)
-            stat["eis"] += emp.get("eisEmployer", 0)
-            stat["socso"] += emp.get("socsoEmployer", 0)
-            stat["hrdf"] += emp.get("hrdf", 0)
-            stat["mtd"] += emp.get("mtd", 0)
 
-            expected_ctc = emp.get("grossSalary", 0) + emp.get("epfEmployer", 0) + emp.get("eisEmployer", 0) + emp.get("socsoEmployer", 0) + emp.get("hrdf", 0)
-            if abs(emp.get("ctcHexa", 0) - expected_ctc) > 0.01:
-                flags.append({"code": "CTC_VARIANCE", "employee": emp.get("name") or emp.get("employeeId"), "entity": ent["sheetName"], "expected": _round2(expected_ctc), "actual": emp.get("ctcHexa"), "diff": _round2(abs(emp.get("ctcHexa", 0) - expected_ctc))})
-            if emp.get("netSalary", 0) == 0:
-                flags.append({"code": "ZERO_NET", "employee": emp.get("name"), "entity": ent["sheetName"]})
         if ent.get("missingColumns"):
-            flags.append({"code": "MISSING_COLUMNS", "entity": ent["sheetName"], "columns": ent["missingColumns"]})
+            flags.append({"code": "MISSING_COLUMNS", "entity": ent["sheetName"],
+                          "columns": ent["missingColumns"]})
+
+        for emp in ent.get("employees", []):
+            name   = emp.get("name") or emp.get("employeeId", "")
+            emp_id = emp.get("employeeId", "")
+            entity = ent["sheetName"]
+
+            g   = float(emp.get("grossSalary", 0) or 0)
+            n   = float(emp.get("netSalary", 0) or 0)
+            c   = float(emp.get("ctcHexa", 0) or 0)
+            epf = float(emp.get("epfEmployer", 0) or 0)
+            eis = float(emp.get("eisEmployer", 0) or 0)
+            soc = float(emp.get("socsoEmployer", 0) or 0)
+            hrd = float(emp.get("hrdf", 0) or 0)
+            mtd = float(emp.get("mtd", 0) or 0)
+            clm = float(emp.get("claim", 0) or 0)
+            ctc_client = float(emp.get("ctcClient", 0) or 0)
+            cc  = (emp.get("costCentre") or "").strip()
+
+            gross += g; ctc += c; net += n
+            stat["epf"] += epf; stat["eis"] += eis
+            stat["socso"] += soc; stat["hrdf"] += hrd; stat["mtd"] += mtd
+
+            # ── Duplicate employee ID ─────────────────────────────────────────
+            if emp_id:
+                if emp_id in seen_ids:
+                    flags.append({"code": "DUPLICATE_EMPLOYEE", "employee": name,
+                                  "entity": entity, "employeeId": emp_id})
+                seen_ids.add(emp_id)
+
+            # ── Negative values ───────────────────────────────────────────────
+            for field, val in [("Gross", g), ("Net", n), ("EPF Employer", epf),
+                                ("EIS Employer", eis), ("SOCSO Employer", soc),
+                                ("HRDF", hrd), ("MTD", mtd)]:
+                if val < 0:
+                    flags.append({"code": "NEGATIVE_VALUE", "employee": name,
+                                  "entity": entity, "field": field, "diff": _round2(val)})
+
+            # ── Zero gross ────────────────────────────────────────────────────
+            if g == 0:
+                flags.append({"code": "ZERO_GROSS", "employee": name, "entity": entity})
+
+            # ── Net exceeds gross ─────────────────────────────────────────────
+            if n > g + 0.01:
+                flags.append({"code": "NET_EXCEEDS_GROSS", "employee": name,
+                               "entity": entity,
+                               "diff": _round2(n - g)})
+
+            # ── Zero net salary ───────────────────────────────────────────────
+            if n == 0 and g > 0:
+                flags.append({"code": "ZERO_NET", "employee": name, "entity": entity})
+
+            # ── CTC Hexa variance (Gross + statutory ≠ CTC Hexa) ─────────────
+            if g > 0:
+                expected_ctc = g + epf + eis + soc + hrd
+                if abs(c - expected_ctc) > 0.01:
+                    flags.append({"code": "CTC_VARIANCE", "employee": name,
+                                  "entity": entity,
+                                  "expected": _round2(expected_ctc),
+                                  "actual": c, "diff": _round2(abs(c - expected_ctc))})
+
+            # ── EPF employer rate (should be ~12–13 % of gross) ───────────────
+            if g > 0 and epf > 0:
+                rate = epf / g
+                if rate < 0.10 or rate > 0.145:
+                    flags.append({"code": "EPF_RATE_VARIANCE", "employee": name,
+                                  "entity": entity,
+                                  "rate_pct": _round2(rate * 100),
+                                  "diff": _round2(epf)})
+
+            # ── SOCSO ceiling (RM 86.65 / month employer) ────────────────────
+            if soc > 86.65 + 0.01:
+                flags.append({"code": "SOCSO_CEILING", "employee": name,
+                               "entity": entity, "diff": _round2(soc - 86.65)})
+
+            # ── EIS ceiling (RM 7.90 / month employer) ───────────────────────
+            if eis > 7.90 + 0.01:
+                flags.append({"code": "EIS_CEILING", "employee": name,
+                               "entity": entity, "diff": _round2(eis - 7.90)})
+
+            # ── MTD = 0 for high earner (Gross > RM 5,000) ───────────────────
+            if mtd == 0 and g > 5000:
+                flags.append({"code": "MTD_ZERO_HIGH_EARNER", "employee": name,
+                               "entity": entity, "gross": _round2(g)})
+
+            # ── Missing cost centre / client ──────────────────────────────────
+            if not cc:
+                flags.append({"code": "MISSING_COST_CENTRE", "employee": name,
+                               "entity": entity})
+
+            # ── CTC Client < CTC Hexa (billing less than cost) ───────────────
+            if ctc_client > 0 and ctc_client < c - 0.01:
+                flags.append({"code": "CTC_CLIENT_LESS_THAN_HEXA", "employee": name,
+                               "entity": entity,
+                               "ctcHexa": _round2(c), "ctcClient": _round2(ctc_client),
+                               "diff": _round2(c - ctc_client)})
+
+            # ── Claims > Gross ────────────────────────────────────────────────
+            if clm > 0 and clm > g:
+                flags.append({"code": "HIGH_CLAIM", "employee": name,
+                               "entity": entity,
+                               "claim": _round2(clm), "gross": _round2(g)})
+
+            # ── Consultant not in Airtable DB / missing bank details ──────────
+            if airtable_list is not None:
+                matched = match_consultant(emp, airtable_list)
+                if matched is None:
+                    flags.append({"code": "CONSULTANT_NOT_IN_DB", "employee": name,
+                                  "entity": entity, "employeeId": emp_id})
+                elif not (matched.get("accountNo") or "").strip():
+                    flags.append({"code": "MISSING_BANK_ACCOUNT", "employee": name,
+                                  "entity": entity, "employeeId": emp_id})
 
     return {
         "consultantCount": consultants, "entityCount": len(entities),
@@ -898,12 +1000,20 @@ async def _upload_case_inner(
     if not parsed_entities:
         return _upload_err("No valid data found in file. Check column headers.")
 
+    # Fetch Airtable consultant list for DB/bank-detail checks (CSI only; non-blocking)
+    airtable_list = None
+    if type_up == "CSI":
+        try:
+            airtable_list = await fetch_airtable_consultants()
+        except Exception:
+            pass  # proceed without Airtable checks if fetch fails
+
     try:
         # Auto-generate check immediately — no manual step needed
         check_data = (
             _build_check_data_payroll(parsed_entities)
             if type_up == "PAYROLL"
-            else _build_check_data(parsed_entities)
+            else _build_check_data(parsed_entities, airtable_list)
         )
 
         file_hash = _sha256(content)
@@ -1138,10 +1248,17 @@ async def reupload_case(
     if not parsed_entities:
         return HTMLResponse('<div class="error-msg">No valid data found. Check column headers.</div>')
 
+    airtable_list = None
+    if kase.get("type") == "CSI":
+        try:
+            airtable_list = await fetch_airtable_consultants()
+        except Exception:
+            pass
+
     check_data = (
         _build_check_data_payroll(parsed_entities)
         if kase.get("type") == "PAYROLL"
-        else _build_check_data(parsed_entities)
+        else _build_check_data(parsed_entities, airtable_list)
     )
 
     file_hash = _sha256(content)
