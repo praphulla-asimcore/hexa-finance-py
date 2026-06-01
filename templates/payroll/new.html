@@ -81,8 +81,15 @@
               <option value="11">November</option>
               <option value="12">December</option>
             </select>
-            <input class="input" id="period-year" placeholder="2026" maxlength="4" style="width:80px"
-                   oninput="buildPeriodYm()" required/>
+            <select class="input" id="period-year" onchange="buildPeriodYm()" required style="width:90px">
+              <option value="">Year</option>
+              <option value="2025">2025</option>
+              <option value="2026">2026</option>
+              <option value="2027">2027</option>
+              <option value="2028">2028</option>
+              <option value="2029">2029</option>
+              <option value="2030">2030</option>
+            </select>
             <select class="input" name="period_cycle" id="period-cycle" style="width:130px">
               <option value="25th">25th</option>
               <option value="EOM">End of Month</option>
@@ -92,7 +99,7 @@
           </div>
           {# Hidden field carries the YYYYMM value the server expects #}
           <input type="hidden" name="period_ym" id="period-ym"/>
-          <span class="pf-hint">Select month + enter year. 7th/15th → Zoho date = prior month-end. Auto-detected from filename.</span>
+          <span class="pf-hint">Select month + year. 7th/15th → Zoho date = prior month-end. Auto-detected from filename.</span>
         </div>
       </div>
 
@@ -118,7 +125,7 @@ const ORGS = {{ orgs | tojson }};
 function buildPeriodYm() {
   const mo = document.getElementById('period-month').value;
   const yr = document.getElementById('period-year').value.trim();
-  document.getElementById('period-ym').value = (yr.length === 4 && mo) ? yr + mo : '';
+  document.getElementById('period-ym').value = (yr && mo) ? yr + mo : '';
 }
 
 function setMonthYear(yyyymm) {

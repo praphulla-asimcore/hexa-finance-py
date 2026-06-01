@@ -1355,7 +1355,7 @@ async def log_bank_upload(case_id: str, request: Request):
     if not kase:
         return HTMLResponse('<div class="error-msg">Case not found.</div>')
     if kase.get("status") != "bank_file_generated":
-        return HTMLResponse(f'<div class="error-msg">Cannot log bank upload from status: {kase["status"]}</div>')
+        return await _refresh_detail(case_id, db, request, user, _get_active_step(kase.get("status", "")))
 
     now = _now()
     db.from_("payroll_cases").update({
@@ -1384,15 +1384,19 @@ async def send_payment_approval(case_id: str, request: Request):
     if not kase:
         return HTMLResponse('<div class="error-msg">Case not found.</div>')
     if kase.get("status") != "bank_uploaded":
-        return HTMLResponse(f'<div class="error-msg">Must be in bank_uploaded status. Current: {kase["status"]}</div>')
+        return await _refresh_detail(case_id, db, request, user, _get_active_step(kase.get("status", "")))
 
-    token = secrets.token_hex(32)
-    db.from_("payroll_approval_tokens").insert({
-        "case_id": case_id, "step": 6,
-        "approver_email": APPROVERS["director"]["email"],
-        "approver_name": APPROVERS["director"]["name"],
-        "approver_role": "director", "token": token,
-    }).execute()
+    try:
+        token = secrets.token_hex(32)
+        db.from_("payroll_approval_tokens").insert({
+            "case_id": case_id, "step": 6,
+            "approver_email": APPROVERS["director"]["email"],
+            "approver_name": APPROVERS["director"]["name"],
+            "approver_role": "director", "token": token,
+        }).execute()
+    except Exception as e:
+        await _audit_log(db, case_id, "PAYMENT_APPROVAL_ERROR", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"error": str(e)})
+        return await _refresh_detail(case_id, db, request, user, 5)
 
     base_url = f"{APP_URL}/api/payroll-cases/director/{token}"
     try:
@@ -1509,7 +1513,7 @@ async def confirm_payment(case_id: str, request: Request):
     if not kase:
         return HTMLResponse('<div class="error-msg">Case not found.</div>')
     if kase.get("status") not in ("payment_approval_sent", "bank_uploaded"):
-        return HTMLResponse(f'<div class="error-msg">Cannot confirm payment from status: {kase["status"]}</div>')
+        return await _refresh_detail(case_id, db, request, user, _get_active_step(kase.get("status", "")))
 
     now = _now()
     check = kase.get("check_data") or {}
