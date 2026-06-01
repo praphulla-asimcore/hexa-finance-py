@@ -1222,12 +1222,17 @@ async def post_accrual_manual(case_id: str, request: Request):
     if not kase:
         return HTMLResponse('<div class="error-msg">Case not found.</div>')
 
-    # Allow retry from any post-approval-sent status
     ALLOWED = {"check_approval_sent", "check_reviewer_approved", "check_approved",
                "bank_file_generated", "bank_uploaded", "payment_approval_sent",
                "payment_approved", "payment_rejected", "zoho_posted"}
     if kase.get("status") not in ALLOWED:
         return await _refresh_detail(case_id, db, request, user, 3)
+
+    # Block if already successfully posted — prevent duplicate Zoho journal entries
+    logs_resp = db.from_("payroll_audit_log").select("metadata").eq("case_id", case_id).eq("event_type", "ZOHO_ACCRUAL_AUTO").execute()
+    for log in (logs_resp.data or []):
+        if (log.get("metadata") or {}).get("success"):
+            return await _refresh_detail(case_id, db, request, user, 3)
 
     case_type = kase.get("type", "CSI")
     try:
