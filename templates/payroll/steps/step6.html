@@ -16,7 +16,7 @@
 
   <div class="pf-approver-chain">
     <div class="pf-approver-box">
-      <div class="pf-approver-name">Dato Thiruchelvapalan</div>
+      <div class="pf-approver-name">{{ approvers.director.name }}</div>
       <div class="pf-approver-role">Director</div>
       <span class="badge badge-{% if is_approved %}success{% elif is_rejected %}danger{% elif is_pending %}warning{% else %}neutral{% endif %}">
         {% if is_approved %}Approved{% elif is_rejected %}Rejected{% elif is_pending %}Awaiting{% else %}Not yet sent{% endif %}
@@ -27,7 +27,7 @@
 
   {% if is_pending %}
   <div class="pf-info-banner pf-banner-waiting">
-    Approval email sent to Dato Thiruchelvapalan on {{ fmt_date(kase.payment_approval_sent_at) }}.
+    Approval email sent to {{ approvers.director.name }} on {{ fmt_date(kase.payment_approval_sent_at) }}.
     Director can approve via the secure email link, or confirm below if approved verbally.
     <button class="btn btn-secondary btn-sm" style="margin-left:12px"
         hx-get="/cases/{{ kase.id }}" hx-target="#case-detail-inner" hx-swap="innerHTML">

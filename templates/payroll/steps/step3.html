@@ -102,10 +102,10 @@
   {# ── Approver chain ── #}
   <div class="pf-approver-chain">
     {% set rev_status = 'approved' if kase.status in ['check_reviewer_approved','check_approved','bank_file_generated','bank_uploaded','payment_approval_sent','payment_approved','payment_rejected','zoho_posted'] else ('pending' if kase.status == 'check_approval_sent' else 'waiting') %}
-    {{ approver_box('Asim Subedi', 'First Reviewer', rev_status, kase.check_reviewer_approved_at) }}
+    {{ approver_box(approvers.reviewer.name, 'First Reviewer', rev_status, kase.check_reviewer_approved_at) }}
     <div class="pf-chain-arrow">→</div>
     {% set fin_status = 'approved' if is_approved else ('rejected' if is_rejected else ('pending' if kase.status == 'check_reviewer_approved' else 'waiting')) %}
-    {{ approver_box('Praphulla Subedi', 'Final Approver', fin_status, kase.check_approved_at) }}
+    {{ approver_box(approvers.final.name, 'Final Approver', fin_status, kase.check_approved_at) }}
   </div>
 
   {# ── Send approval button ── #}

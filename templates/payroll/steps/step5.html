@@ -52,7 +52,7 @@
     {% if can_request_approval %}
     <div class="pf-sub-step-body">
       <p class="pf-action-desc">
-        Bank file has been uploaded. Send the payment approval request to the Director (Dato Thiruchelvapalan) with the full payroll summary.
+        Bank file has been uploaded. Send the payment approval request to the Director ({{ approvers.director.name }}) with the full payroll summary.
       </p>
       <button class="btn btn-primary"
           hx-post="/cases/{{ kase.id }}/send-payment-approval"
@@ -64,7 +64,7 @@
     </div>
     {% elif is_done %}
     <div class="pf-sub-step-done">
-      <div class="pf-stamp-box"><span class="pf-stamp-label">Approval sent to</span><span class="pf-stamp-value">Dato Thiruchelvapalan</span></div>
+      <div class="pf-stamp-box"><span class="pf-stamp-label">Approval sent to</span><span class="pf-stamp-value">{{ approvers.director.name }}</span></div>
       <div class="pf-stamp-box"><span class="pf-stamp-label">Sent at</span><span class="pf-stamp-value">{{ fmt_date(kase.payment_approval_sent_at) }}</span></div>
     </div>
     {% else %}
