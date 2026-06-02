@@ -13,7 +13,10 @@ from app.deps import get_current_user
 from app.services.db import get_db
 from app.services.parser import parse_excel_buffer, parse_payroll_excel_buffer
 from app.services.statutory_enrich import enrich_entities_statutory
-from app.services.zoho import post_journal_entry, create_expense, attach_journal_document, fetch_accounts, delete_journal_entry
+from app.services.zoho import (
+    post_journal_entry, create_expense, attach_journal_document, fetch_accounts,
+    delete_journal_entry, fetch_contacts, create_contact, fetch_reporting_tags, create_tag_option,
+)
 from app.services.bank_files import (
     generate_and_store_bank_files, generate_and_store_bank_files_payroll,
     fetch_airtable_consultants, match_consultant,
@@ -796,77 +799,111 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
         for ent in entities for emp in ent.get("employees", [])
     ]
 
-    line_items = []
-    skipped = 0
+    # ── Resolve the "Customer" reporting tag and Zoho contacts (mandatory) ────
+    CUSTOMER_TAG = "Customer"
+    try:
+        tags = await fetch_reporting_tags(org_id)
+    except Exception as e:
+        return {"success": False, "error": f"Could not read Zoho reporting tags: {e}"}
+    cust_tag = next((t for t in tags if t["tag_name"].lower() == CUSTOMER_TAG.lower()), None)
+    if not cust_tag:
+        return {"success": False, "error": f"Reporting tag '{CUSTOMER_TAG}' not found in Zoho."}
+    tag_id = cust_tag["tag_id"]
+    tag_options = dict(cust_tag["options"])   # lower(client) -> tag_option_id
 
-    total_amounts = 0.0
+    try:
+        contacts = await fetch_contacts(org_id)   # lower(name) -> contact_id
+    except Exception as e:
+        return {"success": False, "error": f"Could not read Zoho contacts: {e}"}
+
+    # Pre-resolve a contact (consultant) and a Customer tag option (client) for
+    # every consultant — creating any that are missing — BEFORE posting anything.
+    # If any can't be resolved, abort and post nothing (tagging is mandatory).
+    errors = []
     for emp in all_employees:
-        is_apc   = (emp.get("clientType") or "CC").upper() == "APC"
-        cust = emp.get("costCentre", "")
-        cons = emp.get("name", emp.get("employeeId", ""))
-        desc = f"{entity_code}_CSI_{cust}_{cons}_{mmm_yy}"
+        cons   = (emp.get("name") or emp.get("employeeId") or "").strip()
+        client = (emp.get("costCentre") or "").strip()
+        if not cons:
+            errors.append(f"employee {emp.get('employeeId','?')}: missing name for Contact")
+            continue
+        if not client:
+            errors.append(f"{cons}: missing client/cost centre for Customer tag")
+            continue
+        if cons.lower() not in contacts:
+            try:
+                contacts[cons.lower()] = await create_contact(org_id, cons, "vendor")
+            except Exception as e:
+                errors.append(f"contact '{cons}': {e}")
+        if client.lower() not in tag_options:
+            try:
+                tag_options[client.lower()] = await create_tag_option(org_id, tag_id, client)
+            except Exception as e:
+                errors.append(f"Customer tag '{client}': {e}")
+    if errors:
+        return {"success": False, "error": "Pre-resolution failed (nothing posted): " + "; ".join(errors[:6])}
 
-        components = [
-            # 2.6.1.1/2.6.2.1 — Net Salary minus bonus and claims (residual salary component)
-            ("basic",     _round2((emp.get("netSalary") or 0)
-                                  - (emp.get("bonus") or 0)
-                                  - (emp.get("claim") or 0))),
-            # 2.6.1.2/2.6.2.2 — Claims
-            ("claim",     _round2(emp.get("claim", 0))),
-            # 2.6.1.3/2.6.2.3 — Bonus / Commission
-            ("bonus",     _round2(emp.get("bonus", 0))),
-            # 2.6.1.6/2.6.2.6 — Cash Advance Deduction
-            ("ca_dedn",   _round2(emp.get("caDedn", 0))),
-            # 2.6.1.10.1/2.6.2.10.1 — EPF employee + employer
-            ("epf",       _round2((emp.get("epfEmployee") or 0) + (emp.get("epfEmployer") or 0))),
-            # 2.6.1.10.3/2.6.2.10.3 — SOCSO + EIS employee + employer
-            ("socso_eis", _round2((emp.get("socsoEmployee") or 0) + (emp.get("socsoEmployer") or 0)
-                                  + (emp.get("eisEmployee") or 0) + (emp.get("eisEmployer") or 0))),
-            # 2.6.1.10.4/2.6.2.10.4 — HRDF
-            ("hrdf",      _round2(emp.get("hrdf", 0))),
-            # 2.6.1.10.7/2.6.2.10.7 — MTD / PCB
-            ("mtd",       _round2(emp.get("mtd", 0))),
-        ]
+    # ── Post one balanced JV per consultant, with Contact + Customer tag ──────
+    components_for = lambda emp: [
+        ("basic",     _round2((emp.get("netSalary") or 0) - (emp.get("bonus") or 0) - (emp.get("claim") or 0))),
+        ("claim",     _round2(emp.get("claim", 0))),
+        ("bonus",     _round2(emp.get("bonus", 0))),
+        ("ca_dedn",   _round2(emp.get("caDedn", 0))),
+        ("epf",       _round2((emp.get("epfEmployee") or 0) + (emp.get("epfEmployer") or 0))),
+        ("socso_eis", _round2((emp.get("socsoEmployee") or 0) + (emp.get("socsoEmployer") or 0)
+                              + (emp.get("eisEmployee") or 0) + (emp.get("eisEmployer") or 0))),
+        ("hrdf",      _round2(emp.get("hrdf", 0))),
+        ("mtd",       _round2(emp.get("mtd", 0))),
+    ]
 
-        for comp_key, amount in components:
+    journal_ids, failed, skipped = [], [], 0
+    for emp in all_employees:
+        is_apc     = (emp.get("clientType") or "CC").upper() == "APC"
+        cons       = (emp.get("name") or emp.get("employeeId") or "").strip()
+        client     = (emp.get("costCentre") or "").strip()
+        contact_id = contacts.get(cons.lower())
+        option_id  = tag_options.get(client.lower())
+        desc       = f"{entity_code}_CSI_{client}_{cons}_{mmm_yy}"
+        line_tags  = [{"tag_id": tag_id, "tag_option_id": option_id}]
+
+        line_items = []
+        for comp_key, amount in components_for(emp):
             if amount <= 0:
                 continue
-            total_amounts += amount
             dr_id = account_id_from_map(is_apc, comp_key)
             if not dr_id:
                 skipped += 1
                 continue
-            line_items.append({"account_id": dr_id, "debit_or_credit": "debit",
-                                "amount": amount, "description": desc})
-            line_items.append({"account_id": payable_id, "debit_or_credit": "credit",
-                                "amount": amount, "description": desc})
+            line_items.append({"account_id": dr_id, "debit_or_credit": "debit", "amount": amount,
+                                "description": desc, "customer_id": contact_id, "tags": line_tags})
+            line_items.append({"account_id": payable_id, "debit_or_credit": "credit", "amount": amount,
+                                "description": desc, "customer_id": contact_id, "tags": line_tags})
 
-    if not line_items:
-        if total_amounts == 0:
-            return {"success": False, "error": "All component amounts are zero — check CSI file data.", "skipped": skipped}
-        return {
-            "success": False, "skipped": skipped,
-            "error": f"No line items matched (total RM {total_amounts:,.2f} present, {skipped} components skipped). Add org {org_id} to _ORG_ACCOUNT_MAPS.",
-        }
+        if not line_items:
+            continue
+        try:
+            journal = await post_journal_entry(org_id, {
+                "journal_date":     journal_date,
+                "reference_number": f"ACCR-{kase['reference']}-{emp.get('employeeId', '')}",
+                "notes": f"CSI Payroll Accrual – {kase.get('period')} – {client} – {cons} – Ref: {kase['reference']}",
+                "line_items": line_items,
+            })
+            jid = journal.get("journal_id")
+            if jid:
+                journal_ids.append(jid)
+        except Exception as e:
+            failed.append({"consultant": cons, "error": str(e)})
 
-    try:
-        journal = await post_journal_entry(org_id, {
-            "journal_date":     journal_date,
-            "reference_number": f"ACCR-{kase['reference']}",
-            "notes": (
-                f"CSI Payroll Accrual – {kase.get('period')} – "
-                f"{kase.get('entity_name', entity_code)} – Ref: {kase['reference']}"
-            ),
-            "line_items": line_items,
-        })
-        j_id = journal.get("journal_id")
-        db.from_("payroll_cases").update({
-            "zoho_org_id":     org_id,
-            "zoho_journal_ids": [j_id] if j_id else [],
-        }).eq("id", kase["id"]).execute()
-        return {"success": True, "journal_id": j_id, "skipped": skipped}
-    except Exception as e:
-        return {"success": False, "error": str(e), "skipped": skipped}
+    if not journal_ids:
+        first = failed[0] if failed else "none"
+        return {"success": False, "skipped": skipped,
+                "error": f"No accrual journals posted (skipped components: {skipped}). First failure: {first}"}
+
+    db.from_("payroll_cases").update({
+        "zoho_org_id":      org_id,
+        "zoho_journal_ids": journal_ids,
+    }).eq("id", kase["id"]).execute()
+    return {"success": len(failed) == 0, "journal_ids": journal_ids,
+            "posted": len(journal_ids), "failed": failed, "skipped": skipped}
 
 
 # ─── Auto payment booking (Step 6) ───────────────────────────────────────────
