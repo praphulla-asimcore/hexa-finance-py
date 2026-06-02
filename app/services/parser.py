@@ -3,7 +3,9 @@ from datetime import datetime, date
 from openpyxl import load_workbook
 import xlrd
 
-from app.services.statutory_rates import socso_contribution, eis_contribution
+from app.services.statutory_rates import (
+    socso_contribution, eis_contribution, epf_contribution, epf_basis,
+)
 
 
 def _json_safe(obj):
@@ -270,21 +272,22 @@ def parse_payroll_excel_buffer(data: bytes) -> list[dict]:
         id_number    = _sv(row, "IC Number") or _sv(row, "Passport Number") or _sv(row, "ID Number")
 
         gross  = _pv(row, "Gross earnings") or _pv(row, "Gross Salary") or _pv(row, "Gross Pay")
-        epf_ee = _pv(row, "rEPF") or _pv(row, "EPF Employee")
-        epf_er = _pv(row, "cEPF") or _pv(row, "EPF Employer")
         hrdf   = _pv(row, "HRDF")
         mtd    = _pv(row, "PCB") or _pv(row, "MTD")
+        claim  = _pv(row, "Claims Amount") or _pv(row, "Claim")
 
-        # SOCSO & EIS are computed from the official PERKESO banded tables using
+        # EPF, SOCSO & EIS are computed from the official statutory tables using
         # gross earnings as the contribution wage, rather than trusting whatever
-        # the payroll export reports. Category (under/over 60) and EIS
-        # eligibility (Malaysian/PR only) are derived from Age and Nationality.
+        # the payroll export reports. Category (under/over 60), EPF foreigner
+        # status and EIS eligibility are derived from Age and Nationality.
         age         = _pv(row, "Age") or None
         nationality = _sv(row, "Nationality")
+        epf_ee,   epf_er   = epf_contribution(gross, age, nationality)
         socso_ee, socso_er = socso_contribution(gross, age)
         eis_ee,   eis_er   = eis_contribution(gross, age, nationality)
 
-        ctc = gross + epf_er + eis_er + socso_er + hrdf
+        # CTC Hexa = Gross + employer statutory (EPF/EIS/SOCSO) + HRDF + Claims.
+        ctc = gross + epf_er + eis_er + socso_er + hrdf + claim
 
         employees.append({
             "employeeId":    emp_id_str,
@@ -292,8 +295,10 @@ def parse_payroll_excel_buffer(data: bytes) -> list[dict]:
             "costCentre":    _sv(row, "Department") or _sv(row, "Cost Centre"),
             "grossSalary":   round(gross, 2),
             "netSalary":     round(net_pay, 2),
+            "claim":         round(claim, 2),
             "epfEmployee":   round(epf_ee, 2),
             "epfEmployer":   round(epf_er, 2),
+            "epfBasis":      epf_basis(age, nationality),
             "eisEmployee":   round(eis_ee, 2),
             "eisEmployer":   round(eis_er, 2),
             "socsoEmployee": round(socso_ee, 2),

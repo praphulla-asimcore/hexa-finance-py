@@ -252,17 +252,19 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None) -
             if n == 0 and g > 0:
                 flags.append({"code": "ZERO_NET", "employee": name, "entity": entity})
 
-            # ── CTC Hexa variance (Gross + statutory ≠ CTC Hexa) ─────────────
+            # ── CTC Hexa variance (Gross + employer statutory + Claims ≠ CTC) ─
             if g > 0:
-                expected_ctc = g + epf + eis + soc + hrd
+                expected_ctc = g + epf + eis + soc + hrd + clm
                 if abs(c - expected_ctc) > 0.01:
                     flags.append({"code": "CTC_VARIANCE", "employee": name,
                                   "entity": entity,
                                   "expected": _round2(expected_ctc),
                                   "actual": c, "diff": _round2(abs(c - expected_ctc))})
 
-            # ── EPF employer rate (should be ~12–13 % of gross) ───────────────
-            if g > 0 and epf > 0:
+            # ── EPF employer rate sanity check ────────────────────────────────
+            # Foreign workers (2%) and 60+ locals (6–6.5%) legitimately fall
+            # below the under-60 local band, so only check the standard case.
+            if g > 0 and epf > 0 and emp.get("epfBasis", "local_under_60") == "local_under_60":
                 rate = epf / g
                 if rate < 0.10 or rate > 0.145:
                     flags.append({"code": "EPF_RATE_VARIANCE", "employee": name,
@@ -315,15 +317,22 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None) -
                                   "entity": entity, "employeeId": emp_id,
                                   "reason": "Bank account number not on file"})
 
+    # Revenue / profitability (Total Revenue = Total Billing):
+    #   GP        = Total Billing − CTC
+    #   GP Margin = Total Mgmt Fee / Total Billing
+    #   Mark Up   = Total Mgmt Fee / CTC
     gp          = _round2(total_billing - ctc) if total_billing > 0 else None
-    gp_margin   = _round2((gp / total_billing) * 100) if (gp is not None and total_billing > 0) else None
+    gp_margin   = _round2((total_mgmt_fee / total_billing) * 100) if total_billing > 0 else None
+    markup      = _round2((total_mgmt_fee / ctc) * 100) if ctc > 0 else None
     return {
         "consultantCount":   consultants, "entityCount": len(entities),
         "grossPayrollTotal": _round2(gross), "ctcTotal": _round2(ctc), "netSalaryTotal": _round2(net),
+        "totalRevenue":      _round2(total_billing) if total_billing > 0 else None,
         "totalBilling":      _round2(total_billing) if total_billing > 0 else None,
         "totalMgmtFee":      _round2(total_mgmt_fee) if total_mgmt_fee > 0 else None,
         "totalGP":           gp,
         "gpMarginPct":       gp_margin,
+        "markupPct":         markup,
         "statutory": {k: _round2(v) for k, v in stat.items()},
         "flagCount": len(flags), "flags": flags,
         "generatedAt": _now(), "generatedBy": "Hexa Check Engine v1.0",

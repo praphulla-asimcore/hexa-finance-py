@@ -1,16 +1,22 @@
-"""PERKESO SOCSO & EIS contribution tables (Malaysia).
+"""PERKESO SOCSO & EIS and EPF contribution tables (Malaysia).
 
-Exact banded contribution amounts transcribed from the authoritative PERKESO
-rate tables:
+Exact banded contribution amounts transcribed from the authoritative tables:
   * SOCSO  — "e-SOCSO and r-SCOSO computation_Latest.pdf"
              (Kadar Caruman Akta Keselamatan Sosial Pekerja / Akta 4)
   * EIS    — "e-EIS and r-EIS computation_Latest.pdf"
              (Kadar Caruman Sistem Insurans Pekerjaan / Akta 800)
+  * EPF    — "EPF - Effective 1 October 2025.pdf"
+             (KWSP Third Schedule, Rate of Monthly Contributions)
 
-Contributions are NOT a flat percentage of wages — PERKESO publishes fixed RM
-amounts per wage band and those banded amounts are the legally correct figures,
-so we look them up rather than multiply by a rate. Wages above the top band
-(RM6,000) use the top band amount.
+SOCSO/EIS contributions are NOT a flat percentage of wages — PERKESO publishes
+fixed RM amounts per wage band and those banded amounts are the legally correct
+figures, so we look them up rather than multiply by a rate. Wages above the top
+band (RM6,000) use the top band amount.
+
+EPF uses the "statutory default" bracket method: rather than multiplying the
+exact wage by the rate, the wage is rounded up to the upper limit of its bracket
+(RM20 steps up to RM5,000; RM100 steps above), the rate is applied to that upper
+limit, and the result is rounded up to the next whole ringgit.
 
 Eligibility:
   * SOCSO Jenis Pertama (Category 1) — employees under 60. Employer and employee
@@ -19,7 +25,13 @@ Eligibility:
     no employee deduction (Employment Injury Scheme only).
   * EIS (Akta 800) — Malaysian citizens and Permanent Residents under 60 only.
     Foreign workers (any pass type) and employees 60+ are excluded.
+  * EPF — Malaysian/PR use the Third Schedule bracket method (Part A under 60;
+    reduced 60+ rates from age 60). Foreign workers contribute a flat 2% employer
+    + 2% employee of gross (mandatory from 1 October 2025), rounded up to the
+    next ringgit.
 """
+
+import math
 
 # ─── SOCSO Akta 4 ─────────────────────────────────────────────────────────────
 # (wage_upper_bound, cat1_employer_RM, cat1_employee_RM, cat2_employer_RM)
@@ -191,6 +203,15 @@ def is_senior(age) -> bool:
         return False
 
 
+def is_local_national(nationality) -> bool:
+    """True for Malaysian citizens / Permanent Residents (or blank → assumed
+    local). Foreign workers return False."""
+    nat = str(nationality or "").strip().lower()
+    if not nat:
+        return True
+    return nat in _EIS_ELIGIBLE_NATIONALITIES
+
+
 def is_eis_eligible(age, nationality) -> bool:
     """EIS applies only to Malaysian/PR employees under 60.
 
@@ -198,10 +219,7 @@ def is_eis_eligible(age, nationality) -> bool:
     back to eligible (assumed local)."""
     if is_senior(age):
         return False
-    nat = str(nationality or "").strip().lower()
-    if not nat:
-        return True
-    return nat in _EIS_ELIGIBLE_NATIONALITIES
+    return is_local_national(nationality)
 
 
 def socso_contribution(wage: float, age=None) -> tuple[float, float]:
@@ -226,3 +244,71 @@ def eis_contribution(wage: float, age=None, nationality=None) -> tuple[float, fl
         return (0.0, 0.0)
     _, each = _lookup(EIS, wage)
     return (each, each)
+
+
+# ─── EPF (KWSP Third Schedule, effective 1 October 2025) ──────────────────────
+
+EPF_BRACKET_THRESHOLD = 5000.0   # RM20 brackets up to here, RM100 brackets above
+EPF_STEP_LOW = 20.0
+EPF_STEP_HIGH = 100.0
+EPF_NIL_WAGE = 10.0              # first bracket (wages up to RM10) is NIL/NIL
+
+# Statutory rates by category. (employer_rate_<=5000, employer_rate_>5000, ee_rate)
+EPF_RATE_LOCAL_UNDER_60 = (0.13, 0.12, 0.11)   # Part A
+EPF_RATE_LOCAL_60_PLUS  = (0.065, 0.06, 0.055)  # 60+ reduced rates
+EPF_FOREIGN_RATE = 0.02                          # 2% employer + 2% employee, flat
+
+
+def _roundup_ringgit(amount: float) -> float:
+    """Round a contribution up to the next whole ringgit (KWSP rounding).
+
+    Computed via integer sen first to avoid binary floating-point noise (e.g.
+    0.11 * 100 must yield exactly RM11, not RM12)."""
+    sen = round(amount * 100)
+    return float(math.ceil(sen / 100))
+
+
+def _epf_bracket_upper(wage: float) -> float:
+    """Upper limit of the wage bracket containing ``wage``.
+
+    Brackets are (k*step + 0.01 .. (k+1)*step]; a wage exactly on a step
+    boundary belongs to the bracket ending at that boundary."""
+    step = EPF_STEP_LOW if wage <= EPF_BRACKET_THRESHOLD else EPF_STEP_HIGH
+    return math.ceil(wage / step - 1e-9) * step
+
+
+def epf_contribution(wage: float, age=None, nationality=None) -> tuple[float, float]:
+    """Return ``(employee, employer)`` EPF contribution for the wage.
+
+    * Foreign workers: flat 2% employer + 2% employee of gross, rounded up.
+    * Malaysian/PR under 60: Third Schedule Part A bracket method.
+    * Malaysian/PR aged 60+: reduced-rate bracket method.
+    """
+    if wage is None or wage <= 0:
+        return (0.0, 0.0)
+
+    if not is_local_national(nationality):
+        each = _roundup_ringgit(EPF_FOREIGN_RATE * wage)
+        return (each, each)
+
+    if wage <= EPF_NIL_WAGE:
+        return (0.0, 0.0)
+
+    er_low, er_high, ee_rate = (
+        EPF_RATE_LOCAL_60_PLUS if is_senior(age) else EPF_RATE_LOCAL_UNDER_60
+    )
+    upper = _epf_bracket_upper(wage)
+    er_rate = er_low if wage <= EPF_BRACKET_THRESHOLD else er_high
+    employer = _roundup_ringgit(er_rate * upper)
+    employee = _roundup_ringgit(ee_rate * upper)
+    return (employee, employer)
+
+
+def epf_basis(age=None, nationality=None) -> str:
+    """Classify the EPF contribution basis for an employee.
+
+    Returns one of ``"foreign"``, ``"local_60_plus"`` or ``"local_under_60"``.
+    Used by validation to know which employer-rate range to expect."""
+    if not is_local_national(nationality):
+        return "foreign"
+    return "local_60_plus" if is_senior(age) else "local_under_60"
