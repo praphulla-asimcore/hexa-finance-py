@@ -80,6 +80,22 @@ async def post_journal_entry(org_id: str, payload: dict) -> dict:
     return data.get("journal", {})
 
 
+async def delete_journal_entry(org_id: str, journal_id: str) -> dict:
+    """Permanently delete a journal from Zoho Books. Raises on failure (e.g. a
+    locked accounting period)."""
+    token = await get_access_token()
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.delete(
+            f"{_zoho_base()}/journals/{journal_id}",
+            headers={"Authorization": f"Zoho-oauthtoken {token}"},
+            params={"organization_id": str(org_id).strip()},
+        )
+        data = resp.json()
+    if data.get("code") != 0:
+        raise RuntimeError(f"Zoho JE delete error [{data.get('code')}]: {data.get('message')}")
+    return data
+
+
 async def create_expense(org_id: str, payload: dict) -> dict:
     token = await get_access_token()
     async with httpx.AsyncClient(timeout=30) as client:

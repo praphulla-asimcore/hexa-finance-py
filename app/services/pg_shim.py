@@ -71,7 +71,11 @@ class _Query:
 
     # ── builder ──────────────────────────────────────────────────────────────
     def select(self, columns: str = "*", count: str | None = None):
-        self._op = "select"
+        # ``.insert(...).select()`` / ``.update(...).select()`` in supabase just
+        # requests the affected rows back — which RETURNING * already provides.
+        # Only treat select() as a query when no write op is pending.
+        if self._op != "select":
+            return self
         self._count = count
         base, embeds = [], []
         for tok in _split_top_level(columns):

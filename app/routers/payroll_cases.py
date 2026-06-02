@@ -13,7 +13,7 @@ from app.deps import get_current_user
 from app.services.db import get_db
 from app.services.parser import parse_excel_buffer, parse_payroll_excel_buffer
 from app.services.statutory_enrich import enrich_entities_statutory
-from app.services.zoho import post_journal_entry, create_expense, attach_journal_document, fetch_accounts
+from app.services.zoho import post_journal_entry, create_expense, attach_journal_document, fetch_accounts, delete_journal_entry
 from app.services.bank_files import (
     generate_and_store_bank_files, generate_and_store_bank_files_payroll,
     fetch_airtable_consultants, match_consultant,
