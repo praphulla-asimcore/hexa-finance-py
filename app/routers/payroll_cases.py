@@ -823,7 +823,7 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
     # Pre-resolve a contact (consultant) and a Customer tag option (client) for
     # every consultant — creating any that are missing — BEFORE posting anything.
     # If any can't be resolved, abort and post nothing (tagging is mandatory).
-    errors, missing_clients = [], set()
+    errors, missing_clients, create_errs = [], set(), []
     for emp in all_employees:
         cons   = (emp.get("name") or emp.get("employeeId") or "").strip()
         client = (emp.get("costCentre") or "").strip()
@@ -841,12 +841,14 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
         if client.lower() not in tag_options:
             try:
                 tag_options[client.lower()] = await create_tag_option(org_id, tag_id, client)
-            except Exception:
-                missing_clients.add(client)   # auto-create unsupported → ask to add manually
+            except Exception as e:
+                if client not in missing_clients:
+                    create_errs.append(f"{client}: {e}")
+                missing_clients.add(client)
     if missing_clients:
         errors.append(
-            "add these as options under Zoho → Settings → Reporting Tags → Customer, then re-post: "
-            + ", ".join(sorted(missing_clients)))
+            "could not auto-create Customer option(s) [" + " || ".join(create_errs[:3]) + "]. "
+            "Add manually under Zoho → Settings → Reporting Tags → Customer: " + ", ".join(sorted(missing_clients)))
     if errors:
         return {"success": False, "error": "Pre-resolution failed (nothing posted): " + "; ".join(errors[:6])}
 
