@@ -1504,7 +1504,7 @@ async def send_check_approval(case_id: str, request: Request):
         "case_id": case_id, "step": 3,
         "approver_email": APPROVERS["reviewer"]["email"],
         "approver_name": APPROVERS["reviewer"]["name"],
-        "approver_role": "reviewer", "token": token,
+        "approver_role": "reviewer", "token": token, "status": "pending",
     }).execute()
 
     base_url = f"{APP_URL}/api/payroll-cases/approve/{token}"
@@ -1624,7 +1624,7 @@ async def email_approve(token: str, action: str = "approve"):
             "case_id": kase["id"], "step": 3,
             "approver_email": APPROVERS["final"]["email"],
             "approver_name": APPROVERS["final"]["name"],
-            "approver_role": "final", "token": next_token,
+            "approver_role": "final", "token": next_token, "status": "pending",
         }).execute()
 
         base_url = f"{APP_URL}/api/payroll-cases/approve/{next_token}"
@@ -1806,7 +1806,7 @@ async def send_payment_approval(case_id: str, request: Request):
             "case_id": case_id, "step": 6,
             "approver_email": APPROVERS["director"]["email"],
             "approver_name": APPROVERS["director"]["name"],
-            "approver_role": "director", "token": token,
+            "approver_role": "director", "token": token, "status": "pending",
         }).execute()
     except Exception as e:
         await _audit_log(db, case_id, "PAYMENT_APPROVAL_ERROR", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"error": str(e)})
