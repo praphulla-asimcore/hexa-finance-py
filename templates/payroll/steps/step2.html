@@ -52,7 +52,7 @@
     {% if check.flagCount > 0 %}
     <div class="pf-flags-card pf-flags-warn">
       <div class="pf-flags-header">{{ check.flagCount }} Exception(s) Flagged</div>
-      {% for f in (check.flags or [])[:10] %}
+      {% for f in (check.flags or []) %}
       <div class="pf-flag-row">
         <span class="pf-flag-code">{{ f.code }}</span>
         <span>{{ f.employee or f.entity or '' }}</span>

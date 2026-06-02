@@ -3,6 +3,8 @@ from datetime import datetime, date
 from openpyxl import load_workbook
 import xlrd
 
+from app.services.statutory_rates import socso_contribution, eis_contribution
+
 
 def _json_safe(obj):
     """Recursively convert non-JSON-serializable values (datetime, date) to strings."""
@@ -267,15 +269,20 @@ def parse_payroll_excel_buffer(data: bytes) -> list[dict]:
         bank_name    = _sv(row, "Bank Name")
         id_number    = _sv(row, "IC Number") or _sv(row, "Passport Number") or _sv(row, "ID Number")
 
-        gross  = _pv(row, "Gross Salary") or _pv(row, "Gross Pay")
+        gross  = _pv(row, "Gross earnings") or _pv(row, "Gross Salary") or _pv(row, "Gross Pay")
         epf_ee = _pv(row, "rEPF") or _pv(row, "EPF Employee")
         epf_er = _pv(row, "cEPF") or _pv(row, "EPF Employer")
-        eis_ee = _pv(row, "rEIS") or _pv(row, "EIS Employee")
-        eis_er = _pv(row, "cEIS") or _pv(row, "EIS Employer")
-        socso_ee = _pv(row, "rSOCSO") or _pv(row, "SOCSO Employee")
-        socso_er = _pv(row, "cSOCSO") or _pv(row, "SOCSO Employer")
         hrdf   = _pv(row, "HRDF")
         mtd    = _pv(row, "PCB") or _pv(row, "MTD")
+
+        # SOCSO & EIS are computed from the official PERKESO banded tables using
+        # gross earnings as the contribution wage, rather than trusting whatever
+        # the payroll export reports. Category (under/over 60) and EIS
+        # eligibility (Malaysian/PR only) are derived from Age and Nationality.
+        age         = _pv(row, "Age") or None
+        nationality = _sv(row, "Nationality")
+        socso_ee, socso_er = socso_contribution(gross, age)
+        eis_ee,   eis_er   = eis_contribution(gross, age, nationality)
 
         ctc = gross + epf_er + eis_er + socso_er + hrdf
 

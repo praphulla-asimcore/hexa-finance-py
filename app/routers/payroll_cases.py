@@ -270,15 +270,15 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None) -
                                   "rate_pct": _round2(rate * 100),
                                   "diff": _round2(epf)})
 
-            # ── SOCSO ceiling (RM 86.65 / month employer) ────────────────────
-            if soc > 86.65 + 0.01:
+            # ── SOCSO ceiling (RM 104.15 / month employer, RM6,000 wage) ─────
+            if soc > 104.15 + 0.01:
                 flags.append({"code": "SOCSO_CEILING", "employee": name,
-                               "entity": entity, "diff": _round2(soc - 86.65)})
+                               "entity": entity, "diff": _round2(soc - 104.15)})
 
-            # ── EIS ceiling (RM 7.90 / month employer) ───────────────────────
-            if eis > 7.90 + 0.01:
+            # ── EIS ceiling (RM 11.90 / month employer, RM6,000 wage) ────────
+            if eis > 11.90 + 0.01:
                 flags.append({"code": "EIS_CEILING", "employee": name,
-                               "entity": entity, "diff": _round2(eis - 7.90)})
+                               "entity": entity, "diff": _round2(eis - 11.90)})
 
             # ── MTD = 0 for high earner (Gross > RM 5,000) ───────────────────
             if mtd == 0 and g > 5000:
