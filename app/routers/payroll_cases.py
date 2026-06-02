@@ -15,7 +15,8 @@ from app.services.parser import parse_excel_buffer, parse_payroll_excel_buffer
 from app.services.statutory_enrich import enrich_entities_statutory
 from app.services.zoho import (
     post_journal_entry, create_expense, attach_journal_document, fetch_accounts,
-    delete_journal_entry, fetch_contacts, create_contact, fetch_reporting_tags, create_tag_option,
+    delete_journal_entry, fetch_contacts, create_contact, fetch_reporting_tags,
+    fetch_tag_options, create_tag_option,
 )
 from app.services.bank_files import (
     generate_and_store_bank_files, generate_and_store_bank_files_payroll,
@@ -802,25 +803,17 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
     # ── Resolve the "Customer" reporting tag and Zoho contacts (mandatory) ────
     CUSTOMER_TAG = "Customer"
     try:
-        tags, _raw_tags = await fetch_reporting_tags(org_id)
+        tags = await fetch_reporting_tags(org_id)
     except Exception as e:
         return {"success": False, "error": f"Could not read Zoho reporting tags: {e}"}
     cust_tag = next((t for t in tags if t["tag_name"].lower() == CUSTOMER_TAG.lower()), None)
     if not cust_tag:
         return {"success": False, "error": f"Reporting tag '{CUSTOMER_TAG}' not found in Zoho."}
     tag_id = cust_tag["tag_id"]
-    tag_options = dict(cust_tag["options"])   # lower(client) -> tag_option_id
-    if not tag_options:
-        # Diagnostic v2: dump the per-tag detail response to find option IDs.
-        from app.services.zoho import fetch_tag_detail
-        cust_raw = next((t for t in (_raw_tags.get("reporting_tags") or [])
-                         if (t.get("tag_name") or "").lower() == "customer"), {})
-        try:
-            detail = await fetch_tag_detail(org_id, tag_id)
-        except Exception as e:
-            detail = {"error": str(e)}
-        return {"success": False,
-                "error": "DIAG2 listEntry=" + str(cust_raw)[:500] + " ||DETAIL=" + str(detail)[:900]}
+    try:
+        tag_options = await fetch_tag_options(org_id, tag_id)   # lower(client) -> tag_option_id
+    except Exception as e:
+        return {"success": False, "error": f"Could not read Customer tag options: {e}"}
 
     try:
         contacts = await fetch_contacts(org_id)   # lower(name) -> contact_id
@@ -830,7 +823,7 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
     # Pre-resolve a contact (consultant) and a Customer tag option (client) for
     # every consultant — creating any that are missing — BEFORE posting anything.
     # If any can't be resolved, abort and post nothing (tagging is mandatory).
-    errors = []
+    errors, missing_clients = [], set()
     for emp in all_employees:
         cons   = (emp.get("name") or emp.get("employeeId") or "").strip()
         client = (emp.get("costCentre") or "").strip()
@@ -848,8 +841,12 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
         if client.lower() not in tag_options:
             try:
                 tag_options[client.lower()] = await create_tag_option(org_id, tag_id, client)
-            except Exception as e:
-                errors.append(f"Customer tag '{client}': {e}")
+            except Exception:
+                missing_clients.add(client)   # auto-create unsupported → ask to add manually
+    if missing_clients:
+        errors.append(
+            "add these as options under Zoho → Settings → Reporting Tags → Customer, then re-post: "
+            + ", ".join(sorted(missing_clients)))
     if errors:
         return {"success": False, "error": "Pre-resolution failed (nothing posted): " + "; ".join(errors[:6])}
 
@@ -1587,25 +1584,6 @@ async def post_accrual_manual(case_id: str, request: Request):
                      _get_ip(request), accrual_result)
 
     return await _refresh_detail(case_id, db, request, user, 3)
-
-
-@router.get("/api/debug/zoho-tags")
-async def debug_zoho_tags(request: Request, org: str = "762447369"):
-    """Temporary: dump the Customer reporting-tag detail to find option IDs."""
-    get_current_user(request)  # auth required
-    import json as _json
-    from app.services.zoho import fetch_reporting_tags, fetch_tag_detail
-    out: dict = {}
-    try:
-        tags, raw = await fetch_reporting_tags(org)
-        cust = next((t for t in tags if t["tag_name"].lower() == "customer"), None)
-        out["customer_list_entry"] = next(
-            (t for t in (raw.get("reporting_tags") or [])
-             if (t.get("tag_name") or "").lower() == "customer"), None)
-        out["detail"] = await fetch_tag_detail(org, cust["tag_id"]) if cust else "no customer tag"
-    except Exception as e:
-        out["error"] = f"{type(e).__name__}: {e}"
-    return HTMLResponse("<pre>" + _json.dumps(out, indent=2, default=str) + "</pre>")
 
 
 # ─── Step 3b: Email approve/reject token ─────────────────────────────────────

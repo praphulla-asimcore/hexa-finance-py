@@ -164,7 +164,7 @@ async def fetch_reporting_tags(org_id: str) -> list[dict]:
             f"keys={list(data.keys())}; "
             f"sample={str(data.get('reporting_tags') or data.get('tags'))[:250]}"
         )
-    return out, data
+    return out
 
 
 async def fetch_tag_detail(org_id: str, tag_id: str) -> dict:
@@ -178,6 +178,23 @@ async def fetch_tag_detail(org_id: str, tag_id: str) -> dict:
             params={"organization_id": org_id},
         )
         return resp.json()
+
+
+async def fetch_tag_options(org_id: str, tag_id: str) -> dict:
+    """Return {lower(option_name): tag_option_id} for a reporting tag, read from
+    the detail endpoint (the list endpoint returns names only, no IDs)."""
+    detail = await fetch_tag_detail(org_id, tag_id)
+    if detail.get("code") not in (0, None):
+        raise RuntimeError(f"Zoho tag detail error [{detail.get('code')}]: {detail.get('message')}")
+    rt = detail.get("reporting_tag") or {}
+    out = {}
+    for o in rt.get("tag_options", []):
+        if not isinstance(o, dict):
+            continue
+        nm = (o.get("tag_option_name") or "").strip().lower()
+        if nm and o.get("is_active", True):
+            out[nm] = o.get("tag_option_id")
+    return out
 
 
 async def create_tag_option(org_id: str, tag_id: str, option_name: str) -> str:
