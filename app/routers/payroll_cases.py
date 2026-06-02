@@ -2071,13 +2071,45 @@ async def download_check_pdf(case_id: str, request: Request):
 async def delete_case(case_id: str, request: Request):
     user = get_current_user(request)
     db = get_db()
-    resp = db.from_("payroll_cases").select("id,status,reference,type").eq("id", case_id).single().execute()
+    resp = db.from_("payroll_cases").select(
+        "id,status,reference,type,zoho_org_id,zoho_journal_ids"
+    ).eq("id", case_id).single().execute()
     kase = resp.data
     if not kase:
         return HTMLResponse('<div class="error-msg">Case not found.</div>')
-    if kase.get("status") == "zoho_posted":
-        return HTMLResponse('<div class="error-msg">Completed cases cannot be deleted.</div>')
 
+    posted = kase.get("status") == "zoho_posted"
+    if posted and user.get("role") != "admin":
+        return HTMLResponse(
+            '<div class="error-msg">Only an admin can delete a completed (Zoho-posted) run.</div>')
+
+    # For a posted run, delete its journals in Zoho first (delete what's possible).
+    flash = None
+    if posted:
+        org_id = (kase.get("zoho_org_id") or "").strip()
+        jids = [str(j) for j in (kase.get("zoho_journal_ids") or [])]
+        deleted, failed = 0, []
+        for jid in jids:
+            try:
+                await delete_journal_entry(org_id, jid)
+                deleted += 1
+            except Exception:
+                failed.append(jid)
+        ref = kase.get("reference", "")
+        if failed:
+            shown = ", ".join(failed[:8]) + ("…" if len(failed) > 8 else "")
+            flash = {"kind": "warning",
+                     "msg": f"Deleted {ref}. Zoho journals removed {deleted}/{len(jids)}; "
+                            f"{len(failed)} could NOT be deleted (e.g. locked period) and remain "
+                            f"in Zoho: {shown}"}
+        else:
+            flash = {"kind": "success",
+                     "msg": f"Deleted {ref} and removed all {deleted} Zoho journal(s)."}
+
+    # Full cleanup of app records (statutory submissions, tokens, audit, case).
+    for s in (db.from_("statutory_submissions").select("id,case_ids").execute().data or []):
+        if case_id in (s.get("case_ids") or []):
+            db.from_("statutory_submissions").delete().eq("id", s["id"]).execute()
     db.from_("payroll_approval_tokens").delete().eq("case_id", case_id).execute()
     db.from_("payroll_audit_log").delete().eq("case_id", case_id).execute()
     db.from_("payroll_cases").delete().eq("id", case_id).execute()
@@ -2090,7 +2122,8 @@ async def delete_case(case_id: str, request: Request):
     cases_resp = q.execute()
     cases = cases_resp.data or []
 
-    ctx = {"request": request, "user": user, "cases": cases, "module": module, "case_type": case_type, "section": module}
+    ctx = {"request": request, "user": user, "cases": cases, "module": module,
+           "case_type": case_type, "section": module, "flash": flash}
     return templates.TemplateResponse(request, "payroll/list.html", ctx)
 
 
