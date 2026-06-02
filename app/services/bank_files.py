@@ -1,4 +1,5 @@
 import io
+import re
 import base64
 import hashlib
 from datetime import datetime, timezone
@@ -59,6 +60,111 @@ def _split_name(full: str, max_len: int = 40) -> tuple:
     while len(" ".join(name1_tokens)) > max_len and len(name1_tokens) > 1:
         name2_tokens.insert(0, name1_tokens.pop())
     return (" ".join(name1_tokens), " ".join(name2_tokens))
+
+
+# Exact column headers (row 4) of the Maybank RCGEN2 "Domestic Payments" R3
+# template. RCGEN2 reads the header block (rows 1-3), these headers (row 4),
+# and data from row 5 — replicated verbatim so the file imports cleanly.
+RCMS_DP_HEADERS = [
+    "Payment Mode\nIT = INTRABANK\nIG = GIRO\nIM = RENTAS\nAllowed\nValue(IT,IG & IM)\n",
+    "Value Date\n[DDMMYYYY]\ne.g.  21102015\n(If start with 0,\nthen add\napostrophe e.g. '0)",
+    "Customer \nReference Number\n(If start with 0, then add apostrophe e.g. '0)",
+    "Favourite Beneficiary Code",
+    "Transaction Amount\n(RM)",
+    "Credit Account Number\n(If start with 0, then add\napostrophe e.g. '0)",
+    "Beneficiary Name 1\n(Maximum Length is 40)",
+    "Beneficiary Name 2\n(Maximum Length is 40)",
+    "Beneficiary Name 3\n(Maximum Length is 40)",
+    "New NRIC\n(If start with 0,\nthen add\napostrophe e.g. '0)",
+    "Old NRIC\n(If start with 0,\nthen add\napostrophe e.g. '0)",
+    "Business Registration No\n(If start with 0,\nthen add\napostrophe e.g. '0)",
+    "Police/ Army ID/ Passport No\n(If start with 0,\nthen add\napostrophe e.g. '0)",
+    "Beneficiary\nBank Code",
+    "Email",
+    "Advice Detail\n(Maximum Length is 400)\nThis field is mandatory if email exist.",
+    "Debit \nDescription",
+    "Credit \nDescription",
+    "Joint Name (Only applicable for Payment Mode IM)",
+    "Joint New ID No (Only applicable for Payment Mode IM)",
+    "Joint Old ID No (Only applicable for Payment Mode IM)",
+    "Joint Business Reg. No. (Only applicable for Payment Mode IM)",
+    "Joint Police/ Army ID/ Passport No. (Only applicable for Payment Mode IM)",
+    "Purpose of Transfer (Only applicable for Payment Mode IM) Kindly refer to the list of Purpose of Transfer for RENTAS",
+    "Others\xa0 Purpose of Transfer (Only applicable for Payment Mode IM). Free text field (Maximum Length is 35)",
+    "Rentas Instruction to Bank (Only applicable for Payment Mode IM)",
+    "Charges Borne By\n01 = Applicant\n02 = Beneficiary\n03 = Shared",
+] + [f"Email {n}" for n in range(2, 21)]
+
+
+def _client_initials(client: str) -> str:
+    """Client name initials for the payment advice. Multi-word client → initials
+    (Bank Negara Malaysia → BNM); single word → the word as-is (Nokia → Nokia)."""
+    words = [w for w in re.split(r"[^A-Za-z0-9]+", client or "") if w]
+    if not words:
+        return ""
+    if len(words) == 1:
+        return words[0]
+    return "".join(w[0] for w in words).upper()
+
+
+def _advice_detail(client: str, name: str, mmyy: str) -> str:
+    """Payment advice format: {ClientInitials}_{First}_{Second}_{MMYY}
+    e.g. BNM_Abu_Zharr_0626."""
+    parts = [_client_initials(client)] + (name or "").split()[:2] + [mmyy]
+    return "_".join(p for p in parts if p)
+
+
+# Columns written as TEXT so leading zeros and IT/IG are preserved verbatim
+# (1-based: Payment Mode, Value Date, Credit Acct, New NRIC, Old NRIC,
+# Business Reg, Police/Passport).
+_RCMS_TEXT_COLS = {1, 2, 6, 10, 11, 12, 13}
+
+
+def _build_rcms_dp_sheet(ws, beneficiaries, value_date, mmyy, notify_emails):
+    """Write the exact Maybank RCGEN2 'Domestic Payments' R3 layout onto ``ws``:
+    header block (rows 1-3), column headers (row 4), data from row 5."""
+    ws.cell(row=1, column=8, value=BANK_CORPORATE_ID)         # H1 Corporate ID
+    ws.cell(row=2, column=6, value="Product :")
+    ws.cell(row=2, column=7, value="Domestic Payments (MY)")
+    ws.cell(row=3, column=1, value="Processing Indicator :")
+    ws.cell(row=3, column=2, value="B")
+    for c, h in enumerate(RCMS_DP_HEADERS, start=1):
+        ws.cell(row=4, column=c, value=h)
+
+    r = 5
+    for b in beneficiaries:
+        advice = _advice_detail(b.get("costCentre", ""), b["name"], mmyy)
+        name1, name2 = _split_name(b["name"])
+        new_ic, biz_reg, passport = _id_fields(b.get("idNumber", ""), b.get("idType", ""))
+        vals = {
+            1:  b["paymentMode"],                  # Payment Mode (IT/IG) — text
+            2:  value_date,                        # Value Date DDMMYYYY — text
+            3:  b["seq"],                          # Customer Reference Number
+            4:  b["employeeCode"],                 # Favourite Beneficiary Code (HS###)
+            5:  float(b["amount"] or 0),           # Transaction Amount (RM) — number, no comma
+            6:  b["accountNumber"],                # Credit Account Number — text
+            7:  name1,                             # Beneficiary Name 1 (<=40)
+            8:  name2,                             # Beneficiary Name 2 (overflow)
+            10: new_ic,                            # New NRIC
+            12: biz_reg,                           # Business Registration No
+            13: passport,                          # Police/ Army ID/ Passport No
+            14: b["bankCode"],                     # Beneficiary Bank Code
+            15: notify_emails[0] if notify_emails else "",   # Email
+            16: advice,                            # Advice Detail
+            17: advice,                            # Debit Description
+            18: advice,                            # Credit Description
+        }
+        if len(notify_emails) > 1:
+            vals[28] = notify_emails[1]            # Email 2
+        if len(notify_emails) > 2:
+            vals[29] = notify_emails[2]            # Email 3
+        for col, v in vals.items():
+            cell = ws.cell(row=r, column=col, value=v)
+            if col in _RCMS_TEXT_COLS:
+                cell.number_format = "@"
+            elif col == 5:
+                cell.number_format = "0.00"
+        r += 1
 
 
 def _id_fields(id_number: str, id_type: str = "") -> tuple:
@@ -274,46 +380,11 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
             })
             seq_ref += 1
 
-    # RCMS XLSX
+    # ── RCMS R3 "Domestic Payments" sheet (exact Maybank RCGEN2 template) ──
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = f"Bank_{value_date}_CSI"
-
-    rcms_headers = [
-        "Payment Mode", "Value Date", "Customer Reference Number", "Favourite Beneficiary Code",
-        "Transaction Amount (RM)", "Credit Account Number", "Beneficiary Name 1", "Beneficiary Name 2",
-        "Beneficiary Name 3", "New IC No", "Old IC No", "Business Registration Number",
-        "Police/ Army ID/ Passport No", "Beneficiary Bank Code", "Email", "Advice Detail",
-        "Debit Description", "Credit Description", "Joint Name", "Joint New ID No",
-        "Joint Old ID No", "Joint Business Reg. No.", "Joint Police/ Army ID/ Passport No.",
-        "Purpose of Transfer", "Others Purpose of Transfer", "Rentas Instruction to Bank",
-        "Charges Borne by", "Email 2", "Email 3", "Email 4", "Email 5",
-    ]
-    ws.append(rcms_headers)
-
-    for b in beneficiaries:
-        advice = f"{b['advicePrefix']}_{mmyy}"
-        row = [""] * 31
-        row[0] = b["paymentMode"]
-        row[1] = value_date
-        row[2] = b["seq"]
-        row[4] = b["amount"]
-        row[5] = b["accountNumber"]
-        name1, name2 = _split_name(b["name"])
-        row[6] = name1   # Beneficiary Name 1 (max 40 chars)
-        row[7] = name2   # Beneficiary Name 2 (last name overflow)
-        new_ic, biz_reg, passport = _id_fields(b.get("idNumber", ""), b.get("idType", ""))
-        row[9]  = new_ic     # New IC No (Malaysian NRIC)
-        row[11] = biz_reg    # Business Registration Number
-        row[12] = passport   # Police/ Army ID/ Passport No
-        row[13] = b["bankCode"]
-        row[14] = b["email"]
-        row[15] = advice
-        row[16] = advice
-        row[17] = advice
-        if len(notify_emails) > 1:
-            row[28] = notify_emails[1]
-        ws.append(row)
+    ws.title = "Domestic Payments"
+    _build_rcms_dp_sheet(ws, beneficiaries, value_date, mmyy, notify_emails)
 
     xlsx_buf = io.BytesIO()
     wb.save(xlsx_buf)
@@ -329,7 +400,7 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
     for b in beneficiaries:
         if not b["accountNumber"]:
             continue  # skip employees with no bank account
-        advice = f"{b['advicePrefix']}_{mmyy}"
+        advice = _advice_detail(b["costCentre"], b["name"], mmyy)
         amount_str = f"{float(b['amount'] or 0):.2f}"
         total_amount += float(b['amount'] or 0)
         txt_lines.append(_rcgen_01(b, value_date, advice, amount_str))
