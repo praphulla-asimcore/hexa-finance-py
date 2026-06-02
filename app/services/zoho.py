@@ -133,15 +133,37 @@ async def fetch_reporting_tags(org_id: str) -> list[dict]:
         data = resp.json()
     if data.get("code") != 0:
         raise RuntimeError(f"Zoho tags error [{data.get('code')}]: {data.get('message')}")
-    tags = data.get("reporting_tags") or data.get("tags") or []
+    tags = data.get("reporting_tags")
+    if tags is None:
+        tags = data.get("tags") or []
+    if isinstance(tags, dict):           # some shapes nest tags under a dict
+        tags = list(tags.values())
     out = []
     for t in tags:
+        if not isinstance(t, dict):
+            continue
+        raw_opts = t.get("tag_options") or t.get("options") or t.get("tag_option") or []
+        if isinstance(raw_opts, dict):
+            raw_opts = list(raw_opts.values())
         opts = {}
-        for o in t.get("tag_options", []):
-            nm = (o.get("tag_option_name") or "").strip().lower()
+        for o in raw_opts:
+            if not isinstance(o, dict):
+                continue
+            nm = (o.get("tag_option_name") or o.get("name") or "").strip().lower()
+            oid = o.get("tag_option_id") or o.get("id")
             if nm:
-                opts[nm] = o.get("tag_option_id")
-        out.append({"tag_id": t.get("tag_id"), "tag_name": (t.get("tag_name") or "").strip(), "options": opts})
+                opts[nm] = oid
+        out.append({
+            "tag_id": t.get("tag_id") or t.get("id"),
+            "tag_name": (t.get("tag_name") or t.get("name") or "").strip(),
+            "options": opts,
+        })
+    if not out:
+        raise RuntimeError(
+            "unexpected reporting-tags response: "
+            f"keys={list(data.keys())}; "
+            f"sample={str(data.get('reporting_tags') or data.get('tags'))[:250]}"
+        )
     return out
 
 
