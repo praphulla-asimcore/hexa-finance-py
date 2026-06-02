@@ -1,4 +1,5 @@
 import io
+import os
 import re
 import base64
 import hashlib
@@ -6,9 +7,15 @@ from datetime import datetime, timezone
 import httpx
 import openpyxl
 from app.config import (
-    AIRTABLE_API_KEY, AIRTABLE_BASE_ID, AIRTABLE_TABLE_NAME,
-    BANK_CORPORATE_ID, BANK_GROUP_ID, BANK_DEBIT_ACCOUNT, BANK_NOTIFY_EMAILS,
+    AIRTABLE_API_KEY, AIRTABLE_BASE_ID, AIRTABLE_TABLE_NAME, BANK_NOTIFY_EMAILS,
 )
+
+# The official Maybank RCGEN2 macro workbook. We fill its "Domestic Payments"
+# data sheet (leaving the VBA macro and all lookup sheets intact) so the maker
+# can open it and click the workbook's own Generate button to produce a valid
+# RCgen_Payment_DP_*.txt — instead of us hand-building that .txt (which the CMS
+# portal rejects line-by-line because only the macro emits the exact format).
+RCGEN_TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "assets", "rcgen_template.xlsm")
 
 MY_BANK_CODES = {
     "maybank": "MBBEMYKL", "maybank islamic": "MBBEMYKL",
@@ -120,51 +127,68 @@ def _advice_detail(client: str, name: str, mmyy: str) -> str:
 _RCMS_TEXT_COLS = {1, 2, 6, 10, 11, 12, 13}
 
 
-def _build_rcms_dp_sheet(ws, beneficiaries, value_date, mmyy, notify_emails):
-    """Write the exact Maybank RCGEN2 'Domestic Payments' R3 layout onto ``ws``:
-    header block (rows 1-3), column headers (row 4), data from row 5."""
-    ws.cell(row=1, column=8, value=BANK_CORPORATE_ID)         # H1 Corporate ID
-    ws.cell(row=2, column=6, value="Product :")
-    ws.cell(row=2, column=7, value="Domestic Payments (MY)")
-    ws.cell(row=3, column=1, value="Processing Indicator :")
-    ws.cell(row=3, column=2, value="B")
-    for c, h in enumerate(RCMS_DP_HEADERS, start=1):
-        ws.cell(row=4, column=c, value=h)
+def _write_rcms_dp_row(ws, r, b, value_date, mmyy, notify_emails, advice_fn=None):
+    """Write a single beneficiary onto row ``r`` of a 'Domestic Payments' sheet,
+    using the exact RCGEN2 column order (col 1 = Payment Mode … col 18 = Credit
+    Description, cols 28/29 = Email 2/3). ``advice_fn(b)`` builds the advice/debit/
+    credit description; defaults to the {ClientInitials}_{First}_{Second}_{MMYY}
+    format used for EOR consultant payments."""
+    advice = advice_fn(b) if advice_fn else _advice_detail(b.get("costCentre", ""), b["name"], mmyy)
+    name1, name2 = _split_name(b["name"])
+    new_ic, biz_reg, passport = _id_fields(b.get("idNumber", ""), b.get("idType", ""))
+    vals = {
+        1:  b["paymentMode"],                  # Payment Mode (IT/IG) — text
+        2:  value_date,                        # Value Date DDMMYYYY — text
+        3:  b["seq"],                          # Customer Reference Number
+        4:  b["employeeCode"],                 # Favourite Beneficiary Code (HS###)
+        5:  float(b["amount"] or 0),           # Transaction Amount (RM) — number, no comma
+        6:  b["accountNumber"],                # Credit Account Number — text
+        7:  name1,                             # Beneficiary Name 1 (<=40)
+        8:  name2,                             # Beneficiary Name 2 (overflow)
+        10: new_ic,                            # New NRIC
+        12: biz_reg,                           # Business Registration No
+        13: passport,                          # Police/ Army ID/ Passport No
+        14: b["bankCode"],                     # Beneficiary Bank Code
+        15: notify_emails[0] if notify_emails else "",   # Email
+        16: advice,                            # Advice Detail
+        17: advice,                            # Debit Description
+        18: advice,                            # Credit Description
+    }
+    if len(notify_emails) > 1:
+        vals[28] = notify_emails[1]            # Email 2
+    if len(notify_emails) > 2:
+        vals[29] = notify_emails[2]            # Email 3
+    for col, v in vals.items():
+        cell = ws.cell(row=r, column=col, value=v)
+        if col in _RCMS_TEXT_COLS:
+            cell.number_format = "@"
+        elif col == 5:
+            cell.number_format = "0.00"
 
+
+def _fill_rcms_template(beneficiaries, value_date, mmyy, notify_emails, advice_fn=None) -> bytes:
+    """Load the official RCGEN2 macro workbook, clear the sample rows from the
+    'Domestic Payments' sheet, and write our beneficiaries into it — preserving
+    the VBA macro and every lookup sheet. The maker opens the returned .xlsm and
+    clicks the workbook's Generate button to emit a valid RCgen .txt.
+
+    Only beneficiaries with a bank account are written (the macro would reject a
+    blank Credit Account Number), matching the rows that belong in the payment."""
+    wb = openpyxl.load_workbook(RCGEN_TEMPLATE_PATH, keep_vba=True)
+    ws = wb["Domestic Payments"]
+    # Rows 1-4 are the template's header block / column titles — leave intact.
+    # Drop any pre-existing sample data (row 5 onward) before writing ours.
+    if ws.max_row >= 5:
+        ws.delete_rows(5, ws.max_row - 4)
     r = 5
     for b in beneficiaries:
-        advice = _advice_detail(b.get("costCentre", ""), b["name"], mmyy)
-        name1, name2 = _split_name(b["name"])
-        new_ic, biz_reg, passport = _id_fields(b.get("idNumber", ""), b.get("idType", ""))
-        vals = {
-            1:  b["paymentMode"],                  # Payment Mode (IT/IG) — text
-            2:  value_date,                        # Value Date DDMMYYYY — text
-            3:  b["seq"],                          # Customer Reference Number
-            4:  b["employeeCode"],                 # Favourite Beneficiary Code (HS###)
-            5:  float(b["amount"] or 0),           # Transaction Amount (RM) — number, no comma
-            6:  b["accountNumber"],                # Credit Account Number — text
-            7:  name1,                             # Beneficiary Name 1 (<=40)
-            8:  name2,                             # Beneficiary Name 2 (overflow)
-            10: new_ic,                            # New NRIC
-            12: biz_reg,                           # Business Registration No
-            13: passport,                          # Police/ Army ID/ Passport No
-            14: b["bankCode"],                     # Beneficiary Bank Code
-            15: notify_emails[0] if notify_emails else "",   # Email
-            16: advice,                            # Advice Detail
-            17: advice,                            # Debit Description
-            18: advice,                            # Credit Description
-        }
-        if len(notify_emails) > 1:
-            vals[28] = notify_emails[1]            # Email 2
-        if len(notify_emails) > 2:
-            vals[29] = notify_emails[2]            # Email 3
-        for col, v in vals.items():
-            cell = ws.cell(row=r, column=col, value=v)
-            if col in _RCMS_TEXT_COLS:
-                cell.number_format = "@"
-            elif col == 5:
-                cell.number_format = "0.00"
+        if not b["accountNumber"]:
+            continue
+        _write_rcms_dp_row(ws, r, b, value_date, mmyy, notify_emails, advice_fn)
         r += 1
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 def _id_fields(id_number: str, id_type: str = "") -> tuple:
@@ -196,80 +220,6 @@ def _id_fields(id_number: str, id_type: str = "") -> tuple:
     if lead == 1:
         return ("", "", id_str)   # Single-letter prefix → Passport/Police/Army (field 28)
     return ("", id_str, "")       # 0 or 2+ leading letters → Business Reg No (field 27)
-
-
-def _rcgen_01(b: dict, value_date: str, advice: str, amount_str: str) -> str:
-    """Build a correctly-formatted RCgen 01 body record matching the Maybank R3 spec."""
-    pmode              = _payment_mode(b.get("bankCode", ""))
-    new_ic, biz_reg, passport = _id_fields(b.get("idNumber", ""), b.get("idType", ""))
-    emp_code           = (b.get("employeeCode") or b.get("employeeId") or "").strip()
-
-    # Build a 220-element field array then join with |
-    f = [""] * 220
-    f[0]  = "01"
-    f[1]  = pmode                         # IT or IG
-    f[2]  = "Domestic Payments (MY)"      # Product
-    # f[3] empty                          # Sub-product
-    f[4]  = value_date                    # Value Date DDMMYYYY
-    # f[5], f[6] empty
-    f[7]  = str(b["seq"])                 # Customer Reference Number
-    # f[8] empty
-    f[9]  = advice                        # Payment Description / Advice
-    f[10] = "MYR"
-    f[11] = amount_str
-    f[12] = "Y"
-    f[13] = "MYR"
-    f[14] = BANK_DEBIT_ACCOUNT            # Debit Account
-    f[15] = b["accountNumber"]            # Credit Account
-    f[16] = emp_code                      # Beneficiary Code / Employee Number (e.g. HS123)
-    # f[17] empty
-    f[18] = "Y"
-    name1, name2 = _split_name(b["name"])
-    f[19] = name1                         # Beneficiary Name 1 (max 40 chars)
-    f[20] = name2                         # Beneficiary Name 2 (last name overflow)
-    # f[21] empty  (Beneficiary Name 3)
-    # f[22], f[23], f[24] empty
-    f[25] = new_ic                        # New IC No  (Malaysian 12-digit NRIC)
-    # f[26] empty                         # Old IC No
-    f[27] = biz_reg                       # Business Registration Number
-    f[28] = passport                      # Police/Army ID / Passport No
-    # f[29]-f[37] empty
-    f[38] = b.get("bankCode", "")         # Beneficiary Bank SWIFT Code
-    # f[39]-f[106] empty (68 fields)
-    f[107] = advice                       # Payment Advice Detail (second occurrence)
-    # f[108]-f[114] empty (7 fields)
-    f[115] = "01"                         # Payment Advice Indicator
-    # f[116]-f[219] trailing empty fields
-    return "|".join(f)
-
-
-def _rcgen_02(b: dict, seq: int, advice: str, amount_str: str, notify_emails: list) -> str:
-    """Build RCgen 02 payment advice record."""
-    email1 = notify_emails[0] if len(notify_emails) > 0 else ""
-    email2 = notify_emails[1] if len(notify_emails) > 1 else ""
-    email3 = notify_emails[2] if len(notify_emails) > 2 else ""
-    f = [""] * 45
-    f[0]  = "02"
-    f[1]  = "PA"
-    f[2]  = str(seq)
-    f[3]  = email1
-    # f[4], f[5] empty
-    f[6]  = advice
-    # f[7]-f[12] empty (6 fields)
-    f[13] = amount_str
-    # f[14]-f[20] empty (7 fields)
-    f[21] = email2
-    f[22] = email3
-    # f[23]-f[44] empty (trailing)
-    return "|".join(f)
-
-
-def _rcgen_trailer(count: int, total: float) -> str:
-    f = [""] * 28
-    f[0] = "99"
-    f[1] = str(count)
-    f[2] = f"{total:.2f}"
-    return "|".join(f)
 
 
 async def fetch_airtable_consultants() -> list[dict]:
@@ -380,35 +330,12 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
             })
             seq_ref += 1
 
-    # ── RCMS R3 "Domestic Payments" sheet (exact Maybank RCGEN2 template) ──
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Domestic Payments"
-    _build_rcms_dp_sheet(ws, beneficiaries, value_date, mmyy, notify_emails)
-
-    xlsx_buf = io.BytesIO()
-    wb.save(xlsx_buf)
-    xlsx_bytes = xlsx_buf.getvalue()
+    # ── Fill the official RCGEN2 macro workbook ('Domestic Payments' sheet).
+    #    The maker opens this .xlsm and clicks its Generate button to emit the
+    #    valid RCgen .txt — we no longer hand-build that .txt ourselves. ──
+    xlsx_bytes = _fill_rcms_template(beneficiaries, value_date, mmyy, notify_emails)
     xlsx_hash = _sha256(xlsx_bytes)
-    xlsx_name = f"RCMS_BankUpload_{kase['reference']}_{value_date}.xlsx"
-
-    # RCgen TXT
-    ts_now = datetime.now(timezone.utc)
-    ts_part = ts_now.strftime("%Y%m%d%H%M%S")
-    txt_lines = [f"00|{BANK_CORPORATE_ID}|{BANK_GROUP_ID}||B||||||||||||||||||||||||"]
-    total_amount = 0.0
-    for b in beneficiaries:
-        if not b["accountNumber"]:
-            continue  # skip employees with no bank account
-        advice = _advice_detail(b["costCentre"], b["name"], mmyy)
-        amount_str = f"{float(b['amount'] or 0):.2f}"
-        total_amount += float(b['amount'] or 0)
-        txt_lines.append(_rcgen_01(b, value_date, advice, amount_str))
-        txt_lines.append(_rcgen_02(b, b["seq"], advice, amount_str, notify_emails))
-    txt_lines.append(_rcgen_trailer(len(beneficiaries), total_amount))
-    txt_bytes = "\n".join(txt_lines).encode("utf-8")
-    txt_hash = _sha256(txt_bytes)
-    txt_name = f"RCgen_Payment_DP_{ts_part}.txt"
+    xlsx_name = f"RCMS_Payment_DP_{kase['reference']}_{value_date}.xlsm"
 
     missing = [{"name": b["name"], "employeeId": b["employeeId"]} for b in beneficiaries if not b["matched"]]
     existing_check = dict(kase.get("check_data") or {})
@@ -421,8 +348,8 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
         "bank_file_data":         base64.b64encode(xlsx_bytes).decode(),
         "bank_file_generated_at": now,
         "bank_file_triggered_by": triggered_by,
-        "bank_receipt_name":      txt_name,
-        "bank_receipt_data":      base64.b64encode(txt_bytes).decode(),
+        "bank_receipt_name":      None,
+        "bank_receipt_data":      None,
         "check_data":             existing_check,
     }).eq("id", kase["id"]).execute()
 
@@ -430,8 +357,6 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
     return {
         "xlsxName": xlsx_name,
         "xlsxBytes": xlsx_bytes,
-        "txtName": txt_name,
-        "txtBytes": txt_bytes,
         "matched": matched_count,
         "total": len(beneficiaries),
         "missing": missing,
@@ -485,70 +410,14 @@ async def generate_and_store_bank_files_payroll(kase: dict, db, triggered_by: st
             })
             seq_ref += 1
 
-    # RCMS XLSX
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = f"Bank_{value_date}_PAYROLL"
-
-    rcms_headers = [
-        "Payment Mode", "Value Date", "Customer Reference Number", "Favourite Beneficiary Code",
-        "Transaction Amount (RM)", "Credit Account Number", "Beneficiary Name 1", "Beneficiary Name 2",
-        "Beneficiary Name 3", "New IC No", "Old IC No", "Business Registration Number",
-        "Police/ Army ID/ Passport No", "Beneficiary Bank Code", "Email", "Advice Detail",
-        "Debit Description", "Credit Description", "Joint Name", "Joint New ID No",
-        "Joint Old ID No", "Joint Business Reg. No.", "Joint Police/ Army ID/ Passport No.",
-        "Purpose of Transfer", "Others Purpose of Transfer", "Rentas Instruction to Bank",
-        "Charges Borne by", "Email 2", "Email 3", "Email 4", "Email 5",
-    ]
-    ws.append(rcms_headers)
-
-    for b in beneficiaries:
-        advice = f"{b['advicePrefix']}_{mmyy}"
-        row = [""] * 31
-        row[0]  = b["paymentMode"]
-        row[1]  = value_date
-        row[2]  = b["seq"]
-        row[4]  = b["amount"]
-        row[5]  = b["accountNumber"]
-        name1, name2 = _split_name(b["name"])
-        row[6]  = name1   # Beneficiary Name 1 (max 40 chars)
-        row[7]  = name2   # Beneficiary Name 2 (last name overflow)
-        new_ic, biz_reg, passport = _id_fields(b.get("idNumber", ""), b.get("idType", ""))
-        row[9]  = new_ic     # New IC No (Malaysian NRIC)
-        row[11] = biz_reg    # Business Registration Number
-        row[12] = passport   # Police/ Army ID/ Passport No
-        row[13] = b["bankCode"]
-        row[14] = b["email"]
-        row[15] = advice
-        row[16] = advice
-        row[17] = advice
-        if len(notify_emails) > 1:
-            row[28] = notify_emails[1]
-        ws.append(row)
-
-    xlsx_buf = io.BytesIO()
-    wb.save(xlsx_buf)
-    xlsx_bytes = xlsx_buf.getvalue()
+    # ── Fill the official RCGEN2 macro workbook ('Domestic Payments' sheet).
+    #    Payroll advice format is {FullName_Underscored}_{MMYY}. ──
+    xlsx_bytes = _fill_rcms_template(
+        beneficiaries, value_date, mmyy, notify_emails,
+        advice_fn=lambda b: f"{b['advicePrefix']}_{mmyy}",
+    )
     xlsx_hash = _sha256(xlsx_bytes)
-    xlsx_name = f"RCMS_BankUpload_{kase['reference']}_{value_date}.xlsx"
-
-    # RCgen TXT
-    ts_now = datetime.now(timezone.utc)
-    ts_part = ts_now.strftime("%Y%m%d%H%M%S")
-    txt_lines = [f"00|{BANK_CORPORATE_ID}|{BANK_GROUP_ID}||B||||||||||||||||||||||||"]
-    total_amount = 0.0
-    for b in beneficiaries:
-        if not b["accountNumber"]:
-            continue
-        advice = f"{b['advicePrefix']}_{mmyy}"
-        amount_str = f"{float(b['amount'] or 0):.2f}"
-        total_amount += float(b['amount'] or 0)
-        txt_lines.append(_rcgen_01(b, value_date, advice, amount_str))
-        txt_lines.append(_rcgen_02(b, b["seq"], advice, amount_str, notify_emails))
-    txt_lines.append(_rcgen_trailer(len(beneficiaries), total_amount))
-    txt_bytes = "\n".join(txt_lines).encode("utf-8")
-    txt_hash = _sha256(txt_bytes)
-    txt_name = f"RCgen_Payment_DP_{ts_part}.txt"
+    xlsx_name = f"RCMS_Payment_DP_{kase['reference']}_{value_date}.xlsm"
 
     missing = [{"name": b["name"], "employeeId": b["employeeId"]} for b in beneficiaries if not b["matched"]]
     existing_check = dict(kase.get("check_data") or {})
@@ -561,8 +430,8 @@ async def generate_and_store_bank_files_payroll(kase: dict, db, triggered_by: st
         "bank_file_data":           base64.b64encode(xlsx_bytes).decode(),
         "bank_file_generated_at":   now,
         "bank_file_triggered_by":   triggered_by,
-        "bank_receipt_name":        txt_name,
-        "bank_receipt_data":        base64.b64encode(txt_bytes).decode(),
+        "bank_receipt_name":        None,
+        "bank_receipt_data":        None,
         "check_data":               existing_check,
     }).eq("id", kase["id"]).execute()
 
@@ -570,8 +439,6 @@ async def generate_and_store_bank_files_payroll(kase: dict, db, triggered_by: st
     return {
         "xlsxName":  xlsx_name,
         "xlsxBytes": xlsx_bytes,
-        "txtName":   txt_name,
-        "txtBytes":  txt_bytes,
         "matched":   matched_count,
         "total":     len(beneficiaries),
         "missing":   missing,

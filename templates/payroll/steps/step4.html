@@ -5,8 +5,8 @@
 <div class="pf-panel-body">
   <div class="pf-panel-header">
     <span class="pf-panel-step">Step 4</span>
-    <h2 class="pf-panel-title">Bank Upload Files</h2>
-    <p class="pf-panel-sub">RCMS XLSX + RCgen TXT auto-generated on check approval. SHA-256 hashes recorded.</p>
+    <h2 class="pf-panel-title">Bank Upload File</h2>
+    <p class="pf-panel-sub">The official Maybank RCGEN2 macro workbook is pre-filled on check approval. SHA-256 hash recorded.</p>
   </div>
 
   {% if has_files %}
@@ -23,20 +23,22 @@
     <div style="font-size:12px;color:#92400e;margin-top:8px">Update bank account details and re-generate the bank file if needed.</div>
   </div>
   {% endif %}
-  <div class="pf-info-banner pf-banner-ok">Bank files ready — download and upload to the bank portal.</div>
+  <div class="pf-info-banner pf-banner-ok">Bank file ready — download the workbook, generate the TXT, then upload the TXT to Maybank CMS.</div>
+  <ol style="margin:12px 0 4px;padding-left:20px;font-size:13px;color:#334155;line-height:1.7">
+    <li>Download the RCGEN2 macro workbook below and open it in Microsoft Excel.</li>
+    <li>Click <strong>Enable Content / Enable Macros</strong> when prompted.</li>
+    <li>On the workbook's <em>Domestic Payments</em> sheet, click its <strong>Generate</strong> button to produce the <code>RCgen_Payment_DP_*.txt</code>.</li>
+    <li>Upload that generated <strong>.txt</strong> to the Maybank Cash Management portal (File Upload).</li>
+  </ol>
   <div class="pf-info-grid">
-    <div class="pf-stamp-box"><span class="pf-stamp-label">RCMS XLSX</span><span class="pf-stamp-value">{{ kase.bank_file_name or '—' }}</span></div>
-    <div class="pf-stamp-box"><span class="pf-stamp-label">XLSX SHA-256</span><span class="pf-stamp-value" style="font-family:monospace;font-size:11px">{{ (kase.bank_file_hash or '—')[:32] }}{% if kase.bank_file_hash %}…{% endif %}</span></div>
-    <div class="pf-stamp-box"><span class="pf-stamp-label">RCgen TXT</span><span class="pf-stamp-value">{{ kase.bank_receipt_name or '—' }}</span></div>
+    <div class="pf-stamp-box"><span class="pf-stamp-label">RCGEN2 Workbook</span><span class="pf-stamp-value">{{ kase.bank_file_name or '—' }}</span></div>
+    <div class="pf-stamp-box"><span class="pf-stamp-label">SHA-256</span><span class="pf-stamp-value" style="font-family:monospace;font-size:11px">{{ (kase.bank_file_hash or '—')[:32] }}{% if kase.bank_file_hash %}…{% endif %}</span></div>
     <div class="pf-stamp-box"><span class="pf-stamp-label">Generated at</span><span class="pf-stamp-value">{{ fmt_date(kase.bank_file_generated_at) }}</span></div>
     <div class="pf-stamp-box"><span class="pf-stamp-label">Triggered by</span><span class="pf-stamp-value">{{ kase.bank_file_triggered_by or '—' }} approval</span></div>
   </div>
   <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
     {% if kase.bank_file_data %}
-    <a href="/cases/{{ kase.id }}/bank-file-xlsx" class="btn btn-secondary">⬇ RCMS Bank Upload (XLSX)</a>
-    {% endif %}
-    {% if kase.bank_receipt_name %}
-    <a href="/cases/{{ kase.id }}/bank-file-txt" class="btn btn-secondary">⬇ RCgen Payment File (TXT)</a>
+    <a href="/cases/{{ kase.id }}/bank-file-xlsx" class="btn btn-secondary">⬇ RCGEN2 Macro Workbook (.xlsm)</a>
     {% endif %}
   </div>
   {% elif kase.status == 'check_approved' %}

@@ -1718,7 +1718,7 @@ async def download_bank_xlsx(case_id: str, request: Request):
     file_bytes = base64.b64decode(kase["bank_file_data"])
     return Response(
         content=file_bytes,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        media_type="application/vnd.ms-excel.sheet.macroEnabled.12",
         headers={"Content-Disposition": f'attachment; filename="{kase["bank_file_name"]}"'},
     )
 
