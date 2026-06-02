@@ -12,6 +12,7 @@ from app.config import TEMPLATES_DIR, APP_URL, APPROVERS, ORGS, STATUTORY_NOS
 from app.deps import get_current_user
 from app.services.db import get_db
 from app.services.parser import parse_excel_buffer, parse_payroll_excel_buffer
+from app.services.statutory_enrich import enrich_entities_statutory
 from app.services.zoho import post_journal_entry, create_expense, attach_journal_document, fetch_accounts
 from app.services.bank_files import (
     generate_and_store_bank_files, generate_and_store_bank_files_payroll,
@@ -191,6 +192,7 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None) -
     consultants = gross = ctc = net = 0
     total_billing = total_mgmt_fee = 0.0
     stat = {"epf": 0.0, "eis": 0.0, "socso": 0.0, "hrdf": 0.0, "mtd": 0.0}
+    cats = {"Local": 0, "Foreign": 0, "Contractor": 0}
     seen_ids: set = set()
 
     for ent in entities:
@@ -217,6 +219,7 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None) -
             ctc_client = float(emp.get("ctcClient", 0) or 0)
             cc  = (emp.get("costCentre") or "").strip()
 
+            cats[emp.get("category", "Local")] = cats.get(emp.get("category", "Local"), 0) + 1
             gross += g; ctc += c; net += n
             stat["epf"] += epf; stat["eis"] += eis
             stat["socso"] += soc; stat["hrdf"] += hrd; stat["mtd"] += mtd
@@ -326,6 +329,9 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None) -
     markup      = _round2((total_mgmt_fee / ctc) * 100) if ctc > 0 else None
     return {
         "consultantCount":   consultants, "entityCount": len(entities),
+        "localCount":        cats.get("Local", 0),
+        "foreignCount":      cats.get("Foreign", 0),
+        "contractorCount":   cats.get("Contractor", 0),
         "grossPayrollTotal": _round2(gross), "ctcTotal": _round2(ctc), "netSalaryTotal": _round2(net),
         "totalRevenue":      _round2(total_billing) if total_billing > 0 else None,
         "totalBilling":      _round2(total_billing) if total_billing > 0 else None,
@@ -480,35 +486,31 @@ _PAYROLL_ORG_MAP: dict = {
 def _build_check_data_payroll(entities: list[dict]) -> dict:
     flags = []
     employees = gross = ctc = net = 0
-    stat: dict = {"eEPF": 0.0, "rEPF": 0.0, "eSOCSO": 0.0, "rSOCSO": 0.0,
-                  "eEIS": 0.0, "rEIS": 0.0, "hrdf": 0.0, "pcb": 0.0, "cp38": 0.0}
+    stat: dict = {"epf": 0.0, "eis": 0.0, "socso": 0.0, "hrdf": 0.0, "mtd": 0.0}
+    cats = {"Local": 0, "Foreign": 0, "Contractor": 0}
 
     for ent in entities:
         employees += len(ent.get("employees", []))
         for emp in ent.get("employees", []):
-            gross += emp.get("grossEarnings", 0)
-            ctc   += emp.get("ctcHexa", 0)
-            net   += emp.get("netSalary", 0)
-            for k in stat:
-                stat[k] += emp.get(k, 0)
+            g = float(emp.get("grossSalary", 0) or 0)
+            n = float(emp.get("netSalary", 0) or 0)
+            gross += g
+            ctc   += float(emp.get("ctcHexa", 0) or 0)
+            net   += n
+            cats[emp.get("category", "Local")] = cats.get(emp.get("category", "Local"), 0) + 1
 
-            # Validate: Net Pay = Gross Earnings - Total employee deductions + Net additions
-            expected_net = (
-                emp.get("grossEarnings", 0)
-                - emp.get("totalEmpDedn", 0)
-                + emp.get("netAdditions", 0)
-            )
-            if abs(emp.get("netSalary", 0) - expected_net) > 0.05:
-                flags.append({
-                    "code": "NET_PAY_VARIANCE",
-                    "employee": emp.get("name") or emp.get("employeeId"),
-                    "entity": ent["sheetName"],
-                    "expected": _round2(expected_net),
-                    "actual": emp.get("netSalary"),
-                    "diff": _round2(abs(emp.get("netSalary", 0) - expected_net)),
-                })
+            # Statutory totals (employee + employer where applicable)
+            stat["epf"]   += float(emp.get("epfEmployee", 0) or 0) + float(emp.get("epfEmployer", 0) or 0)
+            stat["eis"]   += float(emp.get("eisEmployee", 0) or 0) + float(emp.get("eisEmployer", 0) or 0)
+            stat["socso"] += float(emp.get("socsoEmployee", 0) or 0) + float(emp.get("socsoEmployer", 0) or 0)
+            stat["hrdf"]  += float(emp.get("hrdf", 0) or 0)
+            stat["mtd"]   += float(emp.get("mtd", 0) or 0)
 
-            if emp.get("netSalary", 0) == 0:
+            if n > g + 0.01:
+                flags.append({"code": "NET_EXCEEDS_GROSS",
+                              "employee": emp.get("name") or emp.get("employeeId"),
+                              "entity": ent["sheetName"], "diff": _round2(n - g)})
+            if n == 0:
                 flags.append({"code": "ZERO_NET", "employee": emp.get("name"), "entity": ent["sheetName"]})
             if not emp.get("bankAccount"):
                 flags.append({"code": "MISSING_BANK_ACCOUNT", "employee": emp.get("name") or emp.get("employeeId"), "entity": ent["sheetName"]})
@@ -519,6 +521,9 @@ def _build_check_data_payroll(entities: list[dict]) -> dict:
     return {
         "consultantCount": employees,
         "entityCount": len(entities),
+        "localCount":      cats.get("Local", 0),
+        "foreignCount":    cats.get("Foreign", 0),
+        "contractorCount": cats.get("Contractor", 0),
         "grossPayrollTotal": _round2(gross),
         "ctcTotal": _round2(ctc),
         "netSalaryTotal": _round2(net),
@@ -578,10 +583,10 @@ async def _auto_book_accruals_payroll(kase: dict, db) -> dict:
     totals = {
         "ctc":    _round2(sum(e.get("ctcHexa", 0) for e in all_employees)),
         "net":    _round2(sum(e.get("netSalary", 0) for e in all_employees)),
-        "epf":    _round2(sum(e.get("eEPF", 0) + e.get("epfEmployer", 0) for e in all_employees)),
-        "socso":  _round2(sum(e.get("eSOCSO", 0) + e.get("socsoEmployer", 0) + e.get("eEIS", 0) + e.get("eisEmployer", 0) for e in all_employees)),
+        "epf":    _round2(sum(e.get("epfEmployee", 0) + e.get("epfEmployer", 0) for e in all_employees)),
+        "socso":  _round2(sum(e.get("socsoEmployee", 0) + e.get("socsoEmployer", 0) + e.get("eisEmployee", 0) + e.get("eisEmployer", 0) for e in all_employees)),
         "hrdf":   _round2(sum(e.get("hrdf", 0) for e in all_employees)),
-        "pcb":    _round2(sum(e.get("pcb", 0) + e.get("cp38", 0) for e in all_employees)),
+        "pcb":    _round2(sum(e.get("mtd", 0) for e in all_employees)),
     }
 
     if totals["ctc"] == 0:
@@ -697,10 +702,10 @@ async def _auto_book_payment_payroll(kase: dict, db) -> dict:
 
     # Aggregate statutory payments
     statutory_payments = [
-        ("epf",   epf_payable,   _round2(sum(e.get("eEPF", 0) + e.get("epfEmployer", 0) for e in all_emps)),   "EPF"),
-        ("socso", socso_payable, _round2(sum(e.get("eSOCSO", 0) + e.get("socsoEmployer", 0) + e.get("eEIS", 0) + e.get("eisEmployer", 0) for e in all_emps)), "SOCSO+EIS"),
+        ("epf",   epf_payable,   _round2(sum(e.get("epfEmployee", 0) + e.get("epfEmployer", 0) for e in all_emps)),   "EPF"),
+        ("socso", socso_payable, _round2(sum(e.get("socsoEmployee", 0) + e.get("socsoEmployer", 0) + e.get("eisEmployee", 0) + e.get("eisEmployer", 0) for e in all_emps)), "SOCSO+EIS"),
         ("hrdf",  hrdf_payable,  _round2(sum(e.get("hrdf", 0) for e in all_emps)), "HRDF"),
-        ("pcb",   pcb_payable,   _round2(sum(e.get("pcb", 0) + e.get("cp38", 0) for e in all_emps)), "PCB"),
+        ("pcb",   pcb_payable,   _round2(sum(e.get("mtd", 0) for e in all_emps)), "PCB"),
     ]
     for stat_key, acct_id, amount, label in statutory_payments:
         if amount <= 0:
@@ -1137,13 +1142,17 @@ async def _upload_case_inner(
     if not parsed_entities:
         return _upload_err("No valid data found in file. Check column headers.")
 
-    # Fetch Airtable consultant list for DB/bank-detail checks (CSI only; non-blocking)
+    # Fetch Airtable consultant list for statutory enrichment + bank-detail
+    # checks (both flows; non-blocking).
     airtable_list = None
-    if type_up == "CSI":
-        try:
-            airtable_list = await fetch_airtable_consultants()
-        except Exception:
-            pass  # proceed without Airtable checks if fetch fails
+    try:
+        airtable_list = await fetch_airtable_consultants()
+    except Exception:
+        pass  # proceed without Airtable if fetch fails
+
+    # Override EPF/EIS/SOCSO/HRDF from the statutory tables using Airtable
+    # nationality / contract type / EPF scheme.
+    enrich_entities_statutory(parsed_entities, airtable_list)
 
     try:
         # Auto-generate check immediately — no manual step needed
@@ -1386,11 +1395,12 @@ async def reupload_case(
         return HTMLResponse('<div class="error-msg">No valid data found. Check column headers.</div>')
 
     airtable_list = None
-    if kase.get("type") == "CSI":
-        try:
-            airtable_list = await fetch_airtable_consultants()
-        except Exception:
-            pass
+    try:
+        airtable_list = await fetch_airtable_consultants()
+    except Exception:
+        pass
+
+    enrich_entities_statutory(parsed_entities, airtable_list)
 
     check_data = (
         _build_check_data_payroll(parsed_entities)

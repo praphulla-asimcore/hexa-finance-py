@@ -296,6 +296,8 @@ def parse_payroll_excel_buffer(data: bytes) -> list[dict]:
             "grossSalary":   round(gross, 2),
             "netSalary":     round(net_pay, 2),
             "claim":         round(claim, 2),
+            "age":           age,
+            "nationality":   nationality,
             "epfEmployee":   round(epf_ee, 2),
             "epfEmployer":   round(epf_er, 2),
             "epfBasis":      epf_basis(age, nationality),

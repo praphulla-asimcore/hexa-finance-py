@@ -39,11 +39,22 @@ def _payment_mode(bank_code: str) -> str:
     return "IT" if bank_code == "MBBEMYKL" else "IG"
 
 
-def _id_fields(id_number: str) -> tuple:
-    """Return (new_ic, biz_reg, passport) for fields 25, 27, 28 of the 01 record."""
+def _id_fields(id_number: str, id_type: str = "") -> tuple:
+    """Return (new_ic, biz_reg, passport) for fields 25, 27, 28 of the 01 record.
+
+    When the Airtable ``ID Type`` is known it is authoritative — NRIC → New IC No
+    (field 25), Passport → Police/Army ID/Passport No (field 28). Otherwise fall
+    back to inferring from the number's format."""
     id_str = (id_number or "").strip()
     if not id_str:
         return ("", "", "")
+
+    t = (id_type or "").strip().lower()
+    if t == "nric":
+        return (id_str, "", "")
+    if t == "passport":
+        return ("", "", id_str)
+
     if id_str.isdigit() and len(id_str) == 12:
         return (id_str, "", "")   # Malaysian NRIC → New IC No (field 25)
     # Count leading alpha chars to distinguish passport from company reg
@@ -61,7 +72,7 @@ def _id_fields(id_number: str) -> tuple:
 def _rcgen_01(b: dict, value_date: str, advice: str, amount_str: str) -> str:
     """Build a correctly-formatted RCgen 01 body record matching the Maybank R3 spec."""
     pmode              = _payment_mode(b.get("bankCode", ""))
-    new_ic, biz_reg, passport = _id_fields(b.get("idNumber", ""))
+    new_ic, biz_reg, passport = _id_fields(b.get("idNumber", ""), b.get("idType", ""))
     emp_code           = (b.get("employeeCode") or b.get("employeeId") or "").strip()
 
     # Build a 220-element field array then join with |
@@ -162,6 +173,10 @@ async def fetch_airtable_consultants() -> list[dict]:
                     "bankName": str(f.get("Bank Name", "")).strip(),
                     "accountNo": str(f.get("Bank Account Number", "")).strip(),
                     "idNumber": str(f.get("ID Number", "")).strip(),
+                    "idType": str(f.get("ID Type", "") or "").strip(),
+                    "nationality": str(f.get("Nationality", "") or "").strip(),
+                    "contractType": str(f.get("Contract Type", "") or "").strip(),
+                    "epfScheme": str(f.get("EPF Scheme", "") or "").strip(),
                     "epfNumber":   str(f.get("EPF Number", "") or "").strip(),
                     "socsoNumber": str(f.get("SOCSO Number", "") or "").strip(),
                     "taxRefNumber":str(f.get("Tax Identification Number", "") or "").strip(),
@@ -213,6 +228,7 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
     for ent in entities:
         for emp in ent.get("employees", []):
             matched = match_consultant(emp, airtable_list)
+            bank_code = bank_name_to_code(matched["bankName"] if matched else "")
             beneficiaries.append({
                 "seq": seq_ref,
                 "employeeId": emp["employeeId"],
@@ -222,8 +238,11 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
                 "amount": emp.get("netSalary", 0),
                 "accountNumber": matched["accountNo"] if matched else "",
                 "bankName": matched["bankName"] if matched else "",
-                "bankCode": bank_name_to_code(matched["bankName"] if matched else ""),
-                "idNumber": matched["idNumber"] if matched else "",
+                "bankCode": bank_code,
+                "paymentMode": _payment_mode(bank_code),
+                "email": notify_emails[0] if notify_emails else "",
+                "idNumber": matched["idNumber"] if matched else emp.get("idNumber", ""),
+                "idType": (matched.get("idType") if matched else "") or emp.get("idType", ""),
                 "advicePrefix": (matched["name"] if matched else emp["name"]).replace(" ", "_"),
                 "entity": ent["sheetName"],
                 "matched": matched is not None,
@@ -256,7 +275,10 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
         row[4] = b["amount"]
         row[5] = b["accountNumber"]
         row[6] = b["name"]
-        row[9] = b["idNumber"]
+        new_ic, biz_reg, passport = _id_fields(b.get("idNumber", ""), b.get("idType", ""))
+        row[9]  = new_ic     # New IC No (Malaysian NRIC)
+        row[11] = biz_reg    # Business Registration Number
+        row[12] = passport   # Police/ Army ID/ Passport No
         row[13] = b["bankCode"]
         row[14] = b["email"]
         row[15] = advice
@@ -355,7 +377,10 @@ async def generate_and_store_bank_files_payroll(kase: dict, db, triggered_by: st
                 "accountNumber": bank_account,
                 "bankName":     bank_name,
                 "bankCode":     bank_code,
+                "paymentMode":  _payment_mode(bank_code),
+                "email":        notify_emails[0] if notify_emails else "",
                 "idNumber":     emp.get("idNumber", ""),
+                "idType":       emp.get("idType", ""),
                 "advicePrefix": name.replace(" ", "_"),
                 "entity":       ent["sheetName"],
                 "matched":      has_bank,
@@ -388,6 +413,10 @@ async def generate_and_store_bank_files_payroll(kase: dict, db, triggered_by: st
         row[4]  = b["amount"]
         row[5]  = b["accountNumber"]
         row[6]  = b["name"]
+        new_ic, biz_reg, passport = _id_fields(b.get("idNumber", ""), b.get("idType", ""))
+        row[9]  = new_ic     # New IC No (Malaysian NRIC)
+        row[11] = biz_reg    # Business Registration Number
+        row[12] = passport   # Police/ Army ID/ Passport No
         row[13] = b["bankCode"]
         row[14] = b["email"]
         row[15] = advice

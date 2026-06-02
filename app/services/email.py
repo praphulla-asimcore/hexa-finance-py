@@ -66,6 +66,7 @@ def email_check_approval(to: str, name: str, role: str, kase: dict, approve_url:
           <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:12px">{emp['employeeId']}</td>
           <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:12px">{emp['name']}</td>
           <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:12px">{emp['entity']}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:12px">{emp.get('category','')}</td>
           <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;text-align:right">{_fmt_rm(emp.get('grossSalary'))}</td>
           <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;text-align:right">{_fmt_rm(emp.get('netSalary'))}</td>
           <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;text-align:right;font-weight:600">{_fmt_rm(emp.get('ctcHexa'))}</td>
@@ -114,6 +115,7 @@ def email_check_approval(to: str, name: str, role: str, kase: dict, approve_url:
           {_row('Period', kase.get('period', ''))}
           {_row('Payment Date', kase.get('payment_date') or '—')}
           {_row('Consultants', str(check.get('consultantCount', '—')))}
+          {_row('Category', f"{check.get('localCount',0)} Local · {check.get('foreignCount',0)} Foreign · {check.get('contractorCount',0)} Contractor")}
           {_row('Gross Payroll', _fmt_rm(check.get('grossPayrollTotal')))}
           {_row('Net Salary', _fmt_rm(check.get('netSalaryTotal')))}
           {_row('Total CTC (Hexa)', f'<strong style="font-size:15px;color:#111">{_fmt_rm(check.get("ctcTotal"))}</strong>')}
@@ -138,6 +140,7 @@ def email_check_approval(to: str, name: str, role: str, kase: dict, approve_url:
               <th style="padding:6px 8px;text-align:left;border-bottom:2px solid #e2e8f0">Emp ID</th>
               <th style="padding:6px 8px;text-align:left;border-bottom:2px solid #e2e8f0">Name</th>
               <th style="padding:6px 8px;text-align:left;border-bottom:2px solid #e2e8f0">Entity</th>
+              <th style="padding:6px 8px;text-align:left;border-bottom:2px solid #e2e8f0">Category</th>
               <th style="padding:6px 8px;text-align:right;border-bottom:2px solid #e2e8f0">Gross</th>
               <th style="padding:6px 8px;text-align:right;border-bottom:2px solid #e2e8f0">Net</th>
               <th style="padding:6px 8px;text-align:right;border-bottom:2px solid #e2e8f0">CTC</th>
@@ -146,7 +149,7 @@ def email_check_approval(to: str, name: str, role: str, kase: dict, approve_url:
             </tr></thead>
             <tbody>{emp_rows}</tbody>
             <tfoot><tr style="background:#f8fafc;font-weight:700">
-              <td colspan="3" style="padding:6px 8px;border-top:2px solid #e2e8f0">TOTAL</td>
+              <td colspan="4" style="padding:6px 8px;border-top:2px solid #e2e8f0">TOTAL</td>
               <td style="padding:6px 8px;border-top:2px solid #e2e8f0;text-align:right">{_fmt_rm(check.get('grossPayrollTotal'))}</td>
               <td style="padding:6px 8px;border-top:2px solid #e2e8f0;text-align:right">{_fmt_rm(check.get('netSalaryTotal'))}</td>
               <td style="padding:6px 8px;border-top:2px solid #e2e8f0;text-align:right">{_fmt_rm(check.get('ctcTotal'))}</td>

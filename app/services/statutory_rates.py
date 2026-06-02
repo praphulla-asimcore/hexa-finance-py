@@ -257,6 +257,20 @@ EPF_NIL_WAGE = 10.0              # first bracket (wages up to RM10) is NIL/NIL
 EPF_RATE_LOCAL_UNDER_60 = (0.13, 0.12, 0.11)   # Part A
 EPF_RATE_LOCAL_60_PLUS  = (0.065, 0.06, 0.055)  # 60+ reduced rates
 EPF_FOREIGN_RATE = 0.02                          # 2% employer + 2% employee, flat
+EPF_OPTIONAL_RATE = 0.05                         # opted-in flat 5% er + 5% ee (e.g. Reans Consultancy)
+
+# Per-consultant EPF scheme overrides (Airtable "EPF Scheme" column). These
+# override the nationality-based default:
+#   "local"/"normal" — force the local Third Schedule even for foreigners
+#                       (e.g. Floward foreign consultants on normal contribution)
+#   "5%"             — flat 5% employer + 5% employee of gross
+#   "2%"             — force the foreign flat 2% + 2%
+#   "exempt"/"none"  — no EPF (0/0)
+#   ""/"standard"    — default by nationality
+_EPF_SCHEME_FORCE_LOCAL = {"local", "normal", "standard-local"}
+_EPF_SCHEME_5PCT        = {"5%", "5", "0.05", "five"}
+_EPF_SCHEME_2PCT        = {"2%", "2", "0.02", "foreign"}
+_EPF_SCHEME_EXEMPT      = {"exempt", "none", "nil", "0", "0%"}
 
 
 def _roundup_ringgit(amount: float) -> float:
@@ -277,38 +291,64 @@ def _epf_bracket_upper(wage: float) -> float:
     return math.ceil(wage / step - 1e-9) * step
 
 
-def epf_contribution(wage: float, age=None, nationality=None) -> tuple[float, float]:
-    """Return ``(employee, employer)`` EPF contribution for the wage.
-
-    * Foreign workers: flat 2% employer + 2% employee of gross, rounded up.
-    * Malaysian/PR under 60: Third Schedule Part A bracket method.
-    * Malaysian/PR aged 60+: reduced-rate bracket method.
-    """
-    if wage is None or wage <= 0:
-        return (0.0, 0.0)
-
-    if not is_local_national(nationality):
-        each = _roundup_ringgit(EPF_FOREIGN_RATE * wage)
-        return (each, each)
-
+def _epf_local_schedule(wage: float, age=None) -> tuple[float, float]:
+    """Local Third Schedule bracket contribution ``(employee, employer)``."""
     if wage <= EPF_NIL_WAGE:
         return (0.0, 0.0)
-
     er_low, er_high, ee_rate = (
         EPF_RATE_LOCAL_60_PLUS if is_senior(age) else EPF_RATE_LOCAL_UNDER_60
     )
     upper = _epf_bracket_upper(wage)
     er_rate = er_low if wage <= EPF_BRACKET_THRESHOLD else er_high
-    employer = _roundup_ringgit(er_rate * upper)
-    employee = _roundup_ringgit(ee_rate * upper)
-    return (employee, employer)
+    return (_roundup_ringgit(ee_rate * upper), _roundup_ringgit(er_rate * upper))
 
 
-def epf_basis(age=None, nationality=None) -> str:
+def epf_contribution(wage: float, age=None, nationality=None, scheme=None) -> tuple[float, float]:
+    """Return ``(employee, employer)`` EPF contribution for the wage.
+
+    Default (no scheme override):
+      * Foreign workers: flat 2% employer + 2% employee of gross, rounded up.
+      * Malaysian/PR under 60: Third Schedule Part A bracket method.
+      * Malaysian/PR aged 60+: reduced-rate bracket method.
+
+    ``scheme`` (Airtable "EPF Scheme") overrides the default — see the
+    ``_EPF_SCHEME_*`` sets for accepted values.
+    """
+    if wage is None or wage <= 0:
+        return (0.0, 0.0)
+
+    s = str(scheme or "").strip().lower()
+    if s in _EPF_SCHEME_EXEMPT:
+        return (0.0, 0.0)
+    if s in _EPF_SCHEME_5PCT:
+        each = _roundup_ringgit(EPF_OPTIONAL_RATE * wage)
+        return (each, each)
+    if s in _EPF_SCHEME_2PCT:
+        each = _roundup_ringgit(EPF_FOREIGN_RATE * wage)
+        return (each, each)
+
+    force_local = s in _EPF_SCHEME_FORCE_LOCAL
+    if not force_local and not is_local_national(nationality):
+        each = _roundup_ringgit(EPF_FOREIGN_RATE * wage)
+        return (each, each)
+
+    return _epf_local_schedule(wage, age)
+
+
+def epf_basis(age=None, nationality=None, scheme=None) -> str:
     """Classify the EPF contribution basis for an employee.
 
-    Returns one of ``"foreign"``, ``"local_60_plus"`` or ``"local_under_60"``.
-    Used by validation to know which employer-rate range to expect."""
-    if not is_local_national(nationality):
+    Returns one of ``"exempt"``, ``"optional_5"``, ``"foreign"``,
+    ``"local_60_plus"`` or ``"local_under_60"``. Used by validation to know
+    which employer-rate range to expect (only ``local_under_60`` is rate-checked)."""
+    s = str(scheme or "").strip().lower()
+    if s in _EPF_SCHEME_EXEMPT:
+        return "exempt"
+    if s in _EPF_SCHEME_5PCT:
+        return "optional_5"
+    if s in _EPF_SCHEME_2PCT:
+        return "foreign"
+    force_local = s in _EPF_SCHEME_FORCE_LOCAL
+    if not force_local and not is_local_national(nationality):
         return "foreign"
     return "local_60_plus" if is_senior(age) else "local_under_60"

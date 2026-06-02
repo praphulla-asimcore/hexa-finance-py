@@ -2,6 +2,7 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from app.config import AIRTABLE_API_KEY, AIRTABLE_BASE_ID, AIRTABLE_TABLE_NAME
+from app.services.statutory_rates import is_local_national
 
 router = APIRouter()
 
@@ -15,12 +16,22 @@ def _map_record(record: dict) -> dict:
             salary = float(str(salary_raw).replace(",", ""))
         except (ValueError, TypeError):
             salary = None
+    nationality = (f.get("Nationality") or "").strip()
+    contract_type = (f.get("Contract Type") or "").strip()
+    if contract_type.lower() == "contractor":
+        category = "Contractor"
+    else:
+        category = "Local" if is_local_national(nationality) else "Foreign"
     return {
         "id": record["id"],
         "name": f.get("Full Legal Name") or "—",
         "employeeNumber": f.get("Employee Number") or "—",
         "employeeId": f.get("Employee ID") or "—",
         "idNumber": f.get("ID Number") or "—",
+        "idType": f.get("ID Type") or "—",
+        "nationality": nationality or "—",
+        "contractType": contract_type or "—",
+        "category": category,
         "client": f.get("Client Name") or "—",
         "contractStart": f.get("Contract Start Date"),
         "contractEnd": f.get("Contract End Date"),

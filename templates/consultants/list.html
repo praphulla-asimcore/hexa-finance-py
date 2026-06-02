@@ -45,13 +45,13 @@
       <table class="bene-table">
         <thead>
           <tr>
-            <th>Emp No.</th><th>Name</th><th>Client</th>
+            <th>Emp No.</th><th>Name</th><th>Client</th><th>Category</th>
             <th>Bank</th><th>Account No.</th><th>Contract End</th><th>Status</th>
           </tr>
         </thead>
         <tbody>
           <template x-if="filtered.length === 0">
-            <tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px 0">No results</td></tr>
+            <tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:24px 0">No results</td></tr>
           </template>
           <template x-for="c in filtered" :key="c.id">
             <tr class="bene-row"
@@ -60,6 +60,11 @@
               <td><span class="bene-code" x-text="c.employeeNumber"></span></td>
               <td x-text="c.name"></td>
               <td x-text="c.client"></td>
+              <td>
+                <span class="badge"
+                  :class="c.category==='Foreign'?'badge-warning':(c.category==='Contractor'?'badge-neutral':'badge-success')"
+                  x-text="c.category"></span>
+              </td>
               <td x-text="c.bankName"></td>
               <td style="font-family:monospace;font-size:12px" x-text="c.accountNo"></td>
               <td x-text="formatDate(c.contractEnd)"></td>
