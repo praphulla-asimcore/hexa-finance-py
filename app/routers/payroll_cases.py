@@ -811,10 +811,16 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
     tag_id = cust_tag["tag_id"]
     tag_options = dict(cust_tag["options"])   # lower(client) -> tag_option_id
     if not tag_options:
-        # Diagnostic: the GET /settings/tags response shape for options isn't being parsed.
+        # Diagnostic v2: dump the per-tag detail response to find option IDs.
+        from app.services.zoho import fetch_tag_detail
+        cust_raw = next((t for t in (_raw_tags.get("reporting_tags") or [])
+                         if (t.get("tag_name") or "").lower() == "customer"), {})
+        try:
+            detail = await fetch_tag_detail(org_id, tag_id)
+        except Exception as e:
+            detail = {"error": str(e)}
         return {"success": False,
-                "error": "DIAG tag_id=" + str(tag_id) + " options_parsed=" + str(list(tag_options.keys()))
-                         + " RAW=" + str(_raw_tags)[:900]}
+                "error": "DIAG2 listEntry=" + str(cust_raw)[:500] + " ||DETAIL=" + str(detail)[:900]}
 
     try:
         contacts = await fetch_contacts(org_id)   # lower(name) -> contact_id

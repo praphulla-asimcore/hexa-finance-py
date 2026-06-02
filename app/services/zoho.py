@@ -167,6 +167,19 @@ async def fetch_reporting_tags(org_id: str) -> list[dict]:
     return out, data
 
 
+async def fetch_tag_detail(org_id: str, tag_id: str) -> dict:
+    """Raw GET /settings/tags/{tag_id} — used to read option IDs (the list
+    endpoint only returns option names as a comma-joined string)."""
+    token = await get_access_token()
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            f"{_zoho_base()}/settings/tags/{tag_id}",
+            headers={"Authorization": f"Zoho-oauthtoken {token}"},
+            params={"organization_id": org_id},
+        )
+        return resp.json()
+
+
 async def create_tag_option(org_id: str, tag_id: str, option_name: str) -> str:
     """Add an option to a reporting tag and return its tag_option_id."""
     token = await get_access_token()
