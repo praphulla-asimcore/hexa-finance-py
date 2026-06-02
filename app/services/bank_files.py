@@ -39,13 +39,36 @@ def _payment_mode(bank_code: str) -> str:
     return "IT" if bank_code == "MBBEMYKL" else "IG"
 
 
+def _strip_spaces_dashes(value: str) -> str:
+    """Remove spaces and hyphens (Maybank rejects separators in IC / account
+    numbers). e.g. '900101-01-5523' → '900101015523', '1234 5678' → '12345678'."""
+    return (value or "").replace(" ", "").replace("-", "").strip()
+
+
+def _split_name(full: str, max_len: int = 40) -> tuple:
+    """Split a beneficiary name into (Name 1, Name 2) for the Maybank file.
+
+    The last word (last name) always goes to Name 2. If Name 1 is still longer
+    than ``max_len`` (40 chars incl. spaces), keep moving trailing words into
+    Name 2 (preserving order) until Name 1 fits or only one word remains."""
+    tokens = (full or "").split()
+    if len(tokens) <= 1:
+        return ((full or "").strip(), "")
+    name1_tokens = tokens[:-1]
+    name2_tokens = [tokens[-1]]
+    while len(" ".join(name1_tokens)) > max_len and len(name1_tokens) > 1:
+        name2_tokens.insert(0, name1_tokens.pop())
+    return (" ".join(name1_tokens), " ".join(name2_tokens))
+
+
 def _id_fields(id_number: str, id_type: str = "") -> tuple:
     """Return (new_ic, biz_reg, passport) for fields 25, 27, 28 of the 01 record.
 
     When the Airtable ``ID Type`` is known it is authoritative — NRIC → New IC No
     (field 25), Passport → Police/Army ID/Passport No (field 28). Otherwise fall
-    back to inferring from the number's format."""
-    id_str = (id_number or "").strip()
+    back to inferring from the number's format. Spaces/hyphens are stripped so a
+    dashed NRIC (e.g. 900101-01-5523) is recognised as a 12-digit IC."""
+    id_str = _strip_spaces_dashes(id_number)
     if not id_str:
         return ("", "", "")
 
@@ -95,8 +118,10 @@ def _rcgen_01(b: dict, value_date: str, advice: str, amount_str: str) -> str:
     f[16] = emp_code                      # Beneficiary Code / Employee Number (e.g. HS123)
     # f[17] empty
     f[18] = "Y"
-    f[19] = b["name"]                     # Beneficiary Name 1
-    # f[20], f[21] empty  (Beneficiary Name 2/3)
+    name1, name2 = _split_name(b["name"])
+    f[19] = name1                         # Beneficiary Name 1 (max 40 chars)
+    f[20] = name2                         # Beneficiary Name 2 (last name overflow)
+    # f[21] empty  (Beneficiary Name 3)
     # f[22], f[23], f[24] empty
     f[25] = new_ic                        # New IC No  (Malaysian 12-digit NRIC)
     # f[26] empty                         # Old IC No
@@ -236,7 +261,7 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
                 "name": matched["name"] if matched else emp["name"],
                 "costCentre": emp.get("costCentre", ""),
                 "amount": emp.get("netSalary", 0),
-                "accountNumber": matched["accountNo"] if matched else "",
+                "accountNumber": _strip_spaces_dashes(matched["accountNo"] if matched else ""),
                 "bankName": matched["bankName"] if matched else "",
                 "bankCode": bank_code,
                 "paymentMode": _payment_mode(bank_code),
@@ -274,7 +299,9 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
         row[2] = b["seq"]
         row[4] = b["amount"]
         row[5] = b["accountNumber"]
-        row[6] = b["name"]
+        name1, name2 = _split_name(b["name"])
+        row[6] = name1   # Beneficiary Name 1 (max 40 chars)
+        row[7] = name2   # Beneficiary Name 2 (last name overflow)
         new_ic, biz_reg, passport = _id_fields(b.get("idNumber", ""), b.get("idType", ""))
         row[9]  = new_ic     # New IC No (Malaysian NRIC)
         row[11] = biz_reg    # Business Registration Number
@@ -363,7 +390,7 @@ async def generate_and_store_bank_files_payroll(kase: dict, db, triggered_by: st
     for ent in entities:
         for emp in ent.get("employees", []):
             bank_name    = emp.get("bankName", "")
-            bank_account = emp.get("bankAccount", "")
+            bank_account = _strip_spaces_dashes(emp.get("bankAccount", ""))
             bank_code    = bank_name_to_code(bank_name)
             has_bank     = bool(bank_account)
             name         = emp.get("name", emp.get("employeeId", ""))
@@ -412,7 +439,9 @@ async def generate_and_store_bank_files_payroll(kase: dict, db, triggered_by: st
         row[2]  = b["seq"]
         row[4]  = b["amount"]
         row[5]  = b["accountNumber"]
-        row[6]  = b["name"]
+        name1, name2 = _split_name(b["name"])
+        row[6]  = name1   # Beneficiary Name 1 (max 40 chars)
+        row[7]  = name2   # Beneficiary Name 2 (last name overflow)
         new_ic, biz_reg, passport = _id_fields(b.get("idNumber", ""), b.get("idType", ""))
         row[9]  = new_ic     # New IC No (Malaysian NRIC)
         row[11] = biz_reg    # Business Registration Number
