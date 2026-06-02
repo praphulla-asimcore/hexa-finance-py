@@ -54,7 +54,7 @@ STATUTORY_NOS: dict = {
 }
 
 APPROVERS: dict = {
-    "reviewer": {"name": "Ikhram Merican",         "email": "ikhram.merican@hexamatics.com"},
+    "reviewer": {"name": "Asim",                   "email": "asim.ovc977@gmail.com"},
     "final":    {"name": "Praphulla Subedi",        "email": "praphulla@hexamatics.com"},
     "director": {"name": "Dato Thiruchelvapalan",   "email": "thiruchelvapalan@hexamatics.com"},
 }
