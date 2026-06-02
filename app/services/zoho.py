@@ -198,26 +198,44 @@ async def fetch_tag_options(org_id: str, tag_id: str) -> dict:
 
 
 async def create_tag_option(org_id: str, tag_id: str, option_name: str) -> str:
-    """Add an option to a reporting tag and return its tag_option_id."""
+    """Add an option to a reporting tag and return its tag_option_id.
+
+    Zoho has no dedicated create-option endpoint; options are managed by
+    updating the tag. We merge the new option into the existing list (keeping
+    current options by their id, so nothing is dropped) and PUT the tag."""
     token = await get_access_token()
+    detail = await fetch_tag_detail(org_id, tag_id)
+    rt = detail.get("reporting_tag") or {}
+    target = option_name.strip().lower()
+
+    merged = []
+    for o in rt.get("tag_options", []):
+        if not isinstance(o, dict) or not o.get("tag_option_id"):
+            continue
+        if (o.get("tag_option_name") or "").strip().lower() == target:
+            return o["tag_option_id"]   # already exists
+        merged.append({"tag_option_id": o["tag_option_id"], "tag_option_name": o["tag_option_name"]})
+    merged.append({"tag_option_name": option_name})
+
+    payload = {"tag_name": rt.get("tag_name") or "Customer", "tag_options": merged}
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
-            f"{_zoho_base()}/settings/tags/{tag_id}/options",
+        resp = await client.put(
+            f"{_zoho_base()}/settings/tags/{tag_id}",
             headers={"Authorization": f"Zoho-oauthtoken {token}", "Content-Type": "application/json"},
             params={"organization_id": str(org_id).strip()},
-            json={"tag_option_name": option_name},
+            json=payload,
         )
         data = resp.json()
     if data.get("code") != 0:
-        raise RuntimeError(f"Zoho create-tag-option error [{data.get('code')}]: {data.get('message')}")
-    # Response shape varies; dig out the new option id.
-    opt = data.get("tag_option")
-    if isinstance(opt, dict) and opt.get("tag_option_id"):
-        return opt["tag_option_id"]
-    for o in (data.get("tag", {}) or {}).get("tag_options", []):
-        if (o.get("tag_option_name") or "").strip().lower() == option_name.strip().lower():
+        raise RuntimeError(f"Zoho update-tag error [{data.get('code')}]: {data.get('message')}")
+    for o in (data.get("reporting_tag", {}) or {}).get("tag_options", []):
+        if (o.get("tag_option_name") or "").strip().lower() == target:
             return o.get("tag_option_id")
-    raise RuntimeError(f"Zoho create-tag-option: could not read new option id for '{option_name}'")
+    # Fallback: re-read the tag to get the new option id.
+    opts = await fetch_tag_options(org_id, tag_id)
+    if target in opts:
+        return opts[target]
+    raise RuntimeError(f"Zoho update-tag: could not read new option id for '{option_name}'")
 
 
 async def delete_journal_entry(org_id: str, journal_id: str) -> dict:
