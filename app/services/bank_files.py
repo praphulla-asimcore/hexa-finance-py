@@ -56,12 +56,16 @@ def _strip_spaces_dashes(value: str) -> str:
 def _split_name(full: str, max_len: int = 40) -> tuple:
     """Split a beneficiary name into (Name 1, Name 2) for the Maybank file.
 
-    The last word (last name) always goes to Name 2. If Name 1 is still longer
-    than ``max_len`` (40 chars incl. spaces), keep moving trailing words into
-    Name 2 (preserving order) until Name 1 fits or only one word remains."""
-    tokens = (full or "").split()
+    Bank-accepted RCgen files keep the **full name in Name 1** (up to 40 chars)
+    and leave Name 2 empty — matching it also helps IBG beneficiary-name checks.
+    Only when the full name exceeds ``max_len`` do we overflow trailing words
+    into Name 2 (preserving order) until Name 1 fits or one word remains."""
+    full = (full or "").strip()
+    if len(full) <= max_len:
+        return (full, "")
+    tokens = full.split()
     if len(tokens) <= 1:
-        return ((full or "").strip(), "")
+        return (full[:max_len], full[max_len:])
     name1_tokens = tokens[:-1]
     name2_tokens = [tokens[-1]]
     while len(" ".join(name1_tokens)) > max_len and len(name1_tokens) > 1:
