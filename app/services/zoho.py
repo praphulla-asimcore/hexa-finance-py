@@ -164,7 +164,7 @@ async def fetch_reporting_tags(org_id: str) -> list[dict]:
             f"keys={list(data.keys())}; "
             f"sample={str(data.get('reporting_tags') or data.get('tags'))[:250]}"
         )
-    return out
+    return out, data
 
 
 async def create_tag_option(org_id: str, tag_id: str, option_name: str) -> str:

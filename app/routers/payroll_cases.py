@@ -802,7 +802,7 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
     # ── Resolve the "Customer" reporting tag and Zoho contacts (mandatory) ────
     CUSTOMER_TAG = "Customer"
     try:
-        tags = await fetch_reporting_tags(org_id)
+        tags, _raw_tags = await fetch_reporting_tags(org_id)
     except Exception as e:
         return {"success": False, "error": f"Could not read Zoho reporting tags: {e}"}
     cust_tag = next((t for t in tags if t["tag_name"].lower() == CUSTOMER_TAG.lower()), None)
@@ -810,6 +810,11 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
         return {"success": False, "error": f"Reporting tag '{CUSTOMER_TAG}' not found in Zoho."}
     tag_id = cust_tag["tag_id"]
     tag_options = dict(cust_tag["options"])   # lower(client) -> tag_option_id
+    if not tag_options:
+        # Diagnostic: the GET /settings/tags response shape for options isn't being parsed.
+        return {"success": False,
+                "error": "DIAG tag_id=" + str(tag_id) + " options_parsed=" + str(list(tag_options.keys()))
+                         + " RAW=" + str(_raw_tags)[:900]}
 
     try:
         contacts = await fetch_contacts(org_id)   # lower(name) -> contact_id
