@@ -1589,6 +1589,25 @@ async def post_accrual_manual(case_id: str, request: Request):
     return await _refresh_detail(case_id, db, request, user, 3)
 
 
+@router.get("/api/debug/zoho-tags")
+async def debug_zoho_tags(request: Request, org: str = "762447369"):
+    """Temporary: dump the Customer reporting-tag detail to find option IDs."""
+    get_current_user(request)  # auth required
+    import json as _json
+    from app.services.zoho import fetch_reporting_tags, fetch_tag_detail
+    out: dict = {}
+    try:
+        tags, raw = await fetch_reporting_tags(org)
+        cust = next((t for t in tags if t["tag_name"].lower() == "customer"), None)
+        out["customer_list_entry"] = next(
+            (t for t in (raw.get("reporting_tags") or [])
+             if (t.get("tag_name") or "").lower() == "customer"), None)
+        out["detail"] = await fetch_tag_detail(org, cust["tag_id"]) if cust else "no customer tag"
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"
+    return HTMLResponse("<pre>" + _json.dumps(out, indent=2, default=str) + "</pre>")
+
+
 # ─── Step 3b: Email approve/reject token ─────────────────────────────────────
 
 @router.get("/api/payroll-cases/approve/{token}")
