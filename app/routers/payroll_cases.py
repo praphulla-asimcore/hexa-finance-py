@@ -1543,11 +1543,13 @@ async def send_check_approval(case_id: str, request: Request):
         "approver_role": "reviewer", "token": token, "status": "pending",
     }).execute()
 
+    reviewer_cc = [c["email"] for c in APPROVERS["reviewer"].get("cc", []) if c.get("email")]
     base_url = f"{APP_URL}/api/payroll-cases/approve/{token}"
     try:
         email_check_approval(
             APPROVERS["reviewer"]["email"], APPROVERS["reviewer"]["name"], "First Reviewer",
-            kase, f"{base_url}?action=approve", f"{base_url}?action=reject"
+            kase, f"{base_url}?action=approve", f"{base_url}?action=reject",
+            cc=reviewer_cc,
         )
     except Exception:
         pass
@@ -1557,7 +1559,7 @@ async def send_check_approval(case_id: str, request: Request):
         "status": "check_approval_sent", "check_approval_sent_at": now,
     }).eq("id", case_id).execute()
 
-    await _audit_log(db, case_id, "CHECK_APPROVAL_SENT", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"sentTo": APPROVERS["reviewer"]["email"]})
+    await _audit_log(db, case_id, "CHECK_APPROVAL_SENT", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"sentTo": APPROVERS["reviewer"]["email"], "cc": reviewer_cc})
 
     # Zoho accrual posting is intentionally NOT done inline here — it is slow
     # (one API call per employee) and would hold the HTTP response, leaving the

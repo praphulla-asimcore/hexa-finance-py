@@ -23,16 +23,20 @@ def _fmt_rm(n) -> str:
     return f"RM {float(n):,.2f}"
 
 
-def _send(to: str | list, subject: str, html: str) -> None:
+def _send(to: str | list, subject: str, html: str, cc: str | list | None = None) -> None:
     if not RESEND_API_KEY:
         return
     resend_sdk.api_key = RESEND_API_KEY
-    resend_sdk.Emails.send({
+    payload = {
         "from": EMAIL_FROM,
         "to": to if isinstance(to, list) else [to],
         "subject": subject,
         "html": html,
-    })
+    }
+    cc_list = [c for c in ((cc if isinstance(cc, list) else [cc]) if cc else []) if c]
+    if cc_list:
+        payload["cc"] = cc_list
+    resend_sdk.Emails.send(payload)
 
 
 def send_invite(to: str, name: str, invite_url: str, role: str = "") -> None:
@@ -50,7 +54,7 @@ def send_invite(to: str, name: str, invite_url: str, role: str = "") -> None:
     """))
 
 
-def email_check_approval(to: str, name: str, role: str, kase: dict, approve_url: str, reject_url: str) -> None:
+def email_check_approval(to: str, name: str, role: str, kase: dict, approve_url: str, reject_url: str, cc: list | None = None) -> None:
     check = kase.get("check_data") or {}
     entities = (kase.get("parsed_data") or {}).get("entities", [])
     label = "CSI Payroll" if kase.get("type") == "CSI" else "Internal Payroll"
@@ -105,7 +109,7 @@ def email_check_approval(to: str, name: str, role: str, kase: dict, approve_url:
         f'A payroll check file for <b>{kase.get("entity_name") or kase.get("entity","")}</b> ({kase.get("period","")}) is pending your review.<br/>'
         f'Please review the summary below and approve or reject.'
     )
-    _send(to, f"[Hexa Finance] {label} Check — {role} Required | {kase['reference']}", _wrap(f"""
+    _send(to, f"[Hexa Finance] {label} Check — {role} Required | {kase['reference']}", cc=cc, html=_wrap(f"""
         <h2 style="font-size:18px;font-weight:700;color:#111;margin:0 0 8px">Payroll Check — {role}</h2>
         <p style="color:#555;font-size:14px;line-height:1.6;margin:0 0 20px">Hi {name},<br/><br/>{intro}</p>
 
