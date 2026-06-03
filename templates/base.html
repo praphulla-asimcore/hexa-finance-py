@@ -150,25 +150,22 @@ document.addEventListener('keydown', function(e) {
   }
 });
 
-// Keep sidebar active state in sync with HTMX navigation
-const SECTION_PATHS = {
-  '/dashboard': 'dashboard',
-  '/csi': 'csi',
-  '/payroll': 'payroll',
-  '/consultants': 'beneficiaries',
-};
+// Keep sidebar active state in sync with HTMX navigation. Match each nav button
+// by its own hx-get path instead of a positional index — the old index map
+// broke when Statutory was inserted (shifting Consultant DB) and when the
+// optional Payroll item is hidden for arrangers.
 function syncSidebar(path) {
-  const section = Object.entries(SECTION_PATHS).find(([p]) => path === p || path.startsWith(p + '/'))?.[1];
-  if (!section) return;
-  document.querySelectorAll('.sidebar-item').forEach(btn => {
-    btn.classList.remove('sidebar-item-active');
+  const buttons = document.querySelectorAll('.sidebar-item[hx-get]');
+  let active = null;
+  buttons.forEach(btn => {
+    const p = btn.getAttribute('hx-get');
+    if (p && (path === p || path.startsWith(p + '/'))) {
+      // Prefer the longest matching path (e.g. /consultants over a shorter prefix).
+      if (!active || p.length > active.getAttribute('hx-get').length) active = btn;
+    }
   });
-  const map = { dashboard: 0, csi: 1, payroll: 2, beneficiaries: 3 };
-  const idx = map[section];
-  if (idx !== undefined) {
-    const items = document.querySelectorAll('.sidebar-item');
-    if (items[idx]) items[idx].classList.add('sidebar-item-active');
-  }
+  buttons.forEach(btn => btn.classList.remove('sidebar-item-active'));
+  if (active) active.classList.add('sidebar-item-active');
 }
 // Sync on HTMX push-url events
 document.addEventListener('htmx:pushedIntoHistory', function(e) {
