@@ -9,6 +9,7 @@ Return shape matches PostgREST: timestamps/dates/uuids come back as strings and
 numerics as floats, ``execute().data`` is a list (or a dict/None for
 single/maybe_single), and ``execute().count`` is set when ``count="exact"``.
 """
+import threading
 from datetime import datetime, date
 from decimal import Decimal
 from uuid import UUID
@@ -17,6 +18,34 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
+
+# One reused connection per process (keyed by conninfo) instead of a fresh
+# psycopg.connect() per query — the connect/TLS handshake was the dominant cost,
+# especially per page (several queries each). On serverless it's reused across
+# warm invocations; with PgBouncer in front, server-side pooling is handled
+# upstream, so a single client connection is the right model. Guarded by a lock
+# because the sync calls may run from Starlette's threadpool.
+_CONNS: dict = {}
+_CONN_LOCK = threading.Lock()
+
+
+def _get_conn(conninfo: str):
+    conn = _CONNS.get(conninfo)
+    if conn is not None and not conn.closed:
+        return conn
+    conn = psycopg.connect(conninfo, autocommit=True, row_factory=dict_row)
+    conn.prepare_threshold = None  # PgBouncer transaction-pool safe
+    _CONNS[conninfo] = conn
+    return conn
+
+
+def _drop_conn(conninfo: str) -> None:
+    conn = _CONNS.pop(conninfo, None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 # Many-to-one relationships used by PostgREST embeds: (base, embedded) ->
 # (fk column on base, referenced column on embedded).
@@ -125,18 +154,31 @@ class _Query:
         return self
 
     # ── execution ────────────────────────────────────────────────────────────
+    def _dispatch(self, conn) -> _Result:
+        if self._op == "select":
+            return self._do_select(conn)
+        if self._op == "insert":
+            return self._do_insert(conn)
+        if self._op == "update":
+            return self._do_update(conn)
+        if self._op == "delete":
+            return self._do_delete(conn)
+        raise ValueError(f"unknown op {self._op}")
+
     def execute(self) -> _Result:
-        with psycopg.connect(self._conninfo, autocommit=True, row_factory=dict_row) as conn:
-            conn.prepare_threshold = None  # PgBouncer transaction-pool safe
-            if self._op == "select":
-                return self._do_select(conn)
-            if self._op == "insert":
-                return self._do_insert(conn)
-            if self._op == "update":
-                return self._do_update(conn)
-            if self._op == "delete":
-                return self._do_delete(conn)
-            raise ValueError(f"unknown op {self._op}")
+        # Reuse the per-process connection. On a dropped/stale connection (idle
+        # timeout, server restart, PgBouncer recycle) reconnect — but only auto-
+        # retry SELECTs. Writes (insert/update/delete) re-raise instead, so a
+        # connection drop mid-write can never double-apply a financial record;
+        # the next request gets a fresh connection.
+        with _CONN_LOCK:
+            try:
+                return self._dispatch(_get_conn(self._conninfo))
+            except (psycopg.OperationalError, psycopg.InterfaceError):
+                _drop_conn(self._conninfo)
+                if self._op == "select":
+                    return self._dispatch(_get_conn(self._conninfo))
+                raise
 
     def _where(self):
         if not self._filters:

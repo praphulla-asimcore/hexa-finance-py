@@ -12,6 +12,7 @@
 </style>
 </head>
 <body>
+<div id="nav-progress" aria-hidden="true"></div>
 <div class="app-shell">
 
   {# ── Sidebar ─────────────────────────────────────────────────────────── #}
@@ -179,6 +180,27 @@ window.addEventListener('popstate', function() {
 });
 // Sync on initial load
 syncSidebar(window.location.pathname);
+</script>
+
+<script>
+// Top progress bar for foreground HTMX navigation — gives instant feedback so
+// clicks don't feel frozen while the server responds. Skips background pollers
+// (hx-trigger="every …") and the accrual auto-fire so the bar doesn't flash.
+(function () {
+  function isBackground(elt) {
+    if (!elt || !elt.getAttribute) return false;
+    var trig = elt.getAttribute('hx-trigger') || '';
+    if (trig.indexOf('every') !== -1) return true;
+    return elt.id === 'approval-poller' || elt.id === 'accrual-autofire';
+  }
+  document.body.addEventListener('htmx:beforeRequest', function (e) {
+    if (!isBackground(e.detail && e.detail.elt)) document.body.classList.add('nav-loading');
+  });
+  ['htmx:afterRequest', 'htmx:responseError', 'htmx:sendError', 'htmx:timeout']
+    .forEach(function (evt) {
+      document.body.addEventListener(evt, function () { document.body.classList.remove('nav-loading'); });
+    });
+})();
 </script>
 </body>
 </html>
