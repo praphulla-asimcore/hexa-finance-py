@@ -53,6 +53,9 @@
   {# ── Accrual result banner + manual post button ── #}
   {% set accrual_ok = audit_accrual and (audit_accrual.metadata or {}).get('success') %}
   {% set accrual_attempted = audit_accrual is not none %}
+  {# In-progress marker written by /post-accrual before the slow Zoho work, so a
+     re-render from the 8s poller shows "Posting…" instead of firing again. #}
+  {% set accrual_started = ((logs | selectattr('event_type','equalto','ZOHO_ACCRUAL_STARTED') | list | length) > 0) if logs else false %}
   {% set can_post_accrual = kase.status in ['check_approval_sent','check_reviewer_approved','check_approved',
       'bank_file_generated','bank_uploaded','payment_approval_sent','payment_approved','payment_rejected','zoho_posted'] %}
 
@@ -80,19 +83,27 @@
     </button>
   </div>
 
+  {% elif accrual_started %}
+  {# Posting is in flight (in another request). Show progress; the 8s poller
+     refreshes this block and swaps in the result when it completes. #}
+  <div class="pf-info-banner pf-banner-waiting" style="margin-bottom:16px">
+    <span class="spinner" style="display:inline-block;margin-right:8px"></span>
+    Posting accrual journal to Zoho Books…
+  </div>
+
   {% elif can_post_accrual %}
-  <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:14px 16px;margin-bottom:16px">
-    <div style="font-weight:700;color:#1e40af;margin-bottom:6px;font-size:13px">Zoho Accrual Not Posted</div>
-    <div style="font-size:12px;color:#1e3a8a;margin-bottom:10px">
-      The accrual journal entry for this run has not been posted to Zoho Books yet.
-    </div>
-    <button class="btn btn-primary btn-sm"
-        hx-post="/cases/{{ kase.id }}/post-accrual"
-        hx-target="#case-detail-inner"
-        hx-swap="innerHTML">
-      <span class="spinner htmx-indicator"></span>
-      Post Accrual to Zoho Books
-    </button>
+  {# Not yet started → auto-fire the accrual ONCE. The hidden div fires on load;
+     /post-accrual immediately writes ZOHO_ACCRUAL_STARTED so subsequent poller
+     re-renders fall into the in-flight branch above instead of re-firing. #}
+  <div id="accrual-autofire"
+       hx-post="/cases/{{ kase.id }}/post-accrual"
+       hx-trigger="load"
+       hx-target="#case-detail-inner"
+       hx-swap="innerHTML"
+       style="display:none" aria-hidden="true"></div>
+  <div class="pf-info-banner pf-banner-waiting" style="margin-bottom:16px">
+    <span class="spinner" style="display:inline-block;margin-right:8px"></span>
+    Posting accrual journal to Zoho Books…
   </div>
   {% endif %}
 
@@ -108,7 +119,7 @@
   {# ── Send approval button ── #}
   {% if can_send %}
   <div class="pf-action-zone">
-    <p class="pf-action-desc">Send the check file to the reviewer for approval. The accrual journal will be automatically posted to Zoho Books when you click this button.</p>
+    <p class="pf-action-desc">Send the check file to the reviewer for approval. The accrual journal is then posted to Zoho Books automatically in the background — you'll see its status update here without waiting.</p>
     <form hx-post="/cases/{{ kase.id }}/send-check-approval"
           hx-target="#case-detail-inner" hx-swap="innerHTML">
       <button type="submit" class="btn btn-primary">

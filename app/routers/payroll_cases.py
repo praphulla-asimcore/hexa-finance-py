@@ -1533,19 +1533,11 @@ async def send_check_approval(case_id: str, request: Request):
 
     await _audit_log(db, case_id, "CHECK_APPROVAL_SENT", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"sentTo": APPROVERS["reviewer"]["email"]})
 
-    # Auto-book accruals in Zoho now that the check has been reviewed and sent for approval.
-    # Non-blocking — failure is logged but does not block the approval workflow.
-    fresh_kase = db.from_("payroll_cases").select("*").eq("id", case_id).single().execute().data or kase
-    case_type  = kase.get("type", "CSI")
-    try:
-        if case_type == "PAYROLL":
-            accrual_result = await _auto_book_accruals_payroll(fresh_kase, db)
-        else:
-            accrual_result = await _auto_book_accruals(fresh_kase, db)
-    except Exception as e:
-        accrual_result = {"success": False, "error": str(e)}
-    await _audit_log(db, case_id, "ZOHO_ACCRUAL_AUTO", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), accrual_result)
-
+    # Zoho accrual posting is intentionally NOT done inline here — it is slow
+    # (one API call per employee) and would hold the HTTP response, leaving the
+    # page spinner up long after the status has actually changed. The status is
+    # already updated above, so we return immediately; the Step 3 panel then
+    # auto-fires POST /post-accrual once to book the accrual in its own request.
     return await _refresh_detail(case_id, db, request, user, 3)
 
 
@@ -1571,6 +1563,11 @@ async def post_accrual_manual(case_id: str, request: Request):
     for log in (logs_resp.data or []):
         if (log.get("metadata") or {}).get("success"):
             return await _refresh_detail(case_id, db, request, user, 3)
+
+    # Mark in-progress BEFORE the slow Zoho work so the 8s detail poller sees
+    # the accrual is already running and suppresses its auto-fire — otherwise a
+    # second concurrent post-accrual could double-post the journal entry.
+    await _audit_log(db, case_id, "ZOHO_ACCRUAL_STARTED", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {})
 
     case_type = kase.get("type", "CSI")
     try:
