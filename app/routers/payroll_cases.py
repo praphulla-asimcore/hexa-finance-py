@@ -15,8 +15,8 @@ from app.services.parser import parse_excel_buffer, parse_payroll_excel_buffer
 from app.services.statutory_enrich import enrich_entities_statutory
 from app.services.zoho import (
     post_journal_entry, create_expense, attach_journal_document, fetch_accounts,
-    delete_journal_entry, fetch_contacts, create_contact, fetch_reporting_tags,
-    fetch_tag_options, create_tag_option,
+    delete_journal_entry, delete_expense, fetch_contacts, create_contact,
+    fetch_reporting_tags, fetch_tag_options, create_tag_option,
 )
 from app.services.bank_files import (
     generate_and_store_bank_files, generate_and_store_bank_files_payroll,
@@ -2128,7 +2128,10 @@ async def delete_case(case_id: str, request: Request):
         return HTMLResponse(
             '<div class="error-msg">Only an admin can delete a completed (Zoho-posted) run.</div>')
 
-    # For a posted run, delete its journals in Zoho first (delete what's possible).
+    # For a posted run, delete its Zoho entries first (delete what's possible).
+    # zoho_journal_ids mixes accrual JOURNAL ids and payment EXPENSE ids (payments
+    # are booked via create_expense), so try the journal endpoint then fall back
+    # to the expense endpoint — this clears both, including old mixed records.
     flash = None
     if posted:
         org_id = (kase.get("zoho_org_id") or "").strip()
@@ -2139,22 +2142,45 @@ async def delete_case(case_id: str, request: Request):
                 await delete_journal_entry(org_id, jid)
                 deleted += 1
             except Exception:
-                failed.append(jid)
+                try:
+                    await delete_expense(org_id, jid)   # it was a payment expense, not a journal
+                    deleted += 1
+                except Exception:
+                    failed.append(jid)
         ref = kase.get("reference", "")
         if failed:
             shown = ", ".join(failed[:8]) + ("…" if len(failed) > 8 else "")
             flash = {"kind": "warning",
-                     "msg": f"Deleted {ref}. Zoho journals removed {deleted}/{len(jids)}; "
+                     "msg": f"Deleted {ref}. Zoho entries removed {deleted}/{len(jids)}; "
                             f"{len(failed)} could NOT be deleted (e.g. locked period) and remain "
                             f"in Zoho: {shown}"}
         else:
             flash = {"kind": "success",
-                     "msg": f"Deleted {ref} and removed all {deleted} Zoho journal(s)."}
+                     "msg": f"Deleted {ref} and removed all {deleted} Zoho entr{'y' if deleted == 1 else 'ies'}."}
 
-    # Full cleanup of app records (statutory submissions, tokens, audit, case).
-    for s in (db.from_("statutory_submissions").select("id,case_ids").execute().data or []):
-        if case_id in (s.get("case_ids") or []):
+    # Statutory submissions bundle multiple cases (keyed by entity+type+wage_month,
+    # accumulating case_ids). Only delete a submission when THIS case was its sole
+    # member — otherwise just unlink this case so the other runs' statutory data is
+    # preserved. (The submission's merged employee_data is left intact; regenerate
+    # the statutory file if this run's employees must be dropped.)
+    shared_statutory = []
+    for s in (db.from_("statutory_submissions").select("id,case_ids,statutory_type,entity,wage_month").execute().data or []):
+        cids = s.get("case_ids") or []
+        if case_id not in cids:
+            continue
+        remaining = [c for c in cids if c != case_id]
+        if remaining:
+            db.from_("statutory_submissions").update({"case_ids": remaining}).eq("id", s["id"]).execute()
+            shared_statutory.append(f"{s.get('statutory_type','?')} {s.get('entity','')} {s.get('wage_month','')}".strip())
+        else:
             db.from_("statutory_submissions").delete().eq("id", s["id"]).execute()
+    if shared_statutory and flash is None:
+        flash = {"kind": "warning", "msg": ""}
+    if shared_statutory:
+        note = ("This run was unlinked from shared statutory submission(s) still used by other runs: "
+                + "; ".join(shared_statutory) + ". Re-generate those if this run's employees must be removed.")
+        flash["msg"] = (flash["msg"] + " " + note).strip() if flash.get("msg") else note
+
     db.from_("payroll_approval_tokens").delete().eq("case_id", case_id).execute()
     db.from_("payroll_audit_log").delete().eq("case_id", case_id).execute()
     db.from_("payroll_cases").delete().eq("id", case_id).execute()
