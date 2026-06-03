@@ -955,29 +955,55 @@ async def _auto_book_payment(kase: dict, db) -> dict:
 
     # Build payment rows from parsed employee data.
     # Description matches accrual format exactly: {entity_code}_CSI_{costCentre}_{name}_{mmm_yy}
-    payment_rows = []  # list of (amount, description, reference)
+    payment_rows = []  # list of (amount, description, reference, vendor_name)
     entities = (kase.get("parsed_data") or {}).get("entities", [])
     for ent in entities:
         for emp in ent.get("employees", []):
             amount = _round2(emp.get("netSalary", 0))
             if amount <= 0:
                 continue
+            vendor_name = (emp.get("name") or emp.get("employeeId") or "").strip()
             cust = (emp.get("costCentre") or "").replace(" ", "_")
             cons = (emp.get("name") or emp.get("employeeId", "")).replace(" ", "_")
             desc = f"{entity_code}_CSI_{cust}_{cons}_{mmm_yy}"
             ref  = f"PMT-{kase['reference']}-{emp.get('employeeId', '')}"
-            payment_rows.append((amount, desc, ref))
+            payment_rows.append((amount, desc, ref, vendor_name))
 
     if not payment_rows:
         return {"success": False, "error": "No payment rows found (bank file empty and no employees with net salary > 0)"}
 
-    # Post ONE expense per consultant row (not a JV)
+    # Resolve a Zoho Vendor (the consultant) for every row — the SAME contact the
+    # accrual journal tags (created as a "vendor"), creating any that are missing.
+    # Vendor tagging is MANDATORY: if any can't be resolved, post nothing.
+    try:
+        contacts = await fetch_contacts(org_id)   # lower(name) -> contact_id
+    except Exception as e:
+        return {"success": False, "error": f"Could not read Zoho contacts: {e}"}
+    vendor_errs = []
+    for _amt, _desc, _ref, vendor_name in payment_rows:
+        if not vendor_name:
+            vendor_errs.append("a consultant row has no name for the Vendor")
+            continue
+        if vendor_name.lower() not in contacts:
+            try:
+                contacts[vendor_name.lower()] = await create_contact(org_id, vendor_name, "vendor")
+            except Exception as e:
+                vendor_errs.append(f"vendor '{vendor_name}': {e}")
+    if vendor_errs:
+        return {"success": False, "error": "Vendor resolution failed (nothing posted): " + "; ".join(vendor_errs[:6])}
+
+    # Post ONE expense per consultant row (not a JV), tagged to the Vendor.
     results = []
-    for amount, description, reference in payment_rows:
+    for amount, description, reference, vendor_name in payment_rows:
+        vendor_id = contacts.get(vendor_name.lower())
+        if not vendor_id:
+            results.append({"ref": reference, "error": f"no vendor_id for '{vendor_name}'", "success": False})
+            continue
         try:
             expense = await create_expense(org_id, {
                 "account_id":              payable_id,
                 "paid_through_account_id": bank_id,
+                "vendor_id":               vendor_id,
                 "date":                    payment_date,
                 "amount":                  amount,
                 "description":             description,
