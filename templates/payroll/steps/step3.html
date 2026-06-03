@@ -54,7 +54,7 @@
   {% set accrual_ok = audit_accrual and (audit_accrual.metadata or {}).get('success') %}
   {% set accrual_attempted = audit_accrual is not none %}
   {# In-progress marker written by /post-accrual before the slow Zoho work, so a
-     re-render from the 8s poller shows "Posting…" instead of firing again. #}
+     re-render from the 3s poller shows "Posting…" instead of firing again. #}
   {% set accrual_started = ((logs | selectattr('event_type','equalto','ZOHO_ACCRUAL_STARTED') | list | length) > 0) if logs else false %}
   {% set can_post_accrual = kase.status in ['check_approval_sent','check_reviewer_approved','check_approved',
       'bank_file_generated','bank_uploaded','payment_approval_sent','payment_approved','payment_rejected','zoho_posted'] %}
@@ -84,7 +84,7 @@
   </div>
 
   {% elif accrual_started %}
-  {# Posting is in flight (in another request). Show progress; the 8s poller
+  {# Posting is in flight (in another request). Show progress; the 3s poller
      refreshes this block and swaps in the result when it completes. #}
   <div class="pf-info-banner pf-banner-waiting" style="margin-bottom:16px">
     <span class="spinner" style="display:inline-block;margin-right:8px"></span>

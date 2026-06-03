@@ -1564,7 +1564,7 @@ async def post_accrual_manual(case_id: str, request: Request):
         if (log.get("metadata") or {}).get("success"):
             return await _refresh_detail(case_id, db, request, user, 3)
 
-    # Mark in-progress BEFORE the slow Zoho work so the 8s detail poller sees
+    # Mark in-progress BEFORE the slow Zoho work so the 3s detail poller sees
     # the accrual is already running and suppresses its auto-fire — otherwise a
     # second concurrent post-accrual could double-post the journal entry.
     await _audit_log(db, case_id, "ZOHO_ACCRUAL_STARTED", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {})
