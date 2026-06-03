@@ -468,12 +468,30 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def next_rcgen_run_number(db, key: str = "rcgen_dp") -> int:
+def next_rcgen_run_number(db, key: str = "rcgen_dp", start: int = 1000) -> int:
     """Atomically increment and return the persistent RCGEN running number — the
     DB equivalent of the macro's runningnumber!A2 (the bank uses it for anti-
-    replay). Backed by a Postgres function `next_counter(p_key text)` over an
-    `app_counters` table. Raises if that object is missing so the caller can
-    decide to skip .txt generation rather than reuse a number."""
+    replay). Self-contained: creates the `app_counters` table if absent and uses
+    a single INSERT … ON CONFLICT DO UPDATE … RETURNING (atomic, row-locked) so
+    concurrent generations never collide. First value is ``start`` (seeded above
+    the maker's macro counter); each call after that is +1.
+
+    Uses DATABASE_URL via psycopg (production path). Falls back to a Supabase
+    RPC `next_counter` only when DATABASE_URL is unset."""
+    from app.config import DATABASE_URL
+    if DATABASE_URL:
+        import psycopg
+        with psycopg.connect(DATABASE_URL, autocommit=True) as conn:
+            conn.prepare_threshold = None   # PgBouncer transaction-pool safe
+            conn.execute("CREATE TABLE IF NOT EXISTS app_counters "
+                         "(key text PRIMARY KEY, value bigint NOT NULL DEFAULT 0)")
+            row = conn.execute(
+                "INSERT INTO app_counters (key, value) VALUES (%s, %s) "
+                "ON CONFLICT (key) DO UPDATE SET value = app_counters.value + 1 "
+                "RETURNING value",
+                (key, start),
+            ).fetchone()
+            return int(row[0])
     resp = db.rpc("next_counter", {"p_key": key}).execute()
     val = resp.data
     if isinstance(val, list):          # some PostgREST configs wrap scalars

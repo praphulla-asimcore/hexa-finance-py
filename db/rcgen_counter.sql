@@ -1,8 +1,11 @@
 -- Persistent atomic counters (e.g. the RCGEN bank-file running number).
--- Run this once in the Supabase SQL editor before enabling direct .txt generation.
--- The RCGEN running number is the DB equivalent of the macro's
--- 'runningnumber' sheet (cell A2); Maybank CMS uses it for anti-replay, so it
--- must never go backwards or repeat a value the bank has already accepted.
+-- NOTE: the app (next_rcgen_run_number) now AUTO-CREATES this table and seeds it
+-- via INSERT … ON CONFLICT, so you normally do NOT need to run this manually.
+-- It's kept for reference and for overriding the seed value — run it against the
+-- SAME database the app uses (DATABASE_URL), not necessarily Supabase.
+-- The RCGEN running number mirrors the macro's 'runningnumber' sheet (cell A2);
+-- Maybank CMS uses it for anti-replay, so it must never go backwards or repeat a
+-- value the bank has already accepted.
 
 create table if not exists app_counters (
     key   text primary key,
