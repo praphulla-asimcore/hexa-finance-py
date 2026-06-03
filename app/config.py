@@ -56,9 +56,8 @@ STATUTORY_NOS: dict = {
 APPROVERS: dict = {
     "reviewer": {"name": "Asim",                   "email": "asim.ovc977@gmail.com",
                  # Extra reviewers CC'd on the check-approval email so they receive
-                 # it too. Ikhram Merican's address is read from IKHRAM_EMAIL (set
-                 # it in the environment); blank entries are skipped when sending.
-                 "cc": [{"name": "Ikhram Merican", "email": os.getenv("IKHRAM_EMAIL", "")}]},
+                 # it too (blank entries are skipped when sending).
+                 "cc": [{"name": "Ikhram Merican", "email": "ikhram.merican@hexamatics.com"}]},
     "final":    {"name": "Praphulla Subedi",        "email": "praphulla@hexamatics.com"},
     "director": {"name": "Dato Thiruchelvapalan",   "email": "thiruchelvapalan@hexamatics.com"},
 }
