@@ -6,9 +6,28 @@ import hashlib
 from datetime import datetime, timezone
 import httpx
 import openpyxl
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from app.config import (
     AIRTABLE_API_KEY, AIRTABLE_BASE_ID, AIRTABLE_TABLE_NAME, BANK_NOTIFY_EMAILS,
 )
+
+# ── Fixed values the RCGEN2 macro reads from the workbook's Home/Domestic-Payments
+#    sheets. Mirrored here so we can build the bank .txt directly in Python (the
+#    macro's own Generate button is Windows-only). If the Maybank corporate
+#    registration changes, update these AND the rcgen_template.xlsm Home sheet.
+#    Source cells: Home!E5, Home!E6, Home!E7, Domestic Payments!B3, !G2.
+RCGEN_CORPORATE_ID   = "MYMHEXAMATI"              # Home!E5  — header field 2
+RCGEN_CLIENT_BATCH   = "MYMHEXA1D"               # Home!E6  — header field 3
+RCGEN_DEBIT_ACCOUNT  = "514123216966"            # Home!E7  — body field 15
+RCGEN_PROC_INDICATOR = "B"                       # DomPay!B3 — header field 5
+RCGEN_PRODUCT        = "Domestic Payments (MY)"  # DomPay!G2 — body field 3
+
+# TripleDES key/IV embedded in the RCGEN2 macro (Generate_encryptedMessage). The
+# header's encryption token is Base64(3DES-CBC-ZeroPad(filename_run_totalhash)).
+_RCGEN_3DES_KEY = b">tlF8adk=35K{dsb"   # 16 bytes → 2-key 3DES (K1,K2,K1)
+_RCGEN_3DES_IV  = b"zlrs$5kb"           # 8 bytes
+_RCGEN_SEP      = "|"
+_RCGEN_EOL      = "\r\n"
 
 # The official Maybank RCGEN2 macro workbook. We fill its "Domestic Payments"
 # data sheet (leaving the VBA macro and all lookup sheets intact) so the maker
@@ -131,12 +150,13 @@ def _advice_detail(client: str, name: str, mmyy: str) -> str:
 _RCMS_TEXT_COLS = {1, 2, 6, 10, 11, 12, 13}
 
 
-def _write_rcms_dp_row(ws, r, b, value_date, mmyy, notify_emails, advice_fn=None):
-    """Write a single beneficiary onto row ``r`` of a 'Domestic Payments' sheet,
-    using the exact RCGEN2 column order (col 1 = Payment Mode … col 18 = Credit
-    Description, cols 28/29 = Email 2/3). ``advice_fn(b)`` builds the advice/debit/
-    credit description; defaults to the {ClientInitials}_{First}_{Second}_{MMYY}
-    format used for EOR consultant payments."""
+def _dp_row_cells(b, value_date, mmyy, notify_emails, advice_fn=None) -> dict:
+    """Build the 'Domestic Payments' sheet cell values (1-indexed column → value)
+    for one beneficiary, using the exact RCGEN2 column order (col 1 = Payment Mode
+    … col 18 = Credit Description, cols 28/29 = Email 2/3). Single source of truth
+    shared by the .xlsm writer (`_write_rcms_dp_row`) and the .txt builder
+    (`build_dp_txt`). ``advice_fn(b)`` builds the advice/debit/credit description;
+    defaults to the {ClientInitials}_{First}_{Second}_{MMYY} EOR format."""
     advice = advice_fn(b) if advice_fn else _advice_detail(b.get("costCentre", ""), b["name"], mmyy)
     name1, name2 = _split_name(b["name"])
     new_ic, biz_reg, passport = _id_fields(b.get("idNumber", ""), b.get("idType", ""))
@@ -162,6 +182,12 @@ def _write_rcms_dp_row(ws, r, b, value_date, mmyy, notify_emails, advice_fn=None
         vals[28] = notify_emails[1]            # Email 2
     if len(notify_emails) > 2:
         vals[29] = notify_emails[2]            # Email 3
+    return vals
+
+
+def _write_rcms_dp_row(ws, r, b, value_date, mmyy, notify_emails, advice_fn=None):
+    """Write a single beneficiary onto row ``r`` of a 'Domestic Payments' sheet."""
+    vals = _dp_row_cells(b, value_date, mmyy, notify_emails, advice_fn)
     for col, v in vals.items():
         cell = ws.cell(row=r, column=col, value=v)
         if col in _RCMS_TEXT_COLS:
@@ -193,6 +219,157 @@ def _fill_rcms_template(beneficiaries, value_date, mmyy, notify_emails, advice_f
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Direct .txt generation — a faithful Python port of the RCGEN2 macro's
+#  File_Single_DomPay so the maker can download the bank .txt without Excel.
+#  Field-by-field equivalent of the VBA; validate byte-for-byte against a known
+#  macro-generated file before relying on it.
+# ─────────────────────────────────────────────────────────────────────────────
+def _lc(val, n: int) -> str:
+    """LengthCheck(): stringify and truncate to n chars (macro left-aligns, no pad)."""
+    s = "" if val is None else str(val)
+    return s[:n]
+
+
+def _rcgen_token(filename: str, run_number, total_hash: int) -> str:
+    """Header field 6 = Base64(3DES-CBC, Zeros-pad) of '<filename>_<run>_<hash>'.
+    Reproduces Generate_encryptedMessage from the RCGEN2 macro exactly."""
+    plain = f"{filename}_{run_number}_{total_hash}".encode("utf-8")
+    data = plain + b"\x00" * ((-len(plain)) % 8)           # .NET PaddingMode.Zeros
+    enc = Cipher(algorithms.TripleDES(_RCGEN_3DES_KEY), modes.CBC(_RCGEN_3DES_IV)).encryptor()
+    return base64.b64encode(enc.update(data) + enc.finalize()).decode()
+
+
+def _row_hash(amount: float, account_no: str, count: int) -> int:
+    """Per-row hash, matching the macro: amount-mod-2000 + a digit/ASCII sum of the
+    last 6 credit-account characters, each offset by the running row count."""
+    amt = float(amount) * 100
+    s_hash = (amt - (amt // 2000) * 2000) + count
+    accno = account_no or ""
+    if len(accno) < 6:
+        accno = accno.rjust(6, "0")
+    last6 = accno[-6:]
+    acc_val = sum(int(ch) if ch.isdigit() else ord(ch) for ch in last6)
+    acc_val = acc_val * 2 + count
+    return int(round(s_hash)) + int(round(acc_val))
+
+
+def _join_sep_terminated(fields: list) -> str:
+    """Every field followed by '|', then EOL — 'f1|f2|...|fn|\\r\\n' (body record)."""
+    return "".join(f + _RCGEN_SEP for f in fields) + _RCGEN_EOL
+
+
+def _join_open_last(fields: list) -> str:
+    """All but the last field followed by '|', last field bare, then EOL —
+    'f1|...|f(n-1)|fn\\r\\n' (header / advice / trailer records)."""
+    return "".join(f + _RCGEN_SEP for f in fields[:-1]) + (fields[-1] if fields else "") + _RCGEN_EOL
+
+
+def _dp_header_record(token: str) -> str:
+    fields = ["00",
+              _lc(RCGEN_CORPORATE_ID.upper(), 30),
+              _lc(RCGEN_CLIENT_BATCH, 30),
+              "",                       # 4 Account Payees Only
+              RCGEN_PROC_INDICATOR,     # 5 Processing Indicator
+              token]                    # 6 encryption RCGEN
+    fields += [""] * 23                 # 7–29 fillers
+    return _join_open_last(fields)      # 29 fields
+
+
+def _dp_body_record(c: dict, amount: float) -> str:
+    amt2 = f"{float(amount):.2f}"
+    b = [""] * 167
+    b[0]   = "01"
+    b[1]   = _lc(str(c.get(1, "")).upper(), 2)   # 2 Payment Mode
+    b[2]   = _lc(RCGEN_PRODUCT, 50)              # 3 Product
+    b[4]   = str(c.get(2, ""))                   # 5 Value Date
+    b[7]   = _lc(c.get(3, ""), 30)               # 8 Customer Reference Number
+    b[9]   = _lc(c.get(17, ""), 55)              # 10 Debit Description
+    b[10]  = "MYR"                               # 11 Transaction Currency
+    b[11]  = amt2                                # 12 Transaction Amount
+    b[12]  = "Y"                                 # 13 In Debit Account Currency
+    b[13]  = "MYR"                               # 14 Debiting Currency
+    b[14]  = _lc(RCGEN_DEBIT_ACCOUNT, 20)        # 15 Debiting Account Number
+    b[15]  = _lc(c.get(6, ""), 35)               # 16 Credit Account Number
+    b[16]  = _lc(c.get(4, ""), 15)               # 17 Favourite Beneficiary/Biller Code
+    b[18]  = "Y"                                 # 19 Resident Indicator
+    b[19]  = _lc(c.get(7, ""), 40)               # 20 Beneficiary Name 1
+    b[20]  = _lc(c.get(8, ""), 40)               # 21 Beneficiary Name 2
+    b[21]  = _lc(c.get(9, ""), 40)               # 22 Beneficiary Name 3
+    b[24]  = _lc(c.get(10, ""), 20)              # 25 New ID No
+    b[25]  = _lc(c.get(11, ""), 20)              # 26 Old ID No
+    b[26]  = _lc(c.get(12, ""), 20)              # 27 Business Registration No
+    b[27]  = _lc(c.get(13, ""), 20)              # 28 Police/Army ID/Passport No
+    b[36]  = str(c.get(14, ""))                  # 37 Beneficiary Bank Code
+    b[102] = _lc(c.get(18, ""), 55)              # 103 Credit Description
+    b[109] = "01"                                # 110 Charges Borne By
+    b[110] = _lc(c.get(24, ""), 5)               # 111 Purpose of Transfer
+    b[160] = _lc(c.get(19, ""), 32)              # 161 Joint Name
+    b[161] = _lc(c.get(20, ""), 20)              # 162 Joint New ID No
+    b[162] = _lc(c.get(21, ""), 20)              # 163 Joint Old ID No
+    b[163] = _lc(c.get(22, ""), 20)              # 164 Joint Business Reg. No.
+    b[164] = _lc(c.get(23, ""), 20)              # 165 Joint Police/Army ID/Passport No.
+    b[165] = _lc(c.get(25, ""), 35)              # 166 Others Purpose of Transfer
+    b[166] = _lc(c.get(26, ""), 66)              # 167 Rentas Instruction to Bank
+    b += [""] * 168                              # 168–335 fillers
+    b += [""]                                    # 336 Transaction Return Status
+    return _join_sep_terminated(b)               # 336 fields, trailing '|'
+
+
+def _dp_advice_record(c: dict, amount: float) -> str:
+    amt2 = f"{float(amount):.2f}"
+    a = [""] * 40
+    a[0] = "02"
+    a[1] = "PA"
+    a[2] = _lc(c.get(3, ""), 30)                 # 3 Customer Reference Number
+    a[3] = _lc(c.get(15, ""), 80)                # 4 Email
+    a[6] = _lc(c.get(16, ""), 400)               # 7 Advice Detail
+    a[13] = amt2                                 # 14 Payment Advice Amount
+    for i, col in enumerate(range(28, 47)):      # 21–39 Email 2–20 (cols 28–46)
+        a[20 + i] = _lc(c.get(col, ""), 80)
+    return _join_open_last(a)                     # 40 fields
+
+
+def _dp_trailer_record(count: int, trans_amount: float, total_hash: int) -> str:
+    t = ["99", str(count), f"{float(trans_amount):.2f}", str(total_hash)]
+    t += [""] * 26                                # 5–30 fillers
+    return _join_open_last(t)                      # 30 fields
+
+
+def build_dp_txt(beneficiaries, value_date, mmyy, run_number, notify_emails,
+                 advice_fn=None, now=None) -> tuple:
+    """Build the Maybank RCGEN Domestic-Payments .txt directly (no Excel macro).
+    Returns (filename, text). Only beneficiaries with a credit account and a
+    positive amount are included — matching the rows the .xlsm path writes and
+    the macro's own amount>0 filter. ``run_number`` is the RCGEN running number
+    (must be managed by the caller, like the macro's runningnumber sheet)."""
+    now = now or datetime.now()
+    filename = "RCgen_Payment_DP_" + now.strftime("%d%m%Y%H%M%S") + ".txt"
+
+    bodies, count, total_hash, trans_amount = [], 0, 0, 0.0
+    for b in beneficiaries:
+        if not b.get("accountNumber"):
+            continue
+        amount = float(b.get("amount") or 0)
+        if amount <= 0:
+            continue
+        count += 1
+        c = _dp_row_cells(b, value_date, mmyy, notify_emails, advice_fn)
+        total_hash += _row_hash(amount, b["accountNumber"], count)
+        trans_amount += amount
+        rec = _dp_body_record(c, amount)
+        if str(c.get(15, "")) != "":
+            rec += _dp_advice_record(c, amount)
+        bodies.append(rec)
+
+    if count == 0:
+        return filename, ""   # nothing to pay → no file (macro Exits)
+
+    token = _rcgen_token(filename, run_number, total_hash)
+    text = _dp_header_record(token) + "".join(bodies) + _dp_trailer_record(count, trans_amount, total_hash)
+    return filename, text
 
 
 def _id_fields(id_number: str, id_type: str = "") -> tuple:
