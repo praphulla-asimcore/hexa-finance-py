@@ -144,7 +144,7 @@ def _write_rcms_dp_row(ws, r, b, value_date, mmyy, notify_emails, advice_fn=None
         1:  b["paymentMode"],                  # Payment Mode (IT/IG) — text
         2:  value_date,                        # Value Date DDMMYYYY — text
         3:  b["seq"],                          # Customer Reference Number
-        4:  b["employeeCode"],                 # Favourite Beneficiary Code (HS###)
+        4:  b.get("favouriteBeneficiaryCode", ""),  # Favourite Beneficiary/Biller Code (must be registered in Maybank CMS)
         5:  float(b["amount"] or 0),           # Transaction Amount (RM) — number, no comma
         6:  b["accountNumber"],                # Credit Account Number — text
         7:  name1,                             # Beneficiary Name 1 (<=40)
@@ -259,6 +259,7 @@ async def fetch_airtable_consultants() -> list[dict]:
                     "accountNo": str(f.get("Bank Account Number", "")).strip(),
                     "idNumber": str(f.get("ID Number", "")).strip(),
                     "idType": str(f.get("ID Type", "") or "").strip(),
+                    "favouriteBeneficiaryCode": str(f.get("Favourite Beneficiary Code", "") or "").strip(),
                     "nationality": str(f.get("Nationality", "") or "").strip(),
                     "contractType": str(f.get("Contract Type", "") or "").strip(),
                     "epfScheme": str(f.get("EPF Scheme", "") or "").strip(),
@@ -309,15 +310,30 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
     notify_emails = BANK_NOTIFY_EMAILS
 
     beneficiaries = []
+    excluded_no_fav = []   # consultants with no Favourite Beneficiary Code — skipped + flagged
     seq_ref = 100
     for ent in entities:
         for emp in ent.get("employees", []):
             matched = match_consultant(emp, airtable_list)
             bank_code = bank_name_to_code(matched["bankName"] if matched else "")
+
+            # Favourite Beneficiary/Biller Code: the CSI value wins, else the
+            # consultant-DB (Airtable) value. The bank only accepts a code that is
+            # registered as a favourite in Maybank CMS, so a consultant without one
+            # is EXCLUDED from the file (others continue) and flagged for follow-up.
+            fav_code = (emp.get("favouriteBeneficiaryCode") or "").strip() \
+                or (matched.get("favouriteBeneficiaryCode", "").strip() if matched else "")
+            if not fav_code:
+                excluded_no_fav.append({"name": (matched["name"] if matched else emp.get("name", "")),
+                                        "employeeId": emp.get("employeeId", ""),
+                                        "entity": ent["sheetName"]})
+                continue
+
             beneficiaries.append({
                 "seq": seq_ref,
                 "employeeId": emp["employeeId"],
                 "employeeCode": matched["employeeNumber"] if matched else emp.get("employeeId", ""),
+                "favouriteBeneficiaryCode": fav_code,
                 "name": matched["name"] if matched else emp["name"],
                 "costCentre": emp.get("costCentre", ""),
                 "amount": emp.get("netSalary", 0),
@@ -344,6 +360,7 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
     missing = [{"name": b["name"], "employeeId": b["employeeId"]} for b in beneficiaries if not b["matched"]]
     existing_check = dict(kase.get("check_data") or {})
     existing_check["missingBankAccounts"] = missing
+    existing_check["excludedNoFavourite"] = excluded_no_fav
 
     db.from_("payroll_cases").update({
         "status":                 "bank_file_generated",
@@ -364,6 +381,7 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
         "matched": matched_count,
         "total": len(beneficiaries),
         "missing": missing,
+        "excludedNoFavourite": excluded_no_fav,
     }
 
 

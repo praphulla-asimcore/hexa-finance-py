@@ -76,6 +76,13 @@ def _parse_employee(row, col_map) -> dict | None:
         "name":          _get_str(row, col_map, "Nickname / Name", "Name"),
         # New template uses "Client"; old uses "Cost Centre"
         "costCentre":    _get_str(row, col_map, "Cost Centre", "Client"),
+        # Maybank CMS Favourite Beneficiary/Biller Code — written into col 4 of the
+        # RCGEN2 bank file. Optional in the CSI; when present it overrides the
+        # consultant-DB (Airtable) value during bank-file generation.
+        "favouriteBeneficiaryCode": _get_str(
+            row, col_map,
+            "Favourite Beneficiary Code", "Favorite Beneficiary Code",
+            "Favourite Beneficiary/Biller Code", "Favorite Beneficiary/Biller Code"),
         "clientType":    _get_str(row, col_map, "Client Type", "Margin Type").upper() or "CC",
         "grossSalary":   _get(row, col_map, "Gross Salary"),
         # New template uses "Claims Amount"; old uses "Claim"
