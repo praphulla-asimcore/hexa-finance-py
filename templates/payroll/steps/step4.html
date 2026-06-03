@@ -62,6 +62,17 @@
   <div style="font-size:12px;color:#64748b;margin-top:8px">
     The <strong>.txt</strong> is generated directly by the system (run #{{ bank_txt.runNumber }}) — upload it to Maybank CMS with File Format <strong>MY COMBINE PIPE V6</strong>. No Excel/macro needed. The .xlsm remains available as a fallback.
   </div>
+  {% elif (kase.check_data or {}).get('bankTxtError') %}
+  <div class="pf-flags-card pf-flags-warn" style="margin-top:10px">
+    <div class="pf-flags-header">Direct .txt not generated — using .xlsm fallback</div>
+    <div style="font-size:12px;color:#92400e;margin-top:6px">Reason: <code>{{ (kase.check_data or {}).get('bankTxtError') }}</code></div>
+    <div style="font-size:12px;color:#92400e;margin-top:6px">Likely the running-number counter isn't reachable yet. If you just created it, reload Supabase's API schema (Settings → API → Reload schema), then re-generate the bank file.</div>
+  </div>
+  {% else %}
+  <div class="pf-flags-card pf-flags-warn" style="margin-top:10px">
+    <div class="pf-flags-header">This bank file predates direct-.txt generation</div>
+    <div style="font-size:12px;color:#92400e;margin-top:6px">Re-generate the bank file to produce the system <strong>.txt</strong>. Use the “Re-generate bank file” action (or re-trigger Step 4) on this case.</div>
+  </div>
   {% endif %}
   {% elif kase.status == 'check_approved' %}
   {# Auto-generation triggered; files should appear within seconds via polling #}
