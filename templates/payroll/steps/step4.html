@@ -49,11 +49,20 @@
     <div class="pf-stamp-box"><span class="pf-stamp-label">Generated at</span><span class="pf-stamp-value">{{ fmt_date(kase.bank_file_generated_at) }}</span></div>
     <div class="pf-stamp-box"><span class="pf-stamp-label">Triggered by</span><span class="pf-stamp-value">{{ kase.bank_file_triggered_by or '—' }} approval</span></div>
   </div>
+  {% set bank_txt = (kase.check_data or {}).get('bankTxt') %}
   <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
+    {% if bank_txt and bank_txt.data %}
+    <a href="/cases/{{ kase.id }}/bank-file-txt" class="btn btn-primary">⬇ Bank Upload File (.txt)</a>
+    {% endif %}
     {% if kase.bank_file_data %}
     <a href="/cases/{{ kase.id }}/bank-file-xlsx" class="btn btn-secondary">⬇ RCGEN2 Macro Workbook (.xlsm)</a>
     {% endif %}
   </div>
+  {% if bank_txt and bank_txt.data %}
+  <div style="font-size:12px;color:#64748b;margin-top:8px">
+    The <strong>.txt</strong> is generated directly by the system (run #{{ bank_txt.runNumber }}) — upload it to Maybank CMS with File Format <strong>MY COMBINE PIPE V6</strong>. No Excel/macro needed. The .xlsm remains available as a fallback.
+  </div>
+  {% endif %}
   {% elif kase.status == 'check_approved' %}
   {# Auto-generation triggered; files should appear within seconds via polling #}
   <div class="pf-info-banner pf-banner-waiting">

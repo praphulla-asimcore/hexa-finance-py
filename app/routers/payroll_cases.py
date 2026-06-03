@@ -1724,15 +1724,16 @@ async def download_bank_xlsx(case_id: str, request: Request):
 async def download_bank_txt(case_id: str, request: Request):
     get_current_user(request)
     db = get_db()
-    resp = db.from_("payroll_cases").select("bank_receipt_name,bank_receipt_data").eq("id", case_id).single().execute()
+    resp = db.from_("payroll_cases").select("check_data").eq("id", case_id).single().execute()
     kase = resp.data
-    if not kase or not kase.get("bank_receipt_data"):
-        raise HTTPException(404, "TXT file not found.")
-    file_bytes = base64.b64decode(kase["bank_receipt_data"])
+    bank_txt = ((kase or {}).get("check_data") or {}).get("bankTxt")
+    if not bank_txt or not bank_txt.get("data"):
+        raise HTTPException(404, "TXT file not available. Re-generate the bank file once the running-number counter is set up.")
+    file_bytes = base64.b64decode(bank_txt["data"])
     return Response(
         content=file_bytes,
         media_type="text/plain",
-        headers={"Content-Disposition": f'attachment; filename="{kase["bank_receipt_name"]}"'},
+        headers={"Content-Disposition": f'attachment; filename="{bank_txt["name"]}"'},
     )
 
 

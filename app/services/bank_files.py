@@ -468,6 +468,21 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def next_rcgen_run_number(db, key: str = "rcgen_dp") -> int:
+    """Atomically increment and return the persistent RCGEN running number — the
+    DB equivalent of the macro's runningnumber!A2 (the bank uses it for anti-
+    replay). Backed by a Postgres function `next_counter(p_key text)` over an
+    `app_counters` table. Raises if that object is missing so the caller can
+    decide to skip .txt generation rather than reuse a number."""
+    resp = db.rpc("next_counter", {"p_key": key}).execute()
+    val = resp.data
+    if isinstance(val, list):          # some PostgREST configs wrap scalars
+        val = val[0]
+    if isinstance(val, dict):
+        val = next(iter(val.values()))
+    return int(val)
+
+
 async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> dict:
     entities = (kase.get("parsed_data") or {}).get("entities", [])
     check = kase.get("check_data") or {}
@@ -538,6 +553,18 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
     existing_check = dict(kase.get("check_data") or {})
     existing_check["missingBankAccounts"] = missing
     existing_check["excludedNoFavourite"] = excluded_no_fav
+
+    # Also build the bank .txt directly (no Excel macro). Best-effort: if the
+    # running-number counter isn't provisioned yet, skip silently — the .xlsm
+    # path is unaffected and remains the primary download.
+    try:
+        run_number = next_rcgen_run_number(db)
+        txt_name, txt_body = build_dp_txt(beneficiaries, value_date, mmyy, run_number, notify_emails)
+        existing_check["bankTxt"] = {"name": txt_name, "runNumber": run_number,
+                                     "data": base64.b64encode(txt_body.encode("utf-8")).decode()}
+    except Exception as e:
+        existing_check["bankTxt"] = None
+        existing_check["bankTxtError"] = str(e)[:200]
 
     db.from_("payroll_cases").update({
         "status":                 "bank_file_generated",
