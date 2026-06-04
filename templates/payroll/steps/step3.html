@@ -129,6 +129,28 @@
     </form>
   </div>
   {% elif kase.status in ['check_approval_sent','check_reviewer_approved'] %}
+  {# Was the approval email actually delivered? Walk the audit log for the last
+     email outcome so the banner reflects reality instead of always claiming the
+     email went out. #}
+  {% set ns = namespace(last=none) %}
+  {% for l in (logs or []) %}
+    {% if l.event_type in ['CHECK_APPROVAL_EMAIL_SENT','CHECK_APPROVAL_EMAIL_FAILED'] %}{% set ns.last = l %}{% endif %}
+  {% endfor %}
+  {% if ns.last and ns.last.event_type == 'CHECK_APPROVAL_EMAIL_FAILED' %}
+  <div class="pf-info-banner pf-banner-danger">
+    ⚠ Status advanced, but the approval email could <strong>not</strong> be delivered — the approver has <strong>not</strong> been notified yet.
+    {% set _err = (ns.last.metadata or {}).get('error') %}
+    {% if _err %}<div style="font-size:12px;margin-top:4px;opacity:.85;font-family:monospace">{{ _err }}</div>{% endif %}
+    <div style="margin-top:10px">
+      <button class="btn btn-primary btn-sm"
+          hx-post="/cases/{{ kase.id }}/resend-check-email"
+          hx-target="#case-detail-inner" hx-swap="innerHTML">
+        <span class="spinner htmx-indicator"></span>
+        Retry sending email
+      </button>
+    </div>
+  </div>
+  {% else %}
   <div class="pf-info-banner pf-banner-waiting">
     Approval email sent {{ fmt_date(kase.check_approval_sent_at) }}. Waiting for approver response.
     <button class="btn btn-secondary btn-sm" style="margin-left:12px"
@@ -136,6 +158,7 @@
       Refresh
     </button>
   </div>
+  {% endif %}
   {% endif %}
 
   {% if is_rejected %}

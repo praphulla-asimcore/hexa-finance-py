@@ -1,5 +1,9 @@
+import logging
+
 import resend as resend_sdk
 from app.config import RESEND_API_KEY, EMAIL_FROM, APP_URL
+
+logger = logging.getLogger("hexa.email")
 
 LOGO_IMG = f'<img src="{APP_URL}/hexa-logo.png" alt="Hexa" style="height:28px;margin-bottom:24px"/>'
 
@@ -25,14 +29,24 @@ def _fmt_rm(n) -> str:
 
 def _send(to: str | list, subject: str, html: str) -> None:
     if not RESEND_API_KEY:
+        # No silent disappearance — make it obvious in the logs why nothing was
+        # delivered (e.g. the RESEND_API_KEY env var is missing on this deploy).
+        logger.warning("Email NOT sent — RESEND_API_KEY not configured | to=%s | subject=%s", to, subject)
         return
     resend_sdk.api_key = RESEND_API_KEY
-    resend_sdk.Emails.send({
-        "from": EMAIL_FROM,
-        "to": to if isinstance(to, list) else [to],
-        "subject": subject,
-        "html": html,
-    })
+    try:
+        resend_sdk.Emails.send({
+            "from": EMAIL_FROM,
+            "to": to if isinstance(to, list) else [to],
+            "subject": subject,
+            "html": html,
+        })
+        logger.info("Email sent | to=%s | subject=%s", to, subject)
+    except Exception:
+        # Log with traceback, then re-raise so the caller can decide whether the
+        # failure should block the workflow or just be recorded.
+        logger.exception("Email send FAILED | to=%s | subject=%s", to, subject)
+        raise
 
 
 def send_invite(to: str, name: str, invite_url: str, role: str = "") -> None:

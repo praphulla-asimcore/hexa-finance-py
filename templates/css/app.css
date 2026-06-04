@@ -860,3 +860,26 @@ body.nav-loading #nav-progress {
   50%  { transform: scaleX(0.6); }
   100% { transform: scaleX(0.95); }
 }
+
+/* Global error toast — surfaced when an HTMX request fails (non-2xx, network,
+   or timeout). htmx does not swap on errors, so this is the only feedback the
+   user gets that an action like "Send for Approval" actually failed. */
+.hx-error-toast {
+  position: fixed; bottom: 24px; right: 24px; z-index: 11000;
+  max-width: 380px; display: flex; align-items: flex-start; gap: 12px;
+  background: #fef2f2; color: #991b1b;
+  border: 1px solid #fecaca; border-left: 4px solid #ef4444;
+  border-radius: 10px; padding: 14px 16px;
+  font-size: 13px; line-height: 1.45; font-weight: 500;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.16);
+  animation: hxToastIn .25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.hx-error-toast button {
+  background: none; border: none; cursor: pointer;
+  color: #b91c1c; font-size: 18px; line-height: 1;
+  padding: 0; margin-left: auto; opacity: .7;
+}
+.hx-error-toast button:hover { opacity: 1; }
+.hx-error-toast-out { animation: hxToastOut .25s ease forwards; }
+@keyframes hxToastIn  { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes hxToastOut { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(12px); } }

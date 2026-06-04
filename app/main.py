@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, Response
 from fastapi.exceptions import HTTPException
@@ -6,6 +8,11 @@ from pathlib import Path
 
 from app.config import PUBLIC_DIR, TEMPLATES_DIR
 from app.routers import auth, users, payroll_cases, consultants, accounts, admin, journal_history, pages, statutory
+
+# Surface app logs (email send/fail, approval-token errors) in the Vercel
+# function console. Without this only WARNING+ reaches stderr by default, so
+# the INFO "Email sent" confirmations would be invisible when debugging.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
 app = FastAPI(title="Hexa Finance", docs_url=None, redoc_url=None)
 

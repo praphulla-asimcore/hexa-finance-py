@@ -2,6 +2,7 @@ import secrets
 import hashlib
 import base64
 import calendar
+import logging
 import re as _re
 from datetime import datetime, timezone, date
 from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException
@@ -30,6 +31,7 @@ from app.services.email import (
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+logger = logging.getLogger("hexa.payroll_cases")
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1605,22 +1607,39 @@ async def send_check_approval(case_id: str, request: Request):
     # Payroll keeps Asim as the reviewer (temporary override); CSI uses Ikhram.
     reviewer = PAYROLL_REVIEWER if kase.get("type") == "PAYROLL" else APPROVERS["reviewer"]
 
+    # Wrap the token insert like send_payment_approval does: if this throws, the
+    # whole request would 500 and htmx — which never swaps on a non-2xx — would
+    # leave the "Send for Approval" click looking completely dead. Instead we
+    # record the error and re-render the panel so the user actually sees it.
     token = secrets.token_hex(32)
-    db.from_("payroll_approval_tokens").insert({
-        "case_id": case_id, "step": 3,
-        "approver_email": reviewer["email"],
-        "approver_name": reviewer["name"],
-        "approver_role": "reviewer", "token": token, "status": "pending",
-    }).execute()
+    try:
+        db.from_("payroll_approval_tokens").insert({
+            "case_id": case_id, "step": 3,
+            "approver_email": reviewer["email"],
+            "approver_name": reviewer["name"],
+            "approver_role": "reviewer", "token": token, "status": "pending",
+        }).execute()
+    except Exception as e:
+        logger.exception("Failed to create reviewer approval token for case %s", case_id)
+        await _audit_log(db, case_id, "CHECK_APPROVAL_ERROR", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"error": str(e)})
+        return await _refresh_detail(case_id, db, request, user, 3)
 
     base_url = f"{APP_URL}/api/payroll-cases/approve/{token}"
+    email_ok = True
     try:
         email_check_approval(
             reviewer["email"], reviewer["name"], "First Reviewer",
             kase, f"{base_url}?action=approve", f"{base_url}?action=reject"
         )
-    except Exception:
-        pass
+    except Exception as e:
+        # Email delivery is best-effort — the status still advances. Log it and
+        # record an audit event so the Step 3 panel can warn that the reviewer
+        # was NOT actually notified (instead of claiming the email went out).
+        email_ok = False
+        logger.exception("Failed to send check-approval email for case %s to %s", case_id, reviewer["email"])
+        await _audit_log(db, case_id, "CHECK_APPROVAL_EMAIL_FAILED", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"to": reviewer["email"], "role": "reviewer", "error": str(e)})
+    if email_ok:
+        await _audit_log(db, case_id, "CHECK_APPROVAL_EMAIL_SENT", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"to": reviewer["email"], "role": "reviewer"})
 
     now = _now()
     db.from_("payroll_cases").update({
@@ -1634,6 +1653,46 @@ async def send_check_approval(case_id: str, request: Request):
     # page spinner up long after the status has actually changed. The status is
     # already updated above, so we return immediately; the Step 3 panel then
     # auto-fires POST /post-accrual once to book the accrual in its own request.
+    return await _refresh_detail(case_id, db, request, user, 3)
+
+
+# ─── Step 3a1: Resend the approval email (retry after a Resend failure) ───────
+
+@router.post("/cases/{case_id}/resend-check-email")
+async def resend_check_email(case_id: str, request: Request):
+    user = get_current_user(request)
+    db = get_db()
+    resp = db.from_("payroll_cases").select("*").eq("id", case_id).single().execute()
+    kase = resp.data
+    if not kase:
+        return HTMLResponse('<div class="error-msg">Case not found.</div>')
+    if kase.get("status") not in ("check_approval_sent", "check_reviewer_approved"):
+        return await _refresh_detail(case_id, db, request, user, _get_active_step(kase.get("status", "")))
+
+    # Re-send against the existing pending token — no new token, no status change,
+    # so the single-use approve/reject links already issued stay valid.
+    tok_resp = (db.from_("payroll_approval_tokens")
+                .select("*").eq("case_id", case_id).eq("step", 3).eq("status", "pending")
+                .order("created_at", desc=True).execute())
+    tok = (tok_resp.data or [None])[0]
+    if not tok:
+        await _audit_log(db, case_id, "CHECK_APPROVAL_EMAIL_FAILED", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"error": "No pending approval token to resend"})
+        return await _refresh_detail(case_id, db, request, user, 3)
+
+    base_url = f"{APP_URL}/api/payroll-cases/approve/{tok['token']}"
+    is_final = tok["approver_role"] == "final"
+    try:
+        email_check_approval(
+            tok["approver_email"], tok["approver_name"],
+            "Final Approver" if is_final else "First Reviewer",
+            {**kase, "check_reviewer_name": kase.get("check_reviewer_name")} if is_final else kase,
+            f"{base_url}?action=approve", f"{base_url}?action=reject",
+        )
+        await _audit_log(db, case_id, "CHECK_APPROVAL_EMAIL_SENT", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"to": tok["approver_email"], "role": tok["approver_role"], "resend": True})
+    except Exception as e:
+        logger.exception("Resend of check-approval email failed for case %s to %s", case_id, tok["approver_email"])
+        await _audit_log(db, case_id, "CHECK_APPROVAL_EMAIL_FAILED", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"to": tok["approver_email"], "role": tok["approver_role"], "error": str(e), "resend": True})
+
     return await _refresh_detail(case_id, db, request, user, 3)
 
 
@@ -1737,8 +1796,10 @@ async def email_approve(token: str, action: str = "approve"):
                 {**kase, "check_reviewer_name": tok["approver_name"]},
                 f"{base_url}?action=approve", f"{base_url}?action=reject",
             )
-        except Exception:
-            pass
+            await _audit_log(db, kase["id"], "CHECK_APPROVAL_EMAIL_SENT", tok["approver_name"], None, None, {"to": APPROVERS["final"]["email"], "role": "final"})
+        except Exception as e:
+            logger.exception("Failed to send final-approver email for case %s to %s", kase["id"], APPROVERS["final"]["email"])
+            await _audit_log(db, kase["id"], "CHECK_APPROVAL_EMAIL_FAILED", tok["approver_name"], None, None, {"to": APPROVERS["final"]["email"], "role": "final", "error": str(e)})
 
         return HTMLResponse(_approval_page_html("Approved", "#22c55e", f"Thank you {tok['approver_name']}. The final approver has been notified."))
 
@@ -1777,7 +1838,7 @@ async def email_approve(token: str, action: str = "approve"):
             "xlsxName": result["xlsxName"], "matched": result["matched"], "total": result["total"],
         })
     except Exception:
-        pass
+        logger.exception("Auto-generate bank files failed for case %s", kase["id"])
 
     try:
         email_notify(
@@ -1786,7 +1847,7 @@ async def email_approve(token: str, action: str = "approve"):
             f"The check file for {kase['reference']} has been fully approved by {tok['approver_name']}. {bank_msg}",
         )
     except Exception:
-        pass
+        logger.exception("Failed to send check-approved notify email for case %s", kase["id"])
 
     # Create / update statutory submissions (CSI only)
     if kase.get("type") == "CSI":
@@ -1920,7 +1981,7 @@ async def send_payment_approval(case_id: str, request: Request):
     try:
         email_payment_approval(kase, f"{base_url}?action=approve", f"{base_url}?action=reject", APPROVERS["director"])
     except Exception:
-        pass
+        logger.exception("Failed to send payment-approval email for case %s to %s", case_id, APPROVERS["director"]["email"])
 
     db.from_("payroll_cases").update({
         "status": "payment_approval_sent",

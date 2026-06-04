@@ -199,5 +199,36 @@ syncSidebar(window.location.pathname);
     });
 })();
 </script>
+
+<script>
+// Global HTMX error surfacing. htmx never swaps content on a non-2xx response,
+// so without this a failed action (e.g. a 500 on "Send for Approval") looks
+// like a dead click. Show a dismissable toast so the user knows it failed and
+// can retry instead of clicking into the void.
+(function () {
+  function toast(msg) {
+    var t = document.createElement('div');
+    t.className = 'hx-error-toast';
+    t.innerHTML = '<span>' + msg + '</span><button aria-label="Dismiss">&times;</button>';
+    document.body.appendChild(t);
+    var kill = function () { t.classList.add('hx-error-toast-out'); setTimeout(function () { t.remove(); }, 250); };
+    t.querySelector('button').addEventListener('click', kill);
+    setTimeout(kill, 6000);
+  }
+  // Server replied with a 4xx/5xx — htmx will NOT swap, so report it.
+  document.body.addEventListener('htmx:responseError', function (e) {
+    var code = (e.detail && e.detail.xhr && e.detail.xhr.status) || '';
+    toast('Something went wrong' + (code ? ' (' + code + ')' : '') + '. Please try again.');
+  });
+  // Network dropped / request never reached the server.
+  document.body.addEventListener('htmx:sendError', function () {
+    toast('Network error — could not reach the server. Check your connection and retry.');
+  });
+  // Request exceeded the timeout (e.g. a serverless cold start).
+  document.body.addEventListener('htmx:timeout', function () {
+    toast('The request timed out. Please try again.');
+  });
+})();
+</script>
 </body>
 </html>
