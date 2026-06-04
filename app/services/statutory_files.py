@@ -191,41 +191,41 @@ def generate_socso_eis_file(submission: dict, employer_socso_no: str = "") -> di
     }
 
 
-# ─── EPF — i-Akaun text format ────────────────────────────────────────────────
+# ─── EPF — Borang A CSV format ────────────────────────────────────────────────
+
+def _csv_escape(value: str) -> str:
+    """Wrap in double-quotes if value contains comma, quote, or newline."""
+    s = str(value)
+    if any(c in s for c in (',', '"', '\n', '\r')):
+        return '"' + s.replace('"', '""') + '"'
+    return s
+
 
 def generate_epf_file(submission: dict, employer_epf_no: str = "") -> dict:
     employees  = submission.get("employee_data", [])
     wage_month = submission.get("wage_month", "")
-    cont_month = submission.get("contribution_month", "")
     entity     = submission.get("entity", "")
-
-    # EPF header uses MMYYYY for contribution month
-    mmyyyy = _mmyyyy(cont_month).replace("/", "")   # "062026"
 
     valid = [e for e in employees
              if _r2(e.get("epfEmployee")) + _r2(e.get("epfEmployer")) > 0]
 
     total_ee = total_er = 0.0
-    detail_lines = []
+    rows = ["Member EPF No,Employee Identification No,Employee Name,Employee Salary,Employer Amount,Employee Amount"]
     for emp in valid:
-        ee = _r2(emp.get("epfEmployee"))
-        er = _r2(emp.get("epfEmployer"))
+        ee    = _r2(emp.get("epfEmployee"))
+        er    = _r2(emp.get("epfEmployer"))
         total_ee += ee
         total_er += er
-        epf_no = (emp.get("epfNumber") or "").strip()
-        ic     = (emp.get("idNumber") or "").strip()
-        name   = (emp.get("name") or "")[:60].strip()
-        detail_lines.append(f"01|{epf_no}|{ic}|{name}|{ee:.2f}|{er:.2f}")
+        epf_no = _csv_escape((emp.get("epfNumber") or "").strip())
+        ic     = _csv_escape((emp.get("idNumber")  or "").strip())
+        name   = _csv_escape((emp.get("name")       or "").strip())
+        salary = f"{_r2(emp.get('grossSalary')):.2f}"
+        rows.append(f"{epf_no},{ic},{name},{salary},{er:.2f},{ee:.2f}")
 
-    lines = [
-        f"00|{employer_epf_no}|{mmyyyy}|{len(valid)}|{total_ee:.2f}|{total_er:.2f}|0",
-        *detail_lines,
-        f"99|{len(valid)}|{total_ee:.2f}|{total_er:.2f}",
-    ]
-    data = "\n".join(lines).encode("utf-8")
+    data = "\r\n".join(rows).encode("utf-8")
     return {
         "file_data":      base64.b64encode(data).decode(),
-        "file_name":      f"EPF_{entity}_{wage_month}_{_ts()}.txt",
+        "file_name":      f"EPF_{entity}_{wage_month}_{_ts()}.csv",
         "file_hash":      _sha256(data),
         "total_ee_amount": round(total_ee, 2),
         "total_er_amount": round(total_er, 2),
@@ -233,59 +233,98 @@ def generate_epf_file(submission: dict, employer_epf_no: str = "") -> dict:
     }
 
 
-# ─── MTD / PCB ────────────────────────────────────────────────────────────────
+# ─── MTD / PCB — LHDNM e-Data PCB fixed-width text format ───────────────────
+# Format spec: Manual Muatnaik e-Data PCB (LHDNM), Appendix 1
+# Header: H + No.E Ibu Pejabat(10) + No.E Cawangan(10) + Year(4) + Month(2)
+#           + Amaun PCB in cents(10) + Bil.PCB(5) + Amaun CP38 in cents(10) + Bil.CP38(5)
+# Detail: D + TaxRef(11) + Name(60) + OldIC(12) + NewIC(12) + Passport(12)
+#           + CountryCode(2) + PCB cents(8) + CP38 cents(8) + EmpNo(10)
+# Amounts are in cents (integer), zero-padded left.
 
-def generate_mtd_file(submission: dict) -> dict:
+def _cents(amount) -> int:
+    return round(_r2(amount) * 100)
+
+
+def _strip_ic(ic: str) -> str:
+    return ic.replace("-", "").replace(" ", "")
+
+
+def generate_mtd_file(submission: dict, employer_mtd_no: str = "") -> dict:
     employees  = submission.get("employee_data", [])
     wage_month = submission.get("wage_month", "")
-    cont_month = submission.get("contribution_month", "")
     entity     = submission.get("entity", "")
-    ent_name   = submission.get("entity_name") or entity
 
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "MTD-PCB"
+    year  = wage_month[:4]
+    month = wage_month[4:6] if len(wage_month) >= 6 else "00"
 
-    info = [
-        ("Entity:",             ent_name),
-        ("Wage Month:",         _month_label(wage_month)),
-        ("Contribution Month:", _month_label(cont_month)),
-        ("Due Date:",           submission.get("due_date", "")),
-    ]
-    data_row = _write_info_block(ws, "MTD / PCB Deduction Schedule", info)
+    # Employer TIN: strip letter prefix, zero-pad left to 10 digits
+    e_no = "".join(c for c in (employer_mtd_no or "") if c.isdigit()).zfill(10)[:10]
 
-    headers = ["No.", "Tax ID (TIN)", "Employee Name", "IC / Passport No.",
-               "Gross Salary (RM)", "MTD / PCB (RM)"]
-    _write_col_headers(ws, data_row, headers)
+    valid = [e for e in employees if _r2(e.get("mtd")) > 0]
 
-    total_gross = total_mtd = 0.0
-    row_n = 0
-    for emp in employees:
-        mtd = _r2(emp.get("mtd"))
-        if mtd <= 0:
-            continue
-        row_n += 1
-        gross = _r2(emp.get("grossSalary"))
-        total_gross += gross
-        total_mtd   += mtd
-        r = data_row + row_n
-        for col, val in enumerate(
-            [row_n, emp.get("taxRefNumber",""), emp.get("name",""),
-             emp.get("idNumber",""), gross, mtd], 1):
-            ws.cell(row=r, column=col, value=val)
+    total_pcb_cents  = sum(_cents(e.get("mtd"))      for e in valid)
+    total_cp38_cents = sum(_cents(e.get("cp38", 0))  for e in valid)
+    count_pcb        = len(valid)
+    count_cp38       = sum(1 for e in valid if _cents(e.get("cp38", 0)) > 0)
 
-    total_r = data_row + row_n + 1
-    _write_total_row(ws, total_r, ["","","TOTAL","",round(total_gross,2),round(total_mtd,2)])
+    header = (
+        "H"
+        + e_no                                      # No. E Ibu Pejabat  (2-11)
+        + e_no                                      # No. E Cawangan     (12-21)
+        + year                                      # Tahun              (22-25)
+        + month.zfill(2)                            # Bulan              (26-27)
+        + str(total_pcb_cents).zfill(10)[:10]       # Amaun PCB          (28-37)
+        + str(count_pcb).zfill(5)[:5]              # Bil. PCB           (38-42)
+        + str(total_cp38_cents).zfill(10)[:10]      # Amaun CP38         (43-52)
+        + str(count_cp38).zfill(5)[:5]             # Bil. CP38          (53-57)
+    )
 
-    for col, w in [("A",6),("B",22),("C",35),("D",22),("E",18),("F",16)]:
-        ws.column_dimensions[col].width = w
+    lines = [header]
+    for emp in valid:
+        pcb_c  = str(_cents(emp.get("mtd"))).zfill(8)[:8]
+        cp38_c = str(_cents(emp.get("cp38", 0))).zfill(8)[:8]
 
-    data = _save(wb)
+        tax_ref = (emp.get("taxRefNumber") or "").strip()[:11].ljust(11)
+        name    = (emp.get("name") or "").upper()[:60].ljust(60)
+
+        raw_id   = _strip_ic(emp.get("idNumber") or "")
+        id_type  = (emp.get("idType") or "IC").upper()
+        is_local = (emp.get("category") or "Local") != "Foreign"
+
+        if is_local and "PASSPORT" not in id_type:
+            kp_lama  = " " * 12
+            kp_baru  = raw_id[:12].ljust(12)
+            passport = " " * 12
+        else:
+            kp_lama  = " " * 12
+            kp_baru  = " " * 12
+            passport = raw_id[:12].ljust(12)
+
+        nat = (emp.get("nationality") or "").upper()
+        country = "MY" if (is_local or "MALAYSIA" in nat or nat == "MY") else "  "
+
+        emp_no = (emp.get("employeeId") or "").strip()[:10].ljust(10)
+
+        lines.append(
+            "D"
+            + tax_ref    # No. Rujukan Cukai  (2-12)
+            + name       # Nama               (13-72)
+            + kp_lama    # No. KP Lama        (73-84)
+            + kp_baru    # No. KP Baru        (85-96)
+            + passport   # No. Passport       (97-108)
+            + country    # Kod Negara         (109-110)
+            + pcb_c      # Amaun PCB          (111-118)
+            + cp38_c     # Amaun CP38         (119-126)
+            + emp_no     # No. Pekerja        (127-136)
+        )
+
+    data = "\r\n".join(lines).encode("utf-8")
+    total_pcb = _r2(total_pcb_cents / 100)
     return {
         "file_data":      base64.b64encode(data).decode(),
-        "file_name":      f"MTD_{entity}_{wage_month}_{_ts()}.xlsx",
+        "file_name":      f"MTD_{entity}_{wage_month}_{_ts()}.txt",
         "file_hash":      _sha256(data),
-        "total_ee_amount": round(total_mtd, 2),
+        "total_ee_amount": total_pcb,
         "total_er_amount": 0.0,
-        "total_amount":    round(total_mtd, 2),
+        "total_amount":    total_pcb,
     }

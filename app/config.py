@@ -50,6 +50,7 @@ STATUTORY_NOS: dict = {
         "epf":   os.getenv("HSSB_EPF_NO", ""),
         "socso": os.getenv("HSSB_SOCSO_NO", ""),
         "hrdf":  os.getenv("HSSB_HRDF_CODE", ""),
+        "mtd":   os.getenv("HSSB_MTD_NO", ""),
     },
 }
 

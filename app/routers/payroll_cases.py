@@ -133,7 +133,7 @@ async def _create_or_update_statutory(kase: dict, db, triggered_by: str) -> None
         "EPF":       (generate_epf_file,       {"employer_epf_no":    employer_nos.get("epf", "")}),
         "SOCSO_EIS": (generate_socso_eis_file,  {"employer_socso_no":  employer_nos.get("socso", "")}),
         "HRDF":      (generate_hrdf_file,       {"employer_hrdf_code": employer_nos.get("hrdf", "")}),
-        "MTD":       (generate_mtd_file,        {}),
+        "MTD":       (generate_mtd_file,        {"employer_mtd_no": employer_nos.get("mtd", "")}),
     }
 
     for stat_type, (gen_fn, gen_kwargs) in generators.items():
@@ -457,27 +457,21 @@ _BANK_NAME    = "Cash at Bank - MBB_MYR"
 
 
 # ─── Payroll (internal employee) account IDs (HSSB org 762447369) ────────────
-# Sourced from Chart_of_Accounts.csv.
-# Statutory payable accounts (EPF/SOCSO/HRDF/PCB) are not in the exported CSV
-# and are resolved by name lookup via the Zoho API at runtime.
+# Sourced from Chart_of_Accounts.csv. Per the corrected accounting/bank-entry
+# templates, the payroll accrual credits — and the bank payment debits — a
+# SINGLE "Accrued Internal Salary" account (the HSSB-043 Internal Salary Payable
+# account below), rather than five separate statutory payables.
 
 _HSSB_PAYROLL = {
     # DR: single expense account used for ALL components
     "salary_exp":    "2877958000012773978",  # 3.1.1  Internal - Salaries and Benefits
-    # CR payables
+    # CR/DR: single accrual account ("Accrued Internal Salary")
     "net_pay":       "2877958000005041067",  # HSSB-043  Internal Salary Payable
     # Bank (same as CSI)
     "bank":          "2877958000000096397",  # HSSB-003  Cash at Bank - MBB_MYR
-    # Fallback for statutory payables not yet in Zoho
+    # Fallback payable used by the statutory remittance path (statutory.py) when
+    # a named statutory payable can't be resolved in Zoho.
     "payable_fallback": "2877958000000098963",  # HSSB-052  Other payables and accruals
-}
-
-# Zoho account names for statutory payables (looked up by name at runtime)
-_PAYROLL_PAYABLE_NAMES = {
-    "epf":    "EPF, SSF, CPF, Pag-IBIG/HDMF Payable",
-    "socso":  "BPJS TK, SSC, SSS, SOCSO, EIS Payable",
-    "hrdf":   "HRDF, SDL Payable",
-    "pcb":    "TDS, PCB/MTD, PIT Payable",
 }
 
 _PAYROLL_ORG_MAP: dict = {
@@ -543,13 +537,19 @@ def _build_check_data_payroll(entities: list[dict]) -> dict:
 
 async def _auto_book_accruals_payroll(kase: dict, db) -> dict:
     """
-    Posts ONE Zoho journal for the payroll accrual:
-      DR  Internal - Salaries and Benefits = Total CTC
-      CR  Internal Salary Payable          = Total Net Pay
-      CR  EPF Payable                      = Total eEPF + rEPF
-      CR  SOCSO+EIS Payable                = Total eSOCSO + rSOCSO + eEIS + rEIS
-      CR  HRDF Payable                     = Total HRDF
-      CR  PCB Payable                      = Total PCB + CP38
+    Posts ONE Zoho journal for the payroll accrual, per the corrected
+    "Payroll Accounting Entries" template. The key correction: every credit
+    line lands on a SINGLE accrual account ("Accrued Internal Salary", here the
+    HSSB-043 Internal Salary Payable account) instead of five separate payables.
+
+      DR  Internal - Salaries and Benefits   Net Salary  (take-home)
+      DR  Internal - Salaries and Benefits   Deductions  (employee EPF/SOCSO/EIS/PCB)
+      DR  Internal - Salaries and Benefits   Statutory   (employer EPF/SOCSO/EIS/HRDF)
+      CR  Accrued Internal Salary            Net Salary Payable
+      CR  Accrued Internal Salary            EPF Payable
+      CR  Accrued Internal Salary            SOCSO+EIS Payable
+      CR  Accrued Internal Salary            HRDF Payable
+      CR  Accrued Internal Salary            PCB Payable
     """
     org_cfg = ORGS.get(kase.get("entity", ""), {})
     org_id  = org_cfg.get("id")
@@ -565,44 +565,39 @@ async def _auto_book_accruals_payroll(kase: dict, db) -> dict:
     entity_code  = kase.get("entity", "HSSB")
     description  = f"{entity_code}_Salary_Internal_Employees_{mmm_yy}"
 
-    # Resolve statutory payable IDs via Zoho API (names not in CSV export)
-    try:
-        all_accounts = await fetch_accounts(org_id)
-    except Exception as e:
-        return {"success": False, "error": f"Could not fetch Zoho accounts: {e}"}
-    by_name = {a["name"]: a["id"] for a in all_accounts if a.get("name")}
-
-    def _payable_id(key: str) -> str:
-        name = _PAYROLL_PAYABLE_NAMES[key]
-        return by_name.get(name) or maps["payable_fallback"]
-
-    epf_payable   = _payable_id("epf")
-    socso_payable = _payable_id("socso")
-    hrdf_payable  = _payable_id("hrdf")
-    pcb_payable   = _payable_id("pcb")
-
     entities = (kase.get("parsed_data") or {}).get("entities", [])
     all_employees = [emp for ent in entities for emp in ent.get("employees", [])]
 
-    totals = {
-        "ctc":    _round2(sum(e.get("ctcHexa", 0) for e in all_employees)),
-        "net":    _round2(sum(e.get("netSalary", 0) for e in all_employees)),
-        "epf":    _round2(sum(e.get("epfEmployee", 0) + e.get("epfEmployer", 0) for e in all_employees)),
-        "socso":  _round2(sum(e.get("socsoEmployee", 0) + e.get("socsoEmployer", 0) + e.get("eisEmployee", 0) + e.get("eisEmployer", 0) for e in all_employees)),
-        "hrdf":   _round2(sum(e.get("hrdf", 0) for e in all_employees)),
-        "pcb":    _round2(sum(e.get("mtd", 0) for e in all_employees)),
-    }
+    # Credit-side component totals — each posts to the single accrual account.
+    net   = _round2(sum(e.get("netSalary", 0) for e in all_employees))
+    epf   = _round2(sum(e.get("epfEmployee", 0) + e.get("epfEmployer", 0) for e in all_employees))
+    socso = _round2(sum(e.get("socsoEmployee", 0) + e.get("socsoEmployer", 0) + e.get("eisEmployee", 0) + e.get("eisEmployer", 0) for e in all_employees))
+    hrdf  = _round2(sum(e.get("hrdf", 0) for e in all_employees))
+    pcb   = _round2(sum(e.get("mtd", 0) for e in all_employees))
 
-    if totals["ctc"] == 0:
-        return {"success": False, "error": "Total CTC is zero — check payroll file data."}
+    total = _round2(net + epf + socso + hrdf + pcb)
+    if total == 0:
+        return {"success": False, "error": "Total payroll is zero — check payroll file data."}
+
+    # Debit-side breakdown — same expense account, three buckets that re-sum to
+    # `total`. Statutory absorbs any rounding so DR total == CR total exactly.
+    deduction = _round2(sum(e.get("epfEmployee", 0) + e.get("socsoEmployee", 0) + e.get("eisEmployee", 0) + e.get("mtd", 0) for e in all_employees))
+    statutory = _round2(total - net - deduction)
+
+    exp_acct = maps["salary_exp"]   # DR  Internal - Salaries and Benefits
+    accrued  = maps["net_pay"]      # CR  Accrued Internal Salary (HSSB-043 Internal Salary Payable)
 
     line_items = [
-        {"account_id": maps["salary_exp"], "debit_or_credit": "debit",  "amount": totals["ctc"],   "description": description},
-        {"account_id": maps["net_pay"],    "debit_or_credit": "credit", "amount": totals["net"],   "description": description},
-        {"account_id": epf_payable,        "debit_or_credit": "credit", "amount": totals["epf"],   "description": description},
-        {"account_id": socso_payable,      "debit_or_credit": "credit", "amount": totals["socso"], "description": description},
-        {"account_id": hrdf_payable,       "debit_or_credit": "credit", "amount": totals["hrdf"],  "description": description},
-        {"account_id": pcb_payable,        "debit_or_credit": "credit", "amount": totals["pcb"],   "description": description},
+        # DR — Internal - Salaries and Benefits
+        {"account_id": exp_acct, "debit_or_credit": "debit",  "amount": net,       "description": f"{description} - Net Salary"},
+        {"account_id": exp_acct, "debit_or_credit": "debit",  "amount": deduction, "description": f"{description} - Deductions"},
+        {"account_id": exp_acct, "debit_or_credit": "debit",  "amount": statutory, "description": f"{description} - Statutory"},
+        # CR — Accrued Internal Salary
+        {"account_id": accrued,  "debit_or_credit": "credit", "amount": net,   "description": f"{description} - Net Salary Payable"},
+        {"account_id": accrued,  "debit_or_credit": "credit", "amount": epf,   "description": f"{description} - EPF Payable"},
+        {"account_id": accrued,  "debit_or_credit": "credit", "amount": socso, "description": f"{description} - SOCSO+EIS Payable"},
+        {"account_id": accrued,  "debit_or_credit": "credit", "amount": hrdf,  "description": f"{description} - HRDF Payable"},
+        {"account_id": accrued,  "debit_or_credit": "credit", "amount": pcb,   "description": f"{description} - PCB Payable"},
     ]
     # Remove zero-amount lines
     line_items = [li for li in line_items if li["amount"] > 0]
@@ -622,8 +617,9 @@ async def _auto_book_accruals_payroll(kase: dict, db) -> dict:
             "zoho_org_id":      org_id,
             "zoho_journal_ids": [j_id] if j_id else [],
         }).eq("id", kase["id"]).execute()
-        return {"success": True, "journal_id": j_id, "totals": totals,
-                "epf_payable_resolved": epf_payable != maps["payable_fallback"]}
+        return {"success": True, "journal_id": j_id,
+                "totals": {"net": net, "epf": epf, "socso": socso,
+                           "hrdf": hrdf, "pcb": pcb, "total": total}}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -632,12 +628,15 @@ async def _auto_book_accruals_payroll(kase: dict, db) -> dict:
 
 async def _auto_book_payment_payroll(kase: dict, db) -> dict:
     """
-    Posts Zoho expense entries clearing each payroll liability:
-      - Per-employee net salary: DR Internal Salary Payable → CR Bank
-      - Aggregate EPF:           DR EPF Payable → CR Bank
-      - Aggregate SOCSO+EIS:     DR SOCSO+EIS Payable → CR Bank
-      - Aggregate HRDF:          DR HRDF Payable → CR Bank
-      - Aggregate PCB:           DR PCB Payable → CR Bank
+    Posts ONE consolidated Zoho bank entry clearing the net-salary portion of
+    the accrual, per the corrected "Payroll Bank Entry" template:
+
+      DR  Accrued Internal Salary  = total net salary
+      CR  Cash at Bank - MBB_MYR   = total net salary
+
+    The statutory liabilities (EPF/SOCSO/HRDF/PCB) remain accrued and are
+    cleared separately by the statutory payment workflow (see statutory.py),
+    so they are deliberately NOT paid here to avoid double-booking.
     Uses payment_date (actual payment date) NOT the period cycle date.
     """
     org_cfg = ORGS.get(kase.get("entity", ""), {})
@@ -657,95 +656,41 @@ async def _auto_book_payment_payroll(kase: dict, db) -> dict:
     entity_code = kase.get("entity", "HSSB")
     description = f"{entity_code}_Salary_Internal_Employees_{mmm_yy}"
 
-    # Resolve statutory payable IDs
+    accrued = maps["net_pay"]   # DR  Accrued Internal Salary (HSSB-043 Internal Salary Payable)
+    bank_id = maps["bank"]      # CR  Cash at Bank - MBB_MYR
+
+    entities  = (kase.get("parsed_data") or {}).get("entities", [])
+    all_emps  = [emp for ent in entities for emp in ent.get("employees", [])]
+    total_net = _round2(sum(e.get("netSalary", 0) for e in all_emps))
+
+    if total_net <= 0:
+        return {"success": False, "error": "Total net salary is zero — nothing to pay."}
+
+    ref = f"PMT-{kase['reference']}"
     try:
-        all_accounts = await fetch_accounts(org_id)
+        expense = await create_expense(org_id, {
+            "account_id":              accrued,
+            "paid_through_account_id": bank_id,
+            "date":                    payment_date,
+            "amount":                  total_net,
+            "description":             description,
+            "reference_number":        ref,
+            "currency_code":           "MYR",
+            "exchange_rate":           1,
+            "is_billable":             False,
+        })
     except Exception as e:
-        return {"success": False, "error": f"Could not fetch Zoho accounts: {e}"}
-    by_name = {a["name"]: a["id"] for a in all_accounts if a.get("name")}
+        return {"success": False, "error": str(e)}
 
-    def _payable_id(key: str) -> str:
-        return by_name.get(_PAYROLL_PAYABLE_NAMES[key]) or maps["payable_fallback"]
-
-    epf_payable   = _payable_id("epf")
-    socso_payable = _payable_id("socso")
-    hrdf_payable  = _payable_id("hrdf")
-    pcb_payable   = _payable_id("pcb")
-    bank_id       = maps["bank"]
-    net_payable   = maps["net_pay"]
-
-    entities    = (kase.get("parsed_data") or {}).get("entities", [])
-    all_emps    = [emp for ent in entities for emp in ent.get("employees", [])]
-
-    results = []
-
-    # Per-employee net salary clearance
-    for emp in all_emps:
-        amount = _round2(emp.get("netSalary", 0))
-        if amount <= 0:
-            continue
-        ref  = f"PMT-{kase['reference']}-{emp.get('employeeId', '')}"
-        cust = (emp.get("costCentre") or "").replace(" ", "_")
-        cons = (emp.get("name") or emp.get("employeeId", "")).replace(" ", "_")
-        desc = f"{entity_code}_Salary_{cust}_{cons}_{mmm_yy}"
-        try:
-            expense = await create_expense(org_id, {
-                "account_id":              net_payable,
-                "paid_through_account_id": bank_id,
-                "date":                    payment_date,
-                "amount":                  amount,
-                "description":             desc,
-                "reference_number":        ref,
-                "currency_code":           "MYR",
-                "exchange_rate":           1,
-                "is_billable":             False,
-            })
-            results.append({"type": "net_salary", "ref": ref, "expense_id": expense.get("expense_id"), "success": True})
-        except Exception as e:
-            results.append({"type": "net_salary", "ref": ref, "error": str(e), "success": False})
-
-    # Aggregate statutory payments
-    statutory_payments = [
-        ("epf",   epf_payable,   _round2(sum(e.get("epfEmployee", 0) + e.get("epfEmployer", 0) for e in all_emps)),   "EPF"),
-        ("socso", socso_payable, _round2(sum(e.get("socsoEmployee", 0) + e.get("socsoEmployer", 0) + e.get("eisEmployee", 0) + e.get("eisEmployer", 0) for e in all_emps)), "SOCSO+EIS"),
-        ("hrdf",  hrdf_payable,  _round2(sum(e.get("hrdf", 0) for e in all_emps)), "HRDF"),
-        ("pcb",   pcb_payable,   _round2(sum(e.get("mtd", 0) for e in all_emps)), "PCB"),
-    ]
-    for stat_key, acct_id, amount, label in statutory_payments:
-        if amount <= 0:
-            continue
-        ref = f"PMT-{kase['reference']}-{label}"
-        try:
-            expense = await create_expense(org_id, {
-                "account_id":              acct_id,
-                "paid_through_account_id": bank_id,
-                "date":                    payment_date,
-                "amount":                  amount,
-                "description":             f"{description}_{label}",
-                "reference_number":        ref,
-                "currency_code":           "MYR",
-                "exchange_rate":           1,
-                "is_billable":             False,
-            })
-            results.append({"type": stat_key, "ref": ref, "expense_id": expense.get("expense_id"), "success": True})
-        except Exception as e:
-            results.append({"type": stat_key, "ref": ref, "error": str(e), "success": False})
-
-    posted  = [r for r in results if r["success"]]
-    failed  = [r for r in results if not r["success"]]
-    exp_ids = [r["expense_id"] for r in posted if r.get("expense_id")]
-
-    if not posted:
-        return {"success": False, "error": f"All {len(results)} payment entries failed. First: {results[0].get('error')}", "results": results}
-
+    exp_id   = expense.get("expense_id")
     existing = kase.get("zoho_journal_ids") or []
     db.from_("payroll_cases").update({
         "zoho_org_id":      org_id,
-        "zoho_journal_ids": existing + exp_ids,
+        "zoho_journal_ids": existing + ([exp_id] if exp_id else []),
         "zoho_posted_at":   _now(),
         "status":           "zoho_posted",
     }).eq("id", kase["id"]).execute()
-    return {"success": True, "posted": len(posted), "failed": len(failed), "expense_ids": exp_ids, "results": results}
+    return {"success": True, "journal_id": exp_id, "expense_id": exp_id, "amount": total_net}
 
 
 # ─── Auto accrual booking (Step 2 → 3) ───────────────────────────────────────
