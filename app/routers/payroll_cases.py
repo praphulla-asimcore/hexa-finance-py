@@ -221,7 +221,16 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None) -
             mtd = float(emp.get("mtd", 0) or 0)
             clm = float(emp.get("claim", 0) or 0)
             ctc_client = float(emp.get("ctcClient", 0) or 0)
+            # File's own CTC Hexa (pre-recompute). The margin check must compare
+            # CTC Client against this — NOT the rate-table-recomputed ctcHexa
+            # (``c``), which uses a different cost basis and produces spurious
+            # "client < cost" flags. Falls back to ``c`` if the file omitted it.
+            ctc_hexa_file = float(emp.get("ctcHexaFile") or 0) or c
             cc  = (emp.get("costCentre") or "").strip()
+            # Contractors are intentionally statutory-free (EPF/SOCSO/EIS/MTD all
+            # zeroed in statutory_enrich), so the statutory-presence checks below
+            # do not apply to them — gating avoids guaranteed false positives.
+            is_contractor = emp.get("category") == "Contractor"
 
             cats[emp.get("category", "Local")] = cats.get(emp.get("category", "Local"), 0) + 1
             gross += g; ctc += c; net += n
@@ -271,7 +280,7 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None) -
             # ── EPF employer rate sanity check ────────────────────────────────
             # Foreign workers (2%) and 60+ locals (6–6.5%) legitimately fall
             # below the under-60 local band, so only check the standard case.
-            if g > 0 and epf > 0 and emp.get("epfBasis", "local_under_60") == "local_under_60":
+            if not is_contractor and g > 0 and epf > 0 and emp.get("epfBasis", "local_under_60") == "local_under_60":
                 rate = epf / g
                 if rate < 0.10 or rate > 0.145:
                     flags.append({"code": "EPF_RATE_VARIANCE", "employee": name,
@@ -280,17 +289,18 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None) -
                                   "diff": _round2(epf)})
 
             # ── SOCSO ceiling (RM 104.15 / month employer, RM6,000 wage) ─────
-            if soc > 104.15 + 0.01:
+            if not is_contractor and soc > 104.15 + 0.01:
                 flags.append({"code": "SOCSO_CEILING", "employee": name,
                                "entity": entity, "diff": _round2(soc - 104.15)})
 
             # ── EIS ceiling (RM 11.90 / month employer, RM6,000 wage) ────────
-            if eis > 11.90 + 0.01:
+            if not is_contractor and eis > 11.90 + 0.01:
                 flags.append({"code": "EIS_CEILING", "employee": name,
                                "entity": entity, "diff": _round2(eis - 11.90)})
 
             # ── MTD = 0 for high earner (Gross > RM 5,000) ───────────────────
-            if mtd == 0 and g > 5000:
+            # Contractors legitimately have MTD = 0, so exclude them.
+            if not is_contractor and mtd == 0 and g > 5000:
                 flags.append({"code": "MTD_ZERO_HIGH_EARNER", "employee": name,
                                "entity": entity, "gross": _round2(g)})
 
@@ -300,11 +310,13 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None) -
                                "entity": entity})
 
             # ── CTC Client < CTC Hexa (billing less than cost) ───────────────
-            if ctc_client > 0 and ctc_client < c - 0.01:
+            # Compare against the file's CTC Hexa so both sides share the same
+            # costing basis (the recomputed ctcHexa would over-flag).
+            if ctc_client > 0 and ctc_client < ctc_hexa_file - 0.01:
                 flags.append({"code": "CTC_CLIENT_LESS_THAN_HEXA", "employee": name,
                                "entity": entity,
-                               "ctcHexa": _round2(c), "ctcClient": _round2(ctc_client),
-                               "diff": _round2(c - ctc_client)})
+                               "ctcHexa": _round2(ctc_hexa_file), "ctcClient": _round2(ctc_client),
+                               "diff": _round2(ctc_hexa_file - ctc_client)})
 
             # ── Claims > Gross ────────────────────────────────────────────────
             if clm > 0 and clm > g:
@@ -457,15 +469,27 @@ _BANK_NAME    = "Cash at Bank - MBB_MYR"
 
 
 # ─── Payroll (internal employee) account IDs (HSSB org 762447369) ────────────
-# Sourced from Chart_of_Accounts.csv. Per the corrected accounting/bank-entry
-# templates, the payroll accrual credits — and the bank payment debits — a
-# SINGLE "Accrued Internal Salary" account (the HSSB-043 Internal Salary Payable
-# account below), rather than five separate statutory payables.
+# Sourced from Chart_of_Accounts.csv (verified active in Zoho). The payroll
+# accrual mirrors the CSI logic: one journal PER employee, each component
+# debited to its own Internal-* expense account and credited to the single
+# Internal Salary Payable account, with the employee tagged as a Zoho contact
+# and the "Customer" reporting tag.
+
+# DR side — per-component Internal expense accounts (parallels the CSI APC/CC maps)
+_HSSB_INTERNAL_EXPENSE = {
+    "basic":     "2877958000012773978",  # 3.1.1     Internal - Salaries and Benefits
+    "claim":     "2877958000012773982",  # 3.1.2     Internal - Claims and Reimbursements
+    "bonus":     "2877958000012773986",  # 3.1.3     Internal - Bonus, Commission, Incentive…
+    "ca_dedn":   "2877958000012773998",  # 3.1.6     Internal - Cash Advance Deduction
+    "epf":       "2877958000012774018",  # 3.1.10.1  Internal - EPF, SSF, CPF, Pag-IBIG/HDMF
+    "socso_eis": "2877958000012774026",  # 3.1.10.3  Internal - BPJS TK, SSC, SSS, SOCSO, EIS
+    "hrdf":      "2877958000012774030",  # 3.1.10.4  Internal - HRDF, SDL
+    "mtd":       "2877958000012774042",  # 3.1.10.7  Internal - TDS, PCB/MTD, PIT
+}
 
 _HSSB_PAYROLL = {
-    # DR: single expense account used for ALL components
-    "salary_exp":    "2877958000012773978",  # 3.1.1  Internal - Salaries and Benefits
-    # CR/DR: single accrual account ("Accrued Internal Salary")
+    "expense_map":   _HSSB_INTERNAL_EXPENSE,    # DR per component (mirrors CSI)
+    # CR payable (and DR'd back on payment) — Internal Salary Payable
     "net_pay":       "2877958000005041067",  # HSSB-043  Internal Salary Payable
     # Bank (same as CSI)
     "bank":          "2877958000000096397",  # HSSB-003  Cash at Bank - MBB_MYR
@@ -535,21 +559,36 @@ def _build_check_data_payroll(entities: list[dict]) -> dict:
 
 # ─── Payroll accrual booking ──────────────────────────────────────────────────
 
+def _payroll_components(emp: dict) -> list:
+    """Per-employee expense breakdown — mirrors the CSI components_for split.
+    'basic' = net less bonus/claim; the employee-side deduction portions inside
+    epf/socso/mtd offset that, so the per-employee total nets to CTC."""
+    return [
+        ("basic",     _round2((emp.get("netSalary") or 0) - (emp.get("bonus") or 0) - (emp.get("claim") or 0))),
+        ("claim",     _round2(emp.get("claim", 0))),
+        ("bonus",     _round2(emp.get("bonus", 0))),
+        ("ca_dedn",   _round2(emp.get("caDedn", 0))),
+        ("epf",       _round2((emp.get("epfEmployee") or 0) + (emp.get("epfEmployer") or 0))),
+        ("socso_eis", _round2((emp.get("socsoEmployee") or 0) + (emp.get("socsoEmployer") or 0)
+                              + (emp.get("eisEmployee") or 0) + (emp.get("eisEmployer") or 0))),
+        ("hrdf",      _round2(emp.get("hrdf", 0))),
+        ("mtd",       _round2(emp.get("mtd", 0))),
+    ]
+
+
+def _payroll_tag_option(emp: dict, yyyymm: str) -> str:
+    """Customer reporting-tag option for an internal employee: Internal_<Name>_<YYYYMM>."""
+    name = (emp.get("name") or emp.get("employeeId") or "").strip()
+    return f"Internal_{name}_{yyyymm}"
+
+
 async def _auto_book_accruals_payroll(kase: dict, db) -> dict:
     """
-    Posts ONE Zoho journal for the payroll accrual, per the corrected
-    "Payroll Accounting Entries" template. The key correction: every credit
-    line lands on a SINGLE accrual account ("Accrued Internal Salary", here the
-    HSSB-043 Internal Salary Payable account) instead of five separate payables.
-
-      DR  Internal - Salaries and Benefits   Net Salary  (take-home)
-      DR  Internal - Salaries and Benefits   Deductions  (employee EPF/SOCSO/EIS/PCB)
-      DR  Internal - Salaries and Benefits   Statutory   (employer EPF/SOCSO/EIS/HRDF)
-      CR  Accrued Internal Salary            Net Salary Payable
-      CR  Accrued Internal Salary            EPF Payable
-      CR  Accrued Internal Salary            SOCSO+EIS Payable
-      CR  Accrued Internal Salary            HRDF Payable
-      CR  Accrued Internal Salary            PCB Payable
+    Posts ONE Zoho journal PER internal employee (mirrors the CSI accrual):
+    each pay component is debited to its own Internal-* expense account and
+    credited to Internal Salary Payable, with every line tagged to the
+    employee's Zoho contact (customer_id) and the "Customer" reporting tag
+    option "Internal_<Employee Name>_<YYYYMM>".
     """
     org_cfg = ORGS.get(kase.get("entity", ""), {})
     org_id  = org_cfg.get("id")
@@ -560,83 +599,118 @@ async def _auto_book_accruals_payroll(kase: dict, db) -> dict:
     if not maps:
         return {"success": False, "error": f"Payroll account map not configured for org {org_id}. Add it to _PAYROLL_ORG_MAP."}
 
+    exp_map      = maps["expense_map"]
+    payable_id   = maps["net_pay"]
     journal_date = _compute_journal_date(kase.get("period", ""))
     mmm_yy       = _period_mmm_yy(kase.get("period", ""))
+    yyyymm       = (kase.get("period", "").split("-", 1)[0] or "")[:6]
     entity_code  = kase.get("entity", "HSSB")
-    description  = f"{entity_code}_Salary_Internal_Employees_{mmm_yy}"
 
     entities = (kase.get("parsed_data") or {}).get("entities", [])
     all_employees = [emp for ent in entities for emp in ent.get("employees", [])]
+    if not all_employees:
+        return {"success": False, "error": "No employees in payroll data."}
 
-    # Credit-side component totals — each posts to the single accrual account.
-    net   = _round2(sum(e.get("netSalary", 0) for e in all_employees))
-    epf   = _round2(sum(e.get("epfEmployee", 0) + e.get("epfEmployer", 0) for e in all_employees))
-    socso = _round2(sum(e.get("socsoEmployee", 0) + e.get("socsoEmployer", 0) + e.get("eisEmployee", 0) + e.get("eisEmployer", 0) for e in all_employees))
-    hrdf  = _round2(sum(e.get("hrdf", 0) for e in all_employees))
-    pcb   = _round2(sum(e.get("mtd", 0) for e in all_employees))
-
-    total = _round2(net + epf + socso + hrdf + pcb)
-    if total == 0:
-        return {"success": False, "error": "Total payroll is zero — check payroll file data."}
-
-    # Debit-side breakdown — same expense account, three buckets that re-sum to
-    # `total`. Statutory absorbs any rounding so DR total == CR total exactly.
-    deduction = _round2(sum(e.get("epfEmployee", 0) + e.get("socsoEmployee", 0) + e.get("eisEmployee", 0) + e.get("mtd", 0) for e in all_employees))
-    statutory = _round2(total - net - deduction)
-
-    exp_acct = maps["salary_exp"]   # DR  Internal - Salaries and Benefits
-    accrued  = maps["net_pay"]      # CR  Accrued Internal Salary (HSSB-043 Internal Salary Payable)
-
-    line_items = [
-        # DR — Internal - Salaries and Benefits
-        {"account_id": exp_acct, "debit_or_credit": "debit",  "amount": net,       "description": f"{description} - Net Salary"},
-        {"account_id": exp_acct, "debit_or_credit": "debit",  "amount": deduction, "description": f"{description} - Deductions"},
-        {"account_id": exp_acct, "debit_or_credit": "debit",  "amount": statutory, "description": f"{description} - Statutory"},
-        # CR — Accrued Internal Salary
-        {"account_id": accrued,  "debit_or_credit": "credit", "amount": net,   "description": f"{description} - Net Salary Payable"},
-        {"account_id": accrued,  "debit_or_credit": "credit", "amount": epf,   "description": f"{description} - EPF Payable"},
-        {"account_id": accrued,  "debit_or_credit": "credit", "amount": socso, "description": f"{description} - SOCSO+EIS Payable"},
-        {"account_id": accrued,  "debit_or_credit": "credit", "amount": hrdf,  "description": f"{description} - HRDF Payable"},
-        {"account_id": accrued,  "debit_or_credit": "credit", "amount": pcb,   "description": f"{description} - PCB Payable"},
-    ]
-    # Remove zero-amount lines
-    line_items = [li for li in line_items if li["amount"] > 0]
+    # ── Resolve the "Customer" reporting tag (mandatory, like CSI) ────────────
+    CUSTOMER_TAG = "Customer"
+    try:
+        tags = await fetch_reporting_tags(org_id)
+    except Exception as e:
+        return {"success": False, "error": f"Could not read Zoho reporting tags: {e}"}
+    cust_tag = next((t for t in tags if t["tag_name"].lower() == CUSTOMER_TAG.lower()), None)
+    if not cust_tag:
+        return {"success": False, "error": f"Reporting tag '{CUSTOMER_TAG}' not found in Zoho."}
+    tag_id = cust_tag["tag_id"]
+    try:
+        tag_options = await fetch_tag_options(org_id, tag_id)   # lower(name) -> option_id
+    except Exception as e:
+        return {"success": False, "error": f"Could not read Customer tag options: {e}"}
 
     try:
-        journal = await post_journal_entry(org_id, {
-            "journal_date":     journal_date,
-            "reference_number": f"ACCR-{kase['reference']}",
-            "notes": (
-                f"Payroll Accrual – {kase.get('period')} – "
-                f"{kase.get('entity_name', entity_code)} – Ref: {kase['reference']}"
-            ),
-            "line_items": line_items,
-        })
-        j_id = journal.get("journal_id")
-        db.from_("payroll_cases").update({
-            "zoho_org_id":      org_id,
-            "zoho_journal_ids": [j_id] if j_id else [],
-        }).eq("id", kase["id"]).execute()
-        return {"success": True, "journal_id": j_id,
-                "totals": {"net": net, "epf": epf, "socso": socso,
-                           "hrdf": hrdf, "pcb": pcb, "total": total}}
+        contacts = await fetch_contacts(org_id)   # lower(name) -> contact_id
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": f"Could not read Zoho contacts: {e}"}
+
+    # Pre-resolve a Zoho contact (employee) and a per-employee Customer tag
+    # option BEFORE posting anything. If any can't be resolved, post nothing.
+    errors = []
+    for emp in all_employees:
+        cons = (emp.get("name") or emp.get("employeeId") or "").strip()
+        if not cons:
+            errors.append(f"employee {emp.get('employeeId','?')}: missing name for Contact")
+            continue
+        if cons.lower() not in contacts:
+            try:
+                contacts[cons.lower()] = await create_contact(org_id, cons, "vendor")
+            except Exception as e:
+                errors.append(f"contact '{cons}': {e}")
+        opt = _payroll_tag_option(emp, yyyymm)
+        if opt.lower() not in tag_options:
+            try:
+                tag_options[opt.lower()] = await create_tag_option(org_id, tag_id, opt)
+            except Exception as e:
+                errors.append(f"reporting tag '{opt}': {e}")
+    if errors:
+        return {"success": False, "error": "Pre-resolution failed (nothing posted): " + "; ".join(errors[:6])}
+
+    # ── Post one balanced JV per employee, with Contact + Customer tag ────────
+    journal_ids, failed, skipped = [], [], 0
+    for emp in all_employees:
+        cons       = (emp.get("name") or emp.get("employeeId") or "").strip()
+        contact_id = contacts.get(cons.lower())
+        option_id  = tag_options.get(_payroll_tag_option(emp, yyyymm).lower())
+        line_tags  = [{"tag_id": tag_id, "tag_option_id": option_id}]
+        desc       = f"{entity_code}_Salary_Internal_{cons.replace(' ', '_')}_{mmm_yy}"
+
+        line_items = []
+        for comp_key, amount in _payroll_components(emp):
+            if amount <= 0:
+                continue
+            dr_id = exp_map.get(comp_key)
+            if not dr_id:
+                skipped += 1
+                continue
+            line_items.append({"account_id": dr_id, "debit_or_credit": "debit", "amount": amount,
+                                "description": desc, "customer_id": contact_id, "tags": line_tags})
+            line_items.append({"account_id": payable_id, "debit_or_credit": "credit", "amount": amount,
+                                "description": desc, "customer_id": contact_id, "tags": line_tags})
+
+        if not line_items:
+            continue
+        try:
+            journal = await post_journal_entry(org_id, {
+                "journal_date":     journal_date,
+                "reference_number": f"ACCR-{kase['reference']}-{emp.get('employeeId', '')}",
+                "notes": f"Payroll Accrual – {kase.get('period')} – Internal – {cons} – Ref: {kase['reference']}",
+                "line_items": line_items,
+            })
+            jid = journal.get("journal_id")
+            if jid:
+                journal_ids.append(jid)
+        except Exception as e:
+            failed.append({"employee": cons, "error": str(e)})
+
+    if not journal_ids:
+        first = failed[0] if failed else "none"
+        return {"success": False, "skipped": skipped,
+                "error": f"No accrual journals posted (skipped components: {skipped}). First failure: {first}"}
+
+    db.from_("payroll_cases").update({
+        "zoho_org_id":      org_id,
+        "zoho_journal_ids": journal_ids,
+    }).eq("id", kase["id"]).execute()
+    return {"success": len(failed) == 0, "journal_ids": journal_ids,
+            "posted": len(journal_ids), "failed": failed, "skipped": skipped}
 
 
 # ─── Payroll payment booking ──────────────────────────────────────────────────
 
 async def _auto_book_payment_payroll(kase: dict, db) -> dict:
     """
-    Posts ONE consolidated Zoho bank entry clearing the net-salary portion of
-    the accrual, per the corrected "Payroll Bank Entry" template:
-
-      DR  Accrued Internal Salary  = total net salary
-      CR  Cash at Bank - MBB_MYR   = total net salary
-
-    The statutory liabilities (EPF/SOCSO/HRDF/PCB) remain accrued and are
-    cleared separately by the statutory payment workflow (see statutory.py),
-    so they are deliberately NOT paid here to avoid double-booking.
+    Posts ONE Zoho expense PER internal employee (mirrors the CSI payment):
+    DR Internal Salary Payable / CR Bank for the employee's net salary, tagged
+    to the employee's Vendor contact. Statutory liabilities stay accrued and are
+    cleared by the statutory workflow (statutory.py).
     Uses payment_date (actual payment date) NOT the period cycle date.
     """
     org_cfg = ORGS.get(kase.get("entity", ""), {})
@@ -648,49 +722,89 @@ async def _auto_book_payment_payroll(kase: dict, db) -> dict:
     if not maps:
         return {"success": False, "error": f"Payroll account map not configured for org {org_id}."}
 
+    payable_id = maps["net_pay"]
+    bank_id    = maps["bank"]
     payment_date = (
         kase.get("payment_date")
         or (kase.get("payment_approved_at") or _now())[:10]
     )
     mmm_yy      = _period_mmm_yy(kase.get("period", ""))
     entity_code = kase.get("entity", "HSSB")
-    description = f"{entity_code}_Salary_Internal_Employees_{mmm_yy}"
 
-    accrued = maps["net_pay"]   # DR  Accrued Internal Salary (HSSB-043 Internal Salary Payable)
-    bank_id = maps["bank"]      # CR  Cash at Bank - MBB_MYR
+    # Build per-employee payment rows (net salary).
+    entities = (kase.get("parsed_data") or {}).get("entities", [])
+    payment_rows = []  # (amount, description, reference, vendor_name)
+    for ent in entities:
+        for emp in ent.get("employees", []):
+            amount = _round2(emp.get("netSalary", 0))
+            if amount <= 0:
+                continue
+            cons = (emp.get("name") or emp.get("employeeId") or "").strip()
+            desc = f"{entity_code}_Salary_Internal_{cons.replace(' ', '_')}_{mmm_yy}"
+            ref  = f"PMT-{kase['reference']}-{emp.get('employeeId', '')}"
+            payment_rows.append((amount, desc, ref, cons))
 
-    entities  = (kase.get("parsed_data") or {}).get("entities", [])
-    all_emps  = [emp for ent in entities for emp in ent.get("employees", [])]
-    total_net = _round2(sum(e.get("netSalary", 0) for e in all_emps))
+    if not payment_rows:
+        return {"success": False, "error": "No payment rows found (no employees with net salary > 0)."}
 
-    if total_net <= 0:
-        return {"success": False, "error": "Total net salary is zero — nothing to pay."}
-
-    ref = f"PMT-{kase['reference']}"
+    # Resolve a Vendor contact for every row — the SAME contact the accrual
+    # tagged — creating any that are missing. Mandatory: if any can't resolve,
+    # post nothing.
     try:
-        expense = await create_expense(org_id, {
-            "account_id":              accrued,
-            "paid_through_account_id": bank_id,
-            "date":                    payment_date,
-            "amount":                  total_net,
-            "description":             description,
-            "reference_number":        ref,
-            "currency_code":           "MYR",
-            "exchange_rate":           1,
-            "is_billable":             False,
-        })
+        contacts = await fetch_contacts(org_id)
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": f"Could not read Zoho contacts: {e}"}
+    vendor_errs = []
+    for _amt, _desc, _ref, vendor_name in payment_rows:
+        if not vendor_name:
+            vendor_errs.append("a payroll row has no name for the Vendor")
+            continue
+        if vendor_name.lower() not in contacts:
+            try:
+                contacts[vendor_name.lower()] = await create_contact(org_id, vendor_name, "vendor")
+            except Exception as e:
+                vendor_errs.append(f"vendor '{vendor_name}': {e}")
+    if vendor_errs:
+        return {"success": False, "error": "Vendor resolution failed (nothing posted): " + "; ".join(vendor_errs[:6])}
 
-    exp_id   = expense.get("expense_id")
+    results = []
+    for amount, description, reference, vendor_name in payment_rows:
+        vendor_id = contacts.get(vendor_name.lower())
+        if not vendor_id:
+            results.append({"ref": reference, "error": f"no vendor_id for '{vendor_name}'", "success": False})
+            continue
+        try:
+            expense = await create_expense(org_id, {
+                "account_id":              payable_id,
+                "paid_through_account_id": bank_id,
+                "vendor_id":               vendor_id,
+                "date":                    payment_date,
+                "amount":                  amount,
+                "description":             description,
+                "reference_number":        reference,
+                "currency_code":           "MYR",
+                "exchange_rate":           1,
+                "is_billable":             False,
+            })
+            results.append({"ref": reference, "expense_id": expense.get("expense_id"), "success": True})
+        except Exception as e:
+            results.append({"ref": reference, "error": str(e), "success": False})
+
+    posted  = [r for r in results if r["success"]]
+    failed  = [r for r in results if not r["success"]]
+    exp_ids = [r["expense_id"] for r in posted if r.get("expense_id")]
+
+    if not posted:
+        return {"success": False, "error": f"All {len(results)} payment entries failed. First: {results[0].get('error')}", "results": results}
+
     existing = kase.get("zoho_journal_ids") or []
     db.from_("payroll_cases").update({
         "zoho_org_id":      org_id,
-        "zoho_journal_ids": existing + ([exp_id] if exp_id else []),
+        "zoho_journal_ids": existing + exp_ids,
         "zoho_posted_at":   _now(),
         "status":           "zoho_posted",
     }).eq("id", kase["id"]).execute()
-    return {"success": True, "journal_id": exp_id, "expense_id": exp_id, "amount": total_net}
+    return {"success": len(failed) == 0, "posted": len(posted), "failed": len(failed), "expense_ids": exp_ids, "results": results}
 
 
 # ─── Auto accrual booking (Step 2 → 3) ───────────────────────────────────────
@@ -1241,7 +1355,7 @@ async def _upload_case_inner(
 # ─── Case detail page ─────────────────────────────────────────────────────────
 
 @router.get("/cases/{case_id}")
-async def case_detail_page(case_id: str, request: Request):
+async def case_detail_page(case_id: str, request: Request, poll: str | None = None):
     user = get_current_user(request)
     db = get_db()
     if not db:
@@ -1251,6 +1365,14 @@ async def case_detail_page(case_id: str, request: Request):
     kase = resp.data
     if not kase:
         raise HTTPException(404, "Case not found")
+
+    # The 3s approval-poller passes the status it last rendered. While that
+    # status is unchanged, return 204 so htmx does NOT re-swap the whole detail
+    # view — otherwise the waiting screens (check/payment approval) visibly
+    # refresh every 3s. We still keep polling; the swap happens only on a real
+    # status change (e.g. the approver clicks the email link).
+    if poll is not None and kase.get("status", "") == poll:
+        return Response(status_code=204)
 
     logs_resp = db.from_("payroll_audit_log").select("*").eq("case_id", case_id).order("created_at").execute()
     logs = logs_resp.data or []

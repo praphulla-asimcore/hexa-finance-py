@@ -102,6 +102,11 @@ def _parse_employee(row, col_map) -> dict | None:
         "hrdf":          _get(row, col_map, "HRDF"),
         "mtd":           _get(row, col_map, "MTD"),
         "ctcHexa":       ctc_hexa,
+        # File's own CTC Hexa, preserved verbatim. statutory_enrich overwrites
+        # ``ctcHexa`` with a rate-table recompute (for accrual/statutory use),
+        # so keep the file value for margin checks that must compare against the
+        # file's CTC Client on the SAME costing basis.
+        "ctcHexaFile":   ctc_hexa,
         "netSalary":     _get(row, col_map, "Net Salary"),
         "ctcClient":     _get(row, col_map, "CTC Client"),
         "totalBilling":  _get(row, col_map, "Total Billing"),

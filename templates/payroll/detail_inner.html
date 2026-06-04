@@ -16,7 +16,7 @@
 {# The div is omitted once the case advances, so polling stops cleanly.  #}
 {% if kase.status in ['check_approval_sent', 'check_reviewer_approved', 'check_approved', 'payment_approval_sent'] %}
 <div id="approval-poller"
-     hx-get="/cases/{{ kase.id }}"
+     hx-get="/cases/{{ kase.id }}?poll={{ kase.status }}"
      hx-target="#case-detail-inner"
      hx-swap="innerHTML"
      hx-trigger="every 3s"
