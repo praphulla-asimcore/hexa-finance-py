@@ -66,6 +66,10 @@ async def fetch_accounts(org_id: str) -> list[dict]:
 
 
 async def post_journal_entry(org_id: str, payload: dict) -> dict:
+    # Zoho creates journals as "draft" by default — a draft returns code 0 + a
+    # journal_id (so it looks posted) but never hits the journal register. Force
+    # "published" so the accrual actually books; callers may still override.
+    payload = {"status": "published", **payload}
     token = await get_access_token()
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
