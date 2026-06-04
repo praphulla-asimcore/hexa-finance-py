@@ -17,7 +17,11 @@
       <div class="pf-sub-step-num">{% if kase.bank_upload_at %}✓{% else %}A{% endif %}</div>
       <div>Log Bank Upload</div>
     </div>
-    {% if can_log %}
+    {% if can_log and bank_gate.blocked %}
+    <div class="pf-sub-step-locked" style="color:#991B1B">
+      ⛔ Bank file is blocked by a failed control — resolve it (or obtain an audited override) on Step 4 before logging an upload.
+    </div>
+    {% elif can_log %}
     <div class="pf-sub-step-body">
       <form hx-post="/cases/{{ kase.id }}/log-bank-upload"
             hx-target="#case-detail-inner"

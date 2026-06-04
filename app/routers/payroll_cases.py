@@ -1121,6 +1121,40 @@ h2{{color:{color};margin:0 0 8px;}}p{{color:#64748b;margin:0 0 24px;}}
 </div></body></html>"""
 
 
+def _bank_gate(kase: dict) -> dict:
+    """HARD GATE on the bank file: when a critical control has failed, the file
+    must not be downloadable or loggable as uploaded.
+
+    Blocking conditions: any inconsistent Employee ID (`idConflicts`), or a
+    cross-check that did not pass (failed or could not run). An *audited* override
+    recorded by a second user (`check_data.bankGateOverride`) releases the gate —
+    so a deliberate exception is possible but never a silent click-through.
+    Returns ``blocked`` (gate active now), ``hasIssues`` (a control failed at all),
+    ``reasons`` (human-readable), and the ``override`` record if released."""
+    cd = kase.get("check_data") or {}
+    reasons = []
+
+    id_conflicts = cd.get("idConflicts") or []
+    if id_conflicts:
+        reasons.append(f"{len(id_conflicts)} row(s) with an inconsistent Employee ID")
+
+    xc = cd.get("crosscheck")
+    if isinstance(xc, dict) and not xc.get("ok", True):
+        crit = [i for i in (xc.get("issues") or []) if i.get("level") == "critical"]
+        if xc.get("ran", True):
+            reasons.append(f"cross-check found {len(crit) or 1} critical issue(s)")
+        else:
+            reasons.append("cross-check could not run (verification incomplete)")
+
+    override = cd.get("bankGateOverride")
+    return {
+        "blocked":  bool(reasons) and not override,
+        "hasIssues": bool(reasons),
+        "reasons":  reasons,
+        "override": override,
+    }
+
+
 def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None) -> dict:
     if selected_step is None:
         selected_step = _get_active_step(kase.get("status", ""))
@@ -1130,6 +1164,7 @@ def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None) -
         "selected_step": selected_step,
         "orgs": ORGS,
         "approvers": APPROVERS,
+        "bank_gate": _bank_gate(kase),
     }
 
 
@@ -1882,10 +1917,14 @@ async def email_approve(token: str, action: str = "approve"):
 async def download_bank_xlsx(case_id: str, request: Request):
     get_current_user(request)
     db = get_db()
-    resp = db.from_("payroll_cases").select("bank_file_name,bank_file_data").eq("id", case_id).single().execute()
+    resp = db.from_("payroll_cases").select("bank_file_name,bank_file_data,check_data").eq("id", case_id).single().execute()
     kase = resp.data
     if not kase or not kase.get("bank_file_data"):
         raise HTTPException(404, "Bank file not found. Generate bank files first.")
+    gate = _bank_gate(kase)
+    if gate["blocked"]:
+        raise HTTPException(403, "Bank file is blocked by a failed control: "
+                                 + "; ".join(gate["reasons"]) + ". Resolve it or obtain an audited override.")
     file_bytes = base64.b64decode(kase["bank_file_data"])
     return Response(
         content=file_bytes,
@@ -1903,6 +1942,10 @@ async def download_bank_txt(case_id: str, request: Request):
     bank_txt = ((kase or {}).get("check_data") or {}).get("bankTxt")
     if not bank_txt or not bank_txt.get("data"):
         raise HTTPException(404, "TXT file not available. Re-generate the bank file once the running-number counter is set up.")
+    gate = _bank_gate(kase or {})
+    if gate["blocked"]:
+        raise HTTPException(403, "Bank file is blocked by a failed control: "
+                                 + "; ".join(gate["reasons"]) + ". Resolve it or obtain an audited override.")
     file_bytes = base64.b64decode(bank_txt["data"])
     return Response(
         content=file_bytes,
@@ -1946,12 +1989,15 @@ async def log_bank_upload(case_id: str, request: Request):
     if not bank_portal_ref:
         return HTMLResponse('<div class="error-msg">Bank portal reference number is required.</div>')
 
-    resp = db.from_("payroll_cases").select("id,status").eq("id", case_id).single().execute()
+    resp = db.from_("payroll_cases").select("id,status,check_data").eq("id", case_id).single().execute()
     kase = resp.data
     if not kase:
         return HTMLResponse('<div class="error-msg">Case not found.</div>')
     if kase.get("status") != "bank_file_generated":
         return await _refresh_detail(case_id, db, request, user, _get_active_step(kase.get("status", "")))
+    if _bank_gate(kase)["blocked"]:
+        return HTMLResponse('<div class="error-msg">Cannot log a bank upload — the bank file is '
+                            'blocked by a failed control. Resolve it or obtain an audited override on Step 4.</div>')
 
     now = _now()
     db.from_("payroll_cases").update({
@@ -1967,6 +2013,58 @@ async def log_bank_upload(case_id: str, request: Request):
     })
 
     return await _refresh_detail(case_id, db, request, user, 5)
+
+
+@router.post("/cases/{case_id}/override-bank-gate")
+async def override_bank_gate(case_id: str, request: Request):
+    """Audited second-person override of the bank-file hard gate. Requires a
+    reason and a DIFFERENT user from the one who uploaded the case (segregation of
+    duties). Records who/when/why into check_data and the audit log, then releases
+    the gate so the file can be downloaded."""
+    user = get_current_user(request)
+    db = get_db()
+    body = await request.form()
+    reason = str(body.get("reason", "")).strip()
+    if len(reason) < 5:
+        return HTMLResponse('<div class="error-msg">A reason (min 5 characters) is required to override the gate.</div>')
+
+    resp = db.from_("payroll_cases").select(
+        "id,status,check_data,uploaded_by_email,uploaded_by_name").eq("id", case_id).single().execute()
+    kase = resp.data
+    if not kase:
+        return HTMLResponse('<div class="error-msg">Case not found.</div>')
+
+    gate = _bank_gate(kase)
+    if not gate["hasIssues"]:
+        return HTMLResponse('<div class="error-msg">Nothing to override — no critical control has failed.</div>')
+    if gate["override"]:
+        return await _refresh_detail(case_id, db, request, user, 4)
+
+    # Segregation of duties: the overrider must not be the case preparer.
+    overrider_email = (user.get("email") or "").strip().lower()
+    if overrider_email and overrider_email == (kase.get("uploaded_by_email") or "").strip().lower():
+        return HTMLResponse('<div class="error-msg">Override must be made by a different user than the one '
+                            'who prepared this case (segregation of duties).</div>')
+
+    now = _now()
+    cd = dict(kase.get("check_data") or {})
+    cd["bankGateOverride"] = {
+        "by":     user.get("name") or user.get("email"),
+        "byEmail": user.get("email", ""),
+        "at":     now,
+        "reason": reason,
+        "reasons": gate["reasons"],   # what was overridden
+    }
+    db.from_("payroll_cases").update({"check_data": cd}).eq("id", case_id).execute()
+
+    await _audit_log(db, case_id, "BANK_GATE_OVERRIDE", user.get("name") or user.get("email"),
+                     user.get("id"), _get_ip(request), {
+        "reason": reason, "overrodeControls": gate["reasons"],
+        "stamp": f"Bank-file gate OVERRIDDEN by: {user.get('name')} | Reason: {reason} | "
+                 f"Controls bypassed: {'; '.join(gate['reasons'])} | Date-Time: {now}",
+    })
+
+    return await _refresh_detail(case_id, db, request, user, 4)
 
 
 # ─── Step 5b: Send payment approval to director ───────────────────────────────

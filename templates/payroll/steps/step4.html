@@ -93,7 +93,43 @@
     <div style="font-size:12px;color:#92400e;margin-top:8px">Register these consultants as Favourite Beneficiaries in Maybank CMS, add their code to the CSI or consultant database, then re-generate the bank file.</div>
   </div>
   {% endif %}
+  {% if bank_gate.blocked %}
+  <div class="pf-flags-card pf-flags-warn" style="margin-bottom:14px">
+    <div class="pf-flags-header">⛔ Bank file BLOCKED — {{ bank_gate.reasons|length }} critical control failed</div>
+    <ul style="margin:6px 0 0 18px;font-size:13px;color:#991B1B;line-height:1.7">
+      {% for r in bank_gate.reasons %}<li>{{ r }}</li>{% endfor %}
+    </ul>
+    <div style="font-size:12px;color:#991B1B;margin-top:8px">
+      The downloads below are disabled — this file <strong>cannot leave the system</strong> until the issue is fixed
+      (correct the CSI and re-generate the bank file) or a different user records an audited override.
+    </div>
+    <details style="margin-top:12px">
+      <summary style="cursor:pointer;font-size:12px;font-weight:700;color:#7c2d12">Override (second approver only)</summary>
+      <form hx-post="/cases/{{ kase.id }}/override-bank-gate" hx-target="#case-detail-inner" hx-swap="innerHTML"
+            style="margin-top:8px;background:#fff;border:1px solid #fecaca;border-radius:8px;padding:12px">
+        <label class="label" style="font-size:12px">Reason for releasing a blocked bank file <span class="req">*</span></label>
+        <input class="input" name="reason" required minlength="5"
+               placeholder="e.g. CSI re-verified manually with HR; HS149 confirmed correct for this payout"/>
+        <div style="font-size:11px;color:#92400e;margin:8px 0">
+          This is logged to the audit trail with your name, time and reason. It must be done by someone other than the case preparer.
+        </div>
+        <button type="submit" class="btn btn-danger" style="background:#dc2626;border-color:#dc2626">
+          <span class="spinner htmx-indicator"></span> Override &amp; release file
+        </button>
+      </form>
+    </details>
+  </div>
+  {% elif bank_gate.override %}
+  <div class="pf-flags-card" style="margin-bottom:14px;background:#FFFBEB;border-left:4px solid #f59e0b">
+    <div class="pf-flags-header" style="color:#92400e">⚠ Released by audited override</div>
+    <div style="font-size:12px;color:#78350f;margin-top:4px">
+      A failed control was overridden by <strong>{{ bank_gate.override.by }}</strong> on {{ fmt_date(bank_gate.override.at) }}.
+      Reason: <em>{{ bank_gate.override.reason }}</em>. The original warnings remain below — verify before uploading.
+    </div>
+  </div>
+  {% else %}
   <div class="pf-info-banner pf-banner-ok">Bank file ready — download the workbook, generate the TXT, then upload the TXT to Maybank CMS.</div>
+  {% endif %}
   <ol style="margin:12px 0 4px;padding-left:20px;font-size:13px;color:#334155;line-height:1.7">
     <li>Download the RCGEN2 macro workbook below and open it in Microsoft Excel.</li>
     <li>Click <strong>Enable Content / Enable Macros</strong> when prompted.</li>
@@ -108,11 +144,16 @@
   </div>
   {% set bank_txt = (kase.check_data or {}).get('bankTxt') %}
   <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
+    {% if bank_gate.blocked %}
+    <button class="btn btn-primary" disabled title="Blocked by a failed control" style="opacity:.45;cursor:not-allowed">⬇ Bank Upload File (.txt)</button>
+    <button class="btn btn-secondary" disabled title="Blocked by a failed control" style="opacity:.45;cursor:not-allowed">⬇ RCGEN2 Macro Workbook (.xlsm)</button>
+    {% else %}
     {% if bank_txt and bank_txt.data %}
     <a href="/cases/{{ kase.id }}/bank-file-txt" class="btn btn-primary">⬇ Bank Upload File (.txt)</a>
     {% endif %}
     {% if kase.bank_file_data %}
     <a href="/cases/{{ kase.id }}/bank-file-xlsx" class="btn btn-secondary">⬇ RCGEN2 Macro Workbook (.xlsm)</a>
+    {% endif %}
     {% endif %}
   </div>
   {% if bank_txt and bank_txt.data %}
