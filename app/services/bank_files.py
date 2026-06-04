@@ -450,18 +450,91 @@ async def fetch_airtable_consultants() -> list[dict]:
     return records
 
 
+def _norm_name(s: str) -> str:
+    """Lowercase and collapse non-alphanumerics to single spaces, for comparing a
+    CSI nickname/short name against an Airtable full legal name."""
+    return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+
+
 def match_consultant(emp: dict, airtable_list: list[dict]):
-    by_num = next(
-        (a for a in airtable_list if a["employeeNumber"] == emp.get("employeeId") or a["employeeId"] == emp.get("employeeId")),
-        None,
-    )
-    if by_num:
-        return by_num
-    emp_lower = emp.get("name", "").lower()
-    return next(
-        (a for a in airtable_list if a["name"].lower() == emp_lower or emp_lower in a["name"].lower() or a["name"].lower() in emp_lower),
-        None,
-    )
+    """Resolve a CSI/payroll row to its consultant-DB record for bank details.
+
+    SAFETY-CRITICAL: the bank account, name and IC come from the matched record
+    while the amount comes from the CSI — so a wrong match pays the right amount
+    to the WRONG person's account. This therefore returns a record ONLY when the
+    identity is corroborated and unambiguous; every doubtful case returns None,
+    which excludes the row from the bank file and flags it for manual handling
+    (fail loud, never guess an account).
+
+      1. ID match: the CSI Employee ID must equal a record's Employee Number or
+         Employee ID (empty IDs never match). The candidate must be UNIQUE and
+         its name must agree with the CSI name — a shared/mistyped ID pointing at
+         a different person is rejected as a conflict, not silently trusted.
+      2. Name fallback: only an EXACT normalised full-name match, and only when
+         it is unique. No substring matching — "Lim" must not match "Lim Adam",
+         and unrelated names (e.g. Azeean Norain vs Muhammad Nazarul) never
+         collide.
+    """
+    emp_id = (emp.get("employeeId") or "").strip()
+    emp_name = _norm_name(emp.get("name", ""))
+
+    # 1. Identity by ID — must be unique AND name-consistent.
+    if emp_id:
+        id_hits = [
+            a for a in airtable_list
+            if (a.get("employeeNumber") and a["employeeNumber"] == emp_id)
+            or (a.get("employeeId") and a["employeeId"] == emp_id)
+        ]
+        if len(id_hits) == 1:
+            cand = _norm_name(id_hits[0]["name"])
+            if emp_name and cand and (
+                emp_name == cand or emp_name in cand or cand in emp_name
+            ):
+                return id_hits[0]
+            return None   # ID points at a different name → conflict, refuse
+        if len(id_hits) > 1:
+            return None   # ambiguous ID → refuse
+
+    # 2. Exact normalised full-name match, unique only. No substring matching.
+    if emp_name:
+        name_hits = [a for a in airtable_list if _norm_name(a["name"]) == emp_name]
+        if len(name_hits) == 1:
+            return name_hits[0]
+
+    return None
+
+
+def _names_agree(a: str, b: str) -> bool:
+    """True when two already-normalised names corroborate the same person — equal,
+    or one a whole-string substring of the other (CSI nickname vs full legal name).
+    Both must be non-empty; unrelated names never agree."""
+    return bool(a) and bool(b) and (a == b or a in b or b in a)
+
+
+def id_conflict(emp: dict, airtable_list: list[dict]):
+    """Detect an *inconsistent Employee ID*: the CSI Employee ID resolves to a
+    consultant-DB record whose name does NOT match the CSI name. This is the
+    signal that a row carries someone else's Employee ID (the exact failure that
+    paid Azeean's amount into Nazarul's account).
+
+    Returns the conflicting record when the CSI ID uniquely points at a
+    different-named person, else None (no ID hit, or the hit's name agrees, so
+    ``match_consultant`` would have accepted it). The bank-file builder uses this
+    to raise an ``ID_MISMATCH`` flag and EXCLUDE the row rather than guess."""
+    emp_id = (emp.get("employeeId") or "").strip()
+    if not emp_id:
+        return None
+    emp_name = _norm_name(emp.get("name", ""))
+    id_hits = [
+        a for a in airtable_list
+        if (a.get("employeeNumber") and a["employeeNumber"] == emp_id)
+        or (a.get("employeeId") and a["employeeId"] == emp_id)
+    ]
+    if len(id_hits) != 1:
+        return None
+    if _names_agree(emp_name, _norm_name(id_hits[0]["name"])):
+        return None
+    return id_hits[0]
 
 
 def _sha256(data: bytes) -> str:
@@ -501,6 +574,19 @@ def next_rcgen_run_number(db, key: str = "rcgen_dp", start: int = 1000) -> int:
     return int(val)
 
 
+def _run_crosscheck(xlsx_bytes, entities, account_source, excluded) -> dict:
+    """Run the .xlsm↔CSI reconciliation, never letting a cross-check error block
+    file generation — a failed cross-check is itself surfaced (ok=False) so the
+    maker sees that verification did not complete, rather than silently passing."""
+    try:
+        from app.services.bank_crosscheck import crosscheck_csi_vs_xlsm
+        return crosscheck_csi_vs_xlsm(xlsx_bytes, entities, account_source, excluded)
+    except Exception as e:
+        return {"ok": False, "ran": False,
+                "summary": "Cross-check could not run — verify the bank file manually",
+                "error": str(e)[:200], "issues": []}
+
+
 async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> dict:
     entities = (kase.get("parsed_data") or {}).get("entities", [])
     check = kase.get("check_data") or {}
@@ -521,10 +607,28 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
 
     beneficiaries = []
     excluded_no_fav = []   # consultants with no Favourite Beneficiary Code — skipped + flagged
+    id_conflicts = []      # rows whose Employee ID belongs to a DIFFERENT person — excluded
     seq_ref = 100
     for ent in entities:
         for emp in ent.get("employees", []):
             matched = match_consultant(emp, airtable_list)
+
+            # SAFETY: if the CSI Employee ID resolves to a different-named
+            # consultant, do NOT pay this row — paying it would route the CSI
+            # amount into the wrong person's account (the Azeean→Nazarul defect).
+            # Exclude it entirely and flag the inconsistent ID for correction.
+            if matched is None and airtable_list:
+                conflict = id_conflict(emp, airtable_list)
+                if conflict is not None:
+                    id_conflicts.append({
+                        "csiName":            emp.get("name", ""),
+                        "csiEmployeeId":      emp.get("employeeId", ""),
+                        "resolvedName":       conflict.get("name", ""),
+                        "resolvedEmployeeId": conflict.get("employeeNumber") or conflict.get("employeeId", ""),
+                        "entity":             ent["sheetName"],
+                    })
+                    continue
+
             bank_code = bank_name_to_code(matched["bankName"] if matched else "")
 
             # Favourite Beneficiary/Biller Code: the CSI value wins, else the
@@ -571,6 +675,16 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
     existing_check = dict(kase.get("check_data") or {})
     existing_check["missingBankAccounts"] = missing
     existing_check["excludedNoFavourite"] = excluded_no_fav
+    existing_check["idConflicts"] = id_conflicts
+
+    # ── Independent cross-check: re-read the generated .xlsm and reconcile it
+    #    against the CSI (identity + amount) and the consultant DB (account),
+    #    so a wrong/dropped/extra payee is caught BEFORE the maker uploads. ──
+    existing_check["crosscheck"] = _run_crosscheck(
+        xlsx_bytes, entities, airtable_list,
+        excluded=(missing + excluded_no_fav
+                  + [{"name": c["csiName"], "employeeId": c["csiEmployeeId"]} for c in id_conflicts]),
+    )
 
     # Also build the bank .txt directly (no Excel macro). Best-effort: if the
     # running-number counter isn't provisioned yet, skip silently — the .xlsm
@@ -666,6 +780,12 @@ async def generate_and_store_bank_files_payroll(kase: dict, db, triggered_by: st
     missing = [{"name": b["name"], "employeeId": b["employeeId"]} for b in beneficiaries if not b["matched"]]
     existing_check = dict(kase.get("check_data") or {})
     existing_check["missingBankAccounts"] = missing
+
+    # Cross-check the .xlsm against the payroll source. Here the bank account is
+    # the CSI's own ``bankAccount`` column, so it doubles as the account source.
+    account_source = [{"name": emp.get("name", ""), "accountNo": emp.get("bankAccount", "")}
+                      for ent in entities for emp in ent.get("employees", [])]
+    existing_check["crosscheck"] = _run_crosscheck(xlsx_bytes, entities, account_source, missing)
 
     db.from_("payroll_cases").update({
         "status":                   "bank_file_generated",

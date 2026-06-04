@@ -21,7 +21,7 @@ from app.services.zoho import (
 )
 from app.services.bank_files import (
     generate_and_store_bank_files, generate_and_store_bank_files_payroll,
-    fetch_airtable_consultants, match_consultant,
+    fetch_airtable_consultants, match_consultant, id_conflict,
 )
 from app.services.pdf import build_check_report_pdf, build_audit_package_pdf
 from app.services.email import (
@@ -247,6 +247,23 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None) -
                     flags.append({"code": "DUPLICATE_EMPLOYEE", "employee": name,
                                   "entity": entity, "employeeId": emp_id})
                 seen_ids.add(emp_id)
+
+            # ── Inconsistent Employee ID (resolves to a DIFFERENT consultant) ──
+            # The CSI Employee ID points at a different-named person in the
+            # consultant DB — the failure mode that paid one consultant's salary
+            # into another's account. Flag it here, at check time, so it is
+            # corrected long before the bank file is built.
+            if airtable_list:
+                conflict = id_conflict(emp, airtable_list)
+                if conflict is not None:
+                    resolved_id = conflict.get("employeeNumber") or conflict.get("employeeId", "")
+                    flags.append({"code": "ID_MISMATCH", "employee": name, "entity": entity,
+                                  "employeeId": emp_id,
+                                  "resolvedName": conflict.get("name", ""),
+                                  "resolvedEmployeeId": resolved_id,
+                                  "reason": f"Employee ID {emp_id} belongs to "
+                                            f"{conflict.get('name', '')} ({resolved_id}) in the "
+                                            f"consultant database — verify the correct Employee ID"})
 
             # ── Negative values ───────────────────────────────────────────────
             for field, val in [("Gross", g), ("Net", n), ("EPF Employer", epf),

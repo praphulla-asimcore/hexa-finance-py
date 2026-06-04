@@ -10,6 +10,63 @@
   </div>
 
   {% if has_files %}
+  {# ── Cross-check: RCGEN2 workbook reconciled against the CSI ── #}
+  {% set xcheck = (kase.check_data or {}).get('crosscheck') %}
+  {% if xcheck %}
+    {% if xcheck.ran and xcheck.ok %}
+    <div class="pf-flags-card pf-flags-ok" style="margin-bottom:14px">
+      <div class="pf-flags-header" style="color:#166534">✓ {{ xcheck.summary }}</div>
+      <div style="font-size:12px;line-height:1.6">
+        Reconciled {{ xcheck.fileRows }} payment row(s) in the RCGEN2 workbook against
+        {{ xcheck.csiPayable }} payable consultant(s) in the CSI{% if xcheck.excludedCount %}
+        ({{ xcheck.excludedCount }} excluded &amp; flagged){% endif %}.
+        File total <strong>RM{{ '{:,.2f}'.format(xcheck.fileTotal) }}</strong>
+        = CSI total <strong>RM{{ '{:,.2f}'.format(xcheck.expectedTotal) }}</strong>.
+        Every payee, account and amount traces back to the CSI.
+      </div>
+      {% if xcheck.issues %}
+      <div style="margin-top:8px">
+        {% for it in xcheck.issues %}
+        <div class="pf-flag-row"><span class="pf-flag-code">{{ it.code }}</span><span>{{ it.message }}</span></div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% else %}
+    <div class="pf-flags-card pf-flags-warn" style="margin-bottom:14px">
+      <div class="pf-flags-header">⚠ Cross-check: {{ xcheck.summary }}</div>
+      <div style="font-size:12px;color:#991B1B;margin-bottom:8px">
+        Do <strong>not</strong> upload this file to Maybank until every issue below is resolved.
+        Each row was checked against the CSI (payee + amount) and the consultant database (account).
+      </div>
+      {% for it in (xcheck.issues or []) %}
+      <div class="pf-flag-row"><span class="pf-flag-code">{{ it.code }}</span><span>{{ it.message }}</span></div>
+      {% endfor %}
+      {% if not xcheck.ran and xcheck.error %}
+      <div style="font-size:12px;color:#991B1B;margin-top:8px">Verifier error: {{ xcheck.error }}</div>
+      {% endif %}
+    </div>
+    {% endif %}
+  {% endif %}
+
+  {# ── Inconsistent Employee ID: row's ID belongs to a different person ── #}
+  {% set id_conflicts = (kase.check_data or {}).get('idConflicts', []) %}
+  {% if id_conflicts %}
+  <div class="pf-flags-card pf-flags-warn" style="margin-bottom:14px">
+    <div class="pf-flags-header">{{ id_conflicts|length }} row(s) with an inconsistent Employee ID — excluded from bank file</div>
+    {% for c in id_conflicts %}
+    <div class="pf-flag-row">
+      <span class="pf-flag-code">ID_MISMATCH</span>
+      <span><strong>{{ c.csiName }}</strong> (CSI) — Employee ID <strong>{{ c.csiEmployeeId }}</strong>
+            belongs to <strong>{{ c.resolvedName }}</strong> ({{ c.resolvedEmployeeId }}) in the consultant database.</span>
+    </div>
+    {% endfor %}
+    <div style="font-size:12px;color:#92400e;margin-top:8px">
+      Correct the Employee ID on these CSI rows so it matches the intended consultant, then re-generate the bank file.
+      <strong>Do not</strong> simply add bank details — the Employee ID itself points at the wrong person.
+    </div>
+  </div>
+  {% endif %}
   {% set missing_accounts = (kase.check_data or {}).get('missingBankAccounts', []) %}
   {% if missing_accounts %}
   <div class="pf-flags-card pf-flags-warn" style="margin-bottom:14px">
