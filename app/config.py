@@ -59,3 +59,8 @@ APPROVERS: dict = {
     "final":    {"name": "Praphulla Subedi",        "email": "praphulla@hexamatics.com"},
     "director": {"name": "Dato Thiruchelvapalan",   "email": "thiruchelvapalan@hexamatics.com"},
 }
+
+# Temporary override: the Payroll (internal employee) module keeps Asim as the
+# reviewer — he receives the check-approval email and his click is the recorded
+# reviewer approval. Other case types (CSI) use APPROVERS["reviewer"] above.
+PAYROLL_REVIEWER: dict = {"name": "Asim", "email": "asim.ovc977@gmail.com"}

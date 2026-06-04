@@ -77,7 +77,10 @@ async def post_journal_entry(org_id: str, payload: dict) -> dict:
         data = resp.json()
     if data.get("code") != 0:
         raise RuntimeError(f"Zoho JE error [{data.get('code')}]: {data.get('message')}")
-    return data.get("journal", {})
+    j = data.get("journal", {})
+    print(f"[ZOHO] journal created org={org_id} id={j.get('journal_id')} "
+          f"number={j.get('entry_number') or j.get('journal_number')} status={j.get('status')}")
+    return j
 
 
 async def fetch_contacts(org_id: str) -> dict:

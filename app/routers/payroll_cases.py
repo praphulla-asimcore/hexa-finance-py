@@ -8,7 +8,7 @@ from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse, HTMLResponse, Response, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from app.config import TEMPLATES_DIR, APP_URL, APPROVERS, ORGS, STATUTORY_NOS
+from app.config import TEMPLATES_DIR, APP_URL, APPROVERS, PAYROLL_REVIEWER, ORGS, STATUTORY_NOS
 from app.deps import get_current_user
 from app.services.db import get_db
 from app.services.parser import parse_excel_buffer, parse_payroll_excel_buffer
@@ -1480,18 +1480,21 @@ async def send_check_approval(case_id: str, request: Request):
     if kase.get("status") != "check_generated":
         return await _refresh_detail(case_id, db, request, user, _get_active_step(kase.get("status","")))
 
+    # Payroll keeps Asim as the reviewer (temporary override); CSI uses Ikhram.
+    reviewer = PAYROLL_REVIEWER if kase.get("type") == "PAYROLL" else APPROVERS["reviewer"]
+
     token = secrets.token_hex(32)
     db.from_("payroll_approval_tokens").insert({
         "case_id": case_id, "step": 3,
-        "approver_email": APPROVERS["reviewer"]["email"],
-        "approver_name": APPROVERS["reviewer"]["name"],
+        "approver_email": reviewer["email"],
+        "approver_name": reviewer["name"],
         "approver_role": "reviewer", "token": token, "status": "pending",
     }).execute()
 
     base_url = f"{APP_URL}/api/payroll-cases/approve/{token}"
     try:
         email_check_approval(
-            APPROVERS["reviewer"]["email"], APPROVERS["reviewer"]["name"], "First Reviewer",
+            reviewer["email"], reviewer["name"], "First Reviewer",
             kase, f"{base_url}?action=approve", f"{base_url}?action=reject"
         )
     except Exception:
@@ -1502,7 +1505,7 @@ async def send_check_approval(case_id: str, request: Request):
         "status": "check_approval_sent", "check_approval_sent_at": now,
     }).eq("id", case_id).execute()
 
-    await _audit_log(db, case_id, "CHECK_APPROVAL_SENT", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"sentTo": APPROVERS["reviewer"]["email"]})
+    await _audit_log(db, case_id, "CHECK_APPROVAL_SENT", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"sentTo": reviewer["email"]})
 
     # Zoho accrual posting is intentionally NOT done inline here — it is slow
     # (one API call per employee) and would hold the HTTP response, leaving the
