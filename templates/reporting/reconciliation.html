@@ -1,0 +1,148 @@
+{% set s = report.summary %}
+{% macro rm(n) %}{{ "RM{:,.2f}".format(n or 0) }}{% endmacro %}
+{% macro dt(d) %}{% if d %}{{ d[:10] }}{% else %}—{% endif %}{% endmacro %}
+
+<div class="recon-screen fade-in">
+
+  <div class="screen-header recon-header">
+    <div>
+      <button class="recon-back" hx-get="/reporting" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">← Reporting</button>
+      <h1 class="screen-title">Reconciliation report</h1>
+      <p class="screen-subtitle">Accrual vs Payment vs Zoho actual vs Bank lodgement — the report that proves nothing leaked.</p>
+    </div>
+  </div>
+
+  <!-- summary tiles -->
+  <div class="recon-tiles">
+    <div class="recon-tile"><span class="recon-tile-num">{{ s.total }}</span><span class="recon-tile-lbl">Cases</span></div>
+    <div class="recon-tile recon-tile-ok"><span class="recon-tile-num">{{ s.reconciled }}</span><span class="recon-tile-lbl">Reconciled</span></div>
+    <div class="recon-tile recon-tile-break"><span class="recon-tile-num">{{ s.breaks }}</span><span class="recon-tile-lbl">Breaks</span></div>
+    <div class="recon-tile recon-tile-pending"><span class="recon-tile-num">{{ s.pending }}</span><span class="recon-tile-lbl">Pending</span></div>
+  </div>
+
+  <!-- filters -->
+  <form class="recon-filters card" hx-get="/reporting/reconciliation" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML" hx-trigger="change">
+    <label class="recon-filter">
+      <span>Period</span>
+      <select name="period">
+        <option value="">All periods</option>
+        {% for p in report.periods %}
+        <option value="{{ p }}" {% if p == report.filterPeriod %}selected{% endif %}>{{ p }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="recon-filter">
+      <span>Entity</span>
+      <select name="entity">
+        <option value="">All entities</option>
+        {% for e in report.entities %}
+        <option value="{{ e }}" {% if e == report.filterEntity %}selected{% endif %}>{{ e }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </form>
+
+  {% if s.breaks > 0 %}
+  <div class="recon-alert">
+    <strong>{{ s.breaks }} break(s) found.</strong> A break means a leg of the money trail does not agree — review before treating the period as closed.
+  </div>
+  {% endif %}
+
+  <div class="recon-table-wrap card">
+    <table class="recon-table">
+      <thead>
+        <tr>
+          <th>Status</th><th>Reference</th><th>Entity</th><th>Period</th>
+          <th class="num">Accrual</th><th class="num">Payment (net)</th><th class="num">Zoho actual</th>
+          <th>Bank lodged</th><th>Detail</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in report.rows %}
+        <tr class="recon-row recon-row-{{ r.reconStatus }}">
+          <td>
+            {% if r.reconStatus == 'reconciled' %}<span class="recon-pill recon-pill-ok">Reconciled</span>
+            {% elif r.reconStatus == 'break' %}<span class="recon-pill recon-pill-break">Break</span>
+            {% else %}<span class="recon-pill recon-pill-pending">Pending</span>{% endif %}
+          </td>
+          <td class="mono">{{ r.reference }}</td>
+          <td>{{ r.entity }}</td>
+          <td>{{ r.period }}</td>
+          <td class="num">{{ rm(r.accrual) }}</td>
+          <td class="num">{{ rm(r.payment) }}</td>
+          <td class="num {% if r.posted and (r.zohoActual - r.accrual)|abs > 0.01 %}num-bad{% elif r.posted %}num-ok{% endif %}">
+            {% if r.posted %}{{ rm(r.zohoActual) }}{% else %}<span class="muted">not posted</span>{% endif %}
+          </td>
+          <td>
+            {% if r.bankLodged %}<span class="recon-yes" title="{{ r.bankRef }} · {{ dt(r.bankUploadAt) }}">✓ {{ r.bankRef or 'lodged' }}</span>
+            {% else %}<span class="muted">—</span>{% endif %}
+          </td>
+          <td class="recon-detail">
+            {% if r.breaks %}
+              {% for b in r.breaks %}<div class="recon-break-msg">{{ b.message }}</div>{% endfor %}
+            {% elif r.reconStatus == 'pending' %}
+              <span class="muted">{{ r.caseStatus.replace('_',' ') }}</span>
+            {% else %}
+              <span class="recon-yes">all legs agree</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not report.rows %}
+        <tr><td colspan="9" class="recon-empty">No cases for this filter.</td></tr>
+        {% endif %}
+      </tbody>
+      {% if report.rows %}
+      <tfoot>
+        <tr>
+          <td colspan="4">TOTAL ({{ s.total }})</td>
+          <td class="num">{{ rm(s.accrualTotal) }}</td>
+          <td class="num">{{ rm(s.paymentTotal) }}</td>
+          <td class="num">{{ rm(s.zohoTotal) }}</td>
+          <td colspan="2"></td>
+        </tr>
+      </tfoot>
+      {% endif %}
+    </table>
+  </div>
+
+  <p class="recon-foot">
+    Primary control: <strong>Zoho actual must equal Accrual</strong> (both derive from each consultant's CTC).
+    The bank-lodged column confirms the Maybank portal reference exists — the bank does not return a machine-readable amount.
+  </p>
+</div>
+
+<style>
+  .recon-screen { padding: 4px 2px; }
+  .recon-back { background: none; border: 0; color: #6366f1; font-weight: 600; font-size: 12px; cursor: pointer; padding: 0 0 6px; }
+  .recon-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 4px 0 16px; }
+  .recon-tile { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 2px; }
+  .recon-tile-num { font-size: 24px; font-weight: 800; color: #0f172a; }
+  .recon-tile-lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #64748b; font-weight: 700; }
+  .recon-tile-ok { border-color: #bbf7d0; } .recon-tile-ok .recon-tile-num { color: #16a34a; }
+  .recon-tile-break { border-color: #fecaca; } .recon-tile-break .recon-tile-num { color: #dc2626; }
+  .recon-tile-pending { border-color: #fde68a; } .recon-tile-pending .recon-tile-num { color: #d97706; }
+  .recon-filters { display: flex; gap: 18px; padding: 12px 16px; margin-bottom: 14px; }
+  .recon-filter { display: flex; flex-direction: column; gap: 4px; font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: .03em; }
+  .recon-filter select { font: inherit; font-size: 13px; text-transform: none; letter-spacing: 0; color: #0f172a; padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 7px; min-width: 160px; }
+  .recon-alert { background: #FEF2F2; border-left: 4px solid #dc2626; color: #991B1B; font-size: 13px; padding: 12px 16px; border-radius: 8px; margin-bottom: 14px; }
+  .recon-table-wrap { padding: 0; overflow-x: auto; }
+  .recon-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .recon-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: #64748b; background: #f8fafc; padding: 10px 12px; border-bottom: 1px solid #e2e8f0; white-space: nowrap; }
+  .recon-table td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+  .recon-table .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .recon-table tfoot td { font-weight: 800; color: #0f172a; background: #f8fafc; border-top: 2px solid #e2e8f0; }
+  .mono { font-family: ui-monospace, monospace; font-size: 12px; }
+  .muted { color: #94a3b8; }
+  .num-ok { color: #16a34a; } .num-bad { color: #dc2626; font-weight: 700; }
+  .recon-row-break { background: #fffafa; }
+  .recon-pill { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+  .recon-pill-ok { background: #dcfce7; color: #166534; }
+  .recon-pill-break { background: #fee2e2; color: #b91c1c; }
+  .recon-pill-pending { background: #fef3c7; color: #92400e; }
+  .recon-yes { color: #16a34a; font-weight: 600; }
+  .recon-break-msg { color: #b91c1c; font-size: 12px; line-height: 1.5; }
+  .recon-detail { max-width: 320px; }
+  .recon-empty { text-align: center; color: #94a3b8; padding: 28px; }
+  .recon-foot { font-size: 12px; color: #94a3b8; margin-top: 14px; line-height: 1.6; }
+</style>

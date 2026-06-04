@@ -107,3 +107,23 @@ async def consultants_page(request: Request):
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(request, "consultants/list.html", ctx)
     return templates.TemplateResponse(request, "consultants/list_page.html", ctx)
+
+
+@router.get("/reporting")
+async def reporting_page(request: Request):
+    user = get_current_user(request)
+    ctx = {"request": request, "user": user, "section": "reporting"}
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "reporting/list.html", ctx)
+    return templates.TemplateResponse(request, "reporting/list_page.html", ctx)
+
+
+@router.get("/reporting/reconciliation")
+async def reconciliation_report(request: Request, period: str | None = None, entity: str | None = None):
+    user = get_current_user(request)
+    from app.services.reconciliation import fetch_reconciliation
+    report = fetch_reconciliation(get_db(), period or None, entity or None)
+    ctx = {"request": request, "user": user, "section": "reporting", "report": report}
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "reporting/reconciliation.html", ctx)
+    return templates.TemplateResponse(request, "reporting/reconciliation_page.html", ctx)

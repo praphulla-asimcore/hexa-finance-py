@@ -1,0 +1,72 @@
+<div class="reporting-screen fade-in">
+
+  <div class="screen-header">
+    <h1 class="screen-title">Reporting</h1>
+    <p class="screen-subtitle">Controls and assurance reports across CSI, payroll, Zoho and the bank.</p>
+  </div>
+
+  <div class="report-grid">
+
+    <button class="report-card report-card-link card"
+            hx-get="/reporting/reconciliation" hx-target="#main-content"
+            hx-push-url="true" hx-swap="innerHTML">
+      <div class="report-card-head">
+        <span class="report-card-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 12a9 9 0 1 1-6.2-8.6"/><polyline points="21 3 21 9 15 9"/>
+          </svg>
+        </span>
+        <div>
+          <h2 class="report-card-title">Reconciliation report</h2>
+          <span class="report-card-sub">Accrual · Payment · Zoho · Bank receipt</span>
+        </div>
+        <span class="report-badge report-badge-live">Open →</span>
+      </div>
+      <p class="report-card-body">
+        Ties together, per case and per period, the accrued amount, the net payment owed,
+        the journal actually posted to Zoho, and the bank lodgement reference — the report that
+        proves nothing leaked. Any line where the legs do not agree is surfaced as a break.
+      </p>
+    </button>
+
+    <div class="report-card card">
+      <div class="report-card-head">
+        <span class="report-card-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+        </span>
+        <div>
+          <h2 class="report-card-title">Anomaly detection</h2>
+          <span class="report-card-sub">"This looks unusual", not just hard rules</span>
+        </div>
+        <span class="report-badge">Coming soon</span>
+      </div>
+      <p class="report-card-body">
+        Flags soft outliers that hard rules miss: per-consultant month-over-month net-pay
+        deltas, the same bank account appearing for more than one consultant, and statutory
+        figures that fall outside expected ranges — a review gate before payment, not a blocker.
+      </p>
+    </div>
+
+  </div>
+
+  <p class="report-foot">More reports will be added here. These two are planned next.</p>
+</div>
+
+<style>
+  .reporting-screen { padding: 4px 2px; }
+  .report-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; margin-top: 8px; }
+  .report-card { padding: 18px 20px; }
+  .report-card-head { display: flex; align-items: flex-start; gap: 12px; }
+  .report-card-icon { flex-shrink: 0; width: 38px; height: 38px; border-radius: 9px; display: flex; align-items: center; justify-content: center; background: #EEF2FF; color: #4F46E5; }
+  .report-card-title { font-size: 15px; font-weight: 800; margin: 0; color: #0f172a; }
+  .report-card-sub { font-size: 12px; color: #64748b; }
+  .report-badge { margin-left: auto; flex-shrink: 0; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #92400e; background: #FEF3C7; border: 1px solid #FDE68A; padding: 3px 8px; border-radius: 999px; }
+  .report-badge-live { color: #4F46E5; background: #EEF2FF; border-color: #C7D2FE; }
+  .report-card-link { display: block; width: 100%; text-align: left; border: 1px solid #e2e8f0; cursor: pointer; transition: box-shadow .15s, transform .15s, border-color .15s; font: inherit; }
+  .report-card-link:hover { border-color: #C7D2FE; box-shadow: 0 6px 18px rgba(79,70,229,.10); transform: translateY(-1px); }
+  .report-card-body { font-size: 13px; line-height: 1.6; color: #475569; margin: 12px 0 0; }
+  .report-foot { font-size: 12px; color: #94a3b8; margin-top: 16px; }
+</style>
