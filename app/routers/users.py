@@ -83,7 +83,9 @@ async def invite_user(request: Request):
     except Exception as e:
         return _err(f"Database error: {e}", 500)
 
-    invite_url = f"{APP_URL}/accept-invite?token={token}"
+    # Passwordless: the invite link IS the user's first sign-in link. Clicking it
+    # verifies the email, activates the account, and logs them straight in.
+    invite_url = f"{APP_URL}/auth/verify?token={token}"
     try:
         send_invite(email, name, invite_url, role)
     except Exception:
