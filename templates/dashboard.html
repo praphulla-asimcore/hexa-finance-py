@@ -1,8 +1,10 @@
 {% set csi_data = namespace(count=0, total=0) %}
 {% set payroll_data = namespace(count=0, total=0) %}
+{% set statutory_data = namespace(count=0, total=0) %}
 {% for m in stats.byModule %}
   {% if m.module == 'csi' %}{% set csi_data.count = m.count %}{% set csi_data.total = m.total %}{% endif %}
   {% if m.module == 'payroll' %}{% set payroll_data.count = m.count %}{% set payroll_data.total = m.total %}{% endif %}
+  {% if m.module == 'statutory' %}{% set statutory_data.count = m.count %}{% set statutory_data.total = m.total %}{% endif %}
 {% endfor %}
 
 {% macro fmt(n) %}{{ "{:,.2f}".format(n|float) }}{% endmacro %}
@@ -11,27 +13,32 @@
 <div class="dash fade-in">
   <div class="screen-header">
     <h1 class="screen-title">Dashboard</h1>
-    <p class="screen-subtitle">Journal posting activity across all entities</p>
+    <p class="screen-subtitle">Completed CSI, Payroll &amp; Statutory activity by month</p>
   </div>
 
   <div class="dash-kpis">
     <div class="dash-kpi card">
-      <div class="dash-kpi-label">Total Journals Posted</div>
+      <div class="dash-kpi-label">Completed Cycles</div>
       <div class="dash-kpi-value">{{ stats.totalPosts }}</div>
     </div>
     <div class="dash-kpi card">
-      <div class="dash-kpi-label">Total Amount Posted</div>
+      <div class="dash-kpi-label">Total Amount</div>
       <div class="dash-kpi-value">RM {{ fmt(stats.totalAmount) }}</div>
     </div>
     <div class="dash-kpi card">
-      <div class="dash-kpi-label">CSI Journals</div>
+      <div class="dash-kpi-label">CSI</div>
       <div class="dash-kpi-value">{{ csi_data.count }}</div>
       <div class="dash-kpi-sub">RM {{ fmt(csi_data.total) }}</div>
     </div>
     <div class="dash-kpi card">
-      <div class="dash-kpi-label">Payroll Journals</div>
+      <div class="dash-kpi-label">Payroll</div>
       <div class="dash-kpi-value">{{ payroll_data.count }}</div>
       <div class="dash-kpi-sub">RM {{ fmt(payroll_data.total) }}</div>
+    </div>
+    <div class="dash-kpi card">
+      <div class="dash-kpi-label">Statutory</div>
+      <div class="dash-kpi-value">{{ statutory_data.count }}</div>
+      <div class="dash-kpi-sub">RM {{ fmt(statutory_data.total) }}</div>
     </div>
   </div>
 

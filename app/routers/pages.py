@@ -22,12 +22,14 @@ async def dashboard(request: Request):
     user = get_current_user(request)
     db = get_db()
 
-    stats = {"byEntity": [], "byModule": [], "recentMonths": [], "totalPosts": 0, "totalAmount": 0.0}
+    stats = {"byEntity": [], "byModule": [], "recentMonths": [], "excByMonth": [],
+             "totalPosts": 0, "totalAmount": 0.0}
     posts = []
     recent_cases = []
 
     if db:
         try:
+            # Recent-activity feeds (most recent cases / journal posts).
             p_resp = db.from_("payroll_cases").select(
                 "id,reference,type,entity,entity_name,period,status,uploaded_by_name,uploaded_at,check_data,zoho_posted_at"
             ).order("created_at", desc=True).limit(10).execute()
@@ -36,63 +38,74 @@ async def dashboard(request: Request):
             j_resp = db.from_("journal_posts").select("*").order("posted_at", desc=True).limit(20).execute()
             posts = j_resp.data or []
 
-            all_resp = db.from_("journal_posts").select("entity,module,total_amount,posted_at,journal_date").execute()
-            all_posts = all_resp.data or []
+            # ── Aggregate completed work straight from the source tables ──
+            # We read the cases/submissions directly (not the journal_posts ledger,
+            # which only the final payment step writes to and which never receives
+            # statutory at all), and bucket by the business *period* month. Only
+            # the pg-shim-supported eq/order/limit are used; status sets that the
+            # shim can't express with .in_() are filtered in Python.
 
-            # Exceptions per month: query all cases that have check_data
-            exc_resp = db.from_("payroll_cases").select("type,uploaded_at,period,check_data").not_.is_("check_data", "null").execute()
-            exc_cases = exc_resp.data or []
+            # CSI + Payroll: cases that finished the cycle (posted to Zoho).
+            done_resp = db.from_("payroll_cases").select(
+                "type,entity,entity_name,period,check_data,status"
+            ).eq("status", "zoho_posted").execute()
+            done_cases = done_resp.data or []
+
+            # Statutory: submissions that are paid or posted to Zoho.
+            stat_resp = db.from_("statutory_submissions").select(
+                "entity,entity_name,contribution_month,total_amount,status"
+            ).order("contribution_month", desc=True).execute()
+            stat_subs = [s for s in (stat_resp.data or []) if s.get("status") in ("paid", "zoho_posted")]
+
+            def _month_key(ym6) -> str:
+                """'202606' or '202606-EOM' → '2026-06'."""
+                ym6 = str(ym6 or "")[:6]
+                return f"{ym6[:4]}-{ym6[4:6]}" if (len(ym6) == 6 and ym6.isdigit()) else ""
 
             by_entity: dict = {}
             by_module: dict = {}
             by_month: dict = {}
-            total_amount = 0.0
-
-            for p in all_posts:
-                amount = float(p.get("total_amount") or 0)
-                total_amount += amount
-                entity = p.get("entity", "")
-                if entity not in by_entity:
-                    by_entity[entity] = {"count": 0, "total": 0.0}
-                by_entity[entity]["count"] += 1
-                by_entity[entity]["total"] += amount
-                mod = p.get("module") or "csi"
-                if mod not in by_module:
-                    by_module[mod] = {"count": 0, "total": 0.0}
-                by_module[mod]["count"] += 1
-                by_module[mod]["total"] += amount
-                ym = (p.get("journal_date") or p.get("posted_at") or "")[:7]
-                if ym:
-                    if ym not in by_month:
-                        by_month[ym] = {"count": 0, "total": 0.0}
-                    by_month[ym]["count"] += 1
-                    by_month[ym]["total"] += amount
-
-            # Build exceptions by month
             exc_by_month: dict = {}
-            for c in exc_cases:
-                ym = (c.get("period") or c.get("uploaded_at") or "")[:7]
-                if not ym:
-                    continue
+            totals = {"amount": 0.0, "count": 0}
+
+            def _add(module: str, entity: str, ym: str, amount: float) -> None:
+                totals["amount"] += amount
+                totals["count"] += 1
+                e = by_entity.setdefault(entity or "—", {"count": 0, "total": 0.0})
+                e["count"] += 1; e["total"] += amount
+                m = by_module.setdefault(module, {"count": 0, "total": 0.0})
+                m["count"] += 1; m["total"] += amount
+                if ym:
+                    mo = by_month.setdefault(ym, {"count": 0, "total": 0.0, "csi": 0.0, "payroll": 0.0, "statutory": 0.0})
+                    mo["count"] += 1; mo["total"] += amount
+                    mo[module] = mo.get(module, 0.0) + amount
+
+            for c in done_cases:
                 cd = c.get("check_data") or {}
-                flags = int(cd.get("flagCount") or 0)
-                mod = (c.get("type") or "CSI").lower()
-                if ym not in exc_by_month:
-                    exc_by_month[ym] = {"csi": 0, "payroll": 0}
-                exc_by_month[ym][mod] = exc_by_month[ym].get(mod, 0) + flags
+                module = "csi" if (c.get("type") or "").upper() == "CSI" else "payroll"
+                amount = float(cd.get("ctcTotal") or cd.get("grossPayrollTotal") or 0)
+                ym = _month_key(c.get("period"))
+                _add(module, c.get("entity"), ym, amount)
+                if ym:
+                    flags = int(cd.get("flagCount") or 0)
+                    em = exc_by_month.setdefault(ym, {"csi": 0, "payroll": 0})
+                    em[module] = em.get(module, 0) + flags
+
+            for s in stat_subs:
+                amount = float(s.get("total_amount") or 0)
+                ym = _month_key(s.get("contribution_month"))
+                _add("statutory", s.get("entity"), ym, amount)
 
             stats = {
                 "byEntity": sorted([{"entity": k, **v} for k, v in by_entity.items()], key=lambda x: x["total"], reverse=True),
                 "byModule": [{"module": k, **v} for k, v in by_module.items()],
                 "recentMonths": sorted([{"month": k, **v} for k, v in by_month.items()], key=lambda x: x["month"], reverse=True)[:12],
-                "totalPosts": len(all_posts),
-                "totalAmount": total_amount,
                 "excByMonth": sorted([{"month": k, **v} for k, v in exc_by_month.items()], key=lambda x: x["month"], reverse=True)[:12],
+                "totalPosts": totals["count"],
+                "totalAmount": totals["amount"],
             }
         except Exception:
-            recent_cases = []
-    else:
-        recent_cases = []
+            recent_cases = recent_cases or []
 
     ctx = {"request": request, "user": user, "section": "dashboard", "stats": stats, "posts": posts, "recent_cases": recent_cases}
     if request.headers.get("HX-Request"):
