@@ -137,11 +137,8 @@
               <option value="admin">Admin — full access</option>
             </select>
           </div>
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">
-            They get an email invitation. Once they accept it, they sign in with just their email address — no password.
-          </div>
           <div id="invite-result" style="font-size:13px;margin-bottom:8px"></div>
-          <button type="submit" class="btn btn-primary btn-sm">Send Invitation</button>
+          <button type="submit" class="btn btn-primary btn-sm">Send Invitation Email</button>
         </form>
       </div>
 
@@ -228,34 +225,11 @@ async function sendInvite(e) {
     let d = {};
     try { d = await r.json(); } catch(_) {}
     if (!r.ok) throw new Error(d.error || d.detail || ('Server error ' + r.status));
-
     const email = document.getElementById('invite-email').value.trim();
-    result.innerHTML = '';
-    const ok = document.createElement('div');
-    ok.style.cssText = 'color:#22c55e;margin-bottom:6px;font-weight:600';
-    ok.textContent = d.emailSent
-      ? '✓ Invitation emailed to ' + email
-      : '⚠ User invited, but the email could not be sent — share this link directly:';
-    result.append(ok);
-
-    // Always offer the activation link as a fallback (in case email is missed).
-    if (d.inviteUrl) {
-      const pre = document.createElement('pre');
-      pre.style.cssText = 'background:#0b1220;color:#e2e8f0;border-radius:8px;padding:12px;font-size:12px;white-space:pre-wrap;word-break:break-all;margin:6px 0;user-select:all';
-      pre.textContent = d.inviteUrl;
-      const cp = document.createElement('button');
-      cp.type = 'button'; cp.className = 'btn btn-secondary btn-sm'; cp.textContent = 'Copy link';
-      cp.onclick = () => navigator.clipboard.writeText(pre.textContent).then(() => {
-        cp.textContent = 'Copied ✓';
-        setTimeout(() => { cp.textContent = 'Copy link'; }, 1500);
-      });
-      const note = document.createElement('div');
-      note.style.cssText = 'font-size:11px;color:var(--text-muted);margin-top:8px';
-      note.textContent = 'Link expires in 48 hours. Refresh the panel to see the new user in the list below.';
-      result.append(pre, cp, note);
-    }
+    result.innerHTML = '<span style="color:#22c55e">✓ Invitation sent to ' + email + '</span>';
     document.getElementById('invite-form').reset();
-    // No auto-reload — that would wipe the fallback link before it's copied.
+    // Refresh the user list row
+    setTimeout(() => location.reload(), 1200);
   } catch(err) {
     result.innerHTML = '<span style="color:#ef4444">✗ ' + err.message + '</span>';
   } finally {

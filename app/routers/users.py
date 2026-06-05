@@ -36,9 +36,6 @@ async def list_users(request: Request):
 
 @router.post("/invite")
 async def invite_user(request: Request):
-    """Invite a user by email + role. They receive an invitation email; once
-    they accept it their account becomes active and they sign in with their
-    email address alone. No password is ever set."""
     admin = _require_admin(request)
     body = await request.json()
     email = body.get("email", "").lower().strip()
@@ -87,13 +84,12 @@ async def invite_user(request: Request):
         return _err(f"Database error: {e}", 500)
 
     invite_url = f"{APP_URL}/accept-invite?token={token}"
-    sent = True
     try:
         send_invite(email, name, invite_url, role)
     except Exception:
-        sent = False
+        pass
 
-    return JSONResponse({"ok": True, "userId": user_id, "inviteUrl": invite_url, "emailSent": sent})
+    return JSONResponse({"ok": True, "userId": user_id, "inviteUrl": invite_url})
 
 
 @router.delete("/{user_id}")
