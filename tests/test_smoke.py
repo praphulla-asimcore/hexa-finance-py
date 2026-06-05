@@ -145,31 +145,37 @@ def test_email_field_visible(page: Page):
     expect(page.locator("#email")).to_be_visible()
 
 
-def test_no_password_field(page: Page):
-    """Passwordless: the login page must NOT ask for a password."""
+def test_password_field_visible(page: Page):
     page.goto("/login")
-    expect(page.locator("#password")).to_have_count(0)
+    expect(page.locator("#password")).to_be_visible()
 
 
-def test_send_link_button_visible(page: Page):
+def test_sign_in_button_visible(page: Page):
     page.goto("/login")
-    expect(page.get_by_role("button", name=re.compile("sign-in link", re.I))).to_be_visible()
+    expect(page.get_by_role("button", name=re.compile("sign in", re.I))).to_be_visible()
 
 
-def test_request_link_does_not_crash(page: Page):
-    """Requesting a link must not 500. With no DB configured locally the page
-    stays on /login and shows the 'Database not configured.' error; against a
-    real DB it shows the neutral 'link is on its way' confirmation instead."""
+def test_fake_credentials_do_not_crash(page: Page):
+    """Submitting bogus credentials must not 500 — the app stays on /login and
+    shows an error (locally 'Database not configured.', on a real DB
+    'Invalid credentials.')."""
     page.goto("/login")
     page.fill("#email", "nobody@example.com")
-    page.get_by_role("button", name=re.compile("sign-in link", re.I)).click()
+    page.fill("#password", "definitely-not-a-real-password")
+    page.get_by_role("button", name=re.compile("sign in", re.I)).click()
     expect(page).to_have_url(re.compile(r"/login"))
-    expect(page.locator(".error-msg, .success-msg")).to_be_visible()
-
-
-def test_invalid_verify_token_shows_error(page: Page):
-    """A bogus /auth/verify token must not log anyone in — it returns to /login
-    with an error and no session."""
-    page.goto("/auth/verify?token=deadbeef-not-a-real-token")
-    expect(page).to_have_url(re.compile(r"/login|/auth/verify"))
     expect(page.locator(".error-msg")).to_be_visible()
+
+
+# ── optional authenticated test (real creds via env only) ────────────────────
+@pytest.mark.skipif(
+    not (os.environ.get("PLAYWRIGHT_TEST_EMAIL") and os.environ.get("PLAYWRIGHT_TEST_PASSWORD")),
+    reason="set PLAYWRIGHT_TEST_EMAIL and PLAYWRIGHT_TEST_PASSWORD to run the authenticated test",
+)
+def test_authenticated_login(page: Page):
+    page.goto("/login")
+    page.fill("#email", os.environ["PLAYWRIGHT_TEST_EMAIL"])
+    page.fill("#password", os.environ["PLAYWRIGHT_TEST_PASSWORD"])
+    page.get_by_role("button", name=re.compile("sign in", re.I)).click()
+    page.wait_for_load_state("networkidle")
+    expect(page).not_to_have_url(re.compile(r"/login(\?|$)"))
