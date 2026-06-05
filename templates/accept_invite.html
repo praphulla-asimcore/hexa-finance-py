@@ -27,7 +27,7 @@
     </div>
 
     <h1 class="login-title">Accept Invitation</h1>
-    <p class="login-subtitle">Confirm your invited email, then set a password to activate your account</p>
+    <p class="login-subtitle">Set your name and password to activate your account</p>
 
     <form method="POST" action="/accept-invite" class="login-form">
       <input type="hidden" name="token" value="{{ token }}"/>
@@ -37,12 +37,8 @@
       {% endif %}
 
       <div class="login-field">
-        <label class="label" for="email">Your invited email</label>
-        <input id="email" type="email" name="email" class="input" placeholder="the address this invite was sent to" required autofocus autocomplete="email"/>
-      </div>
-      <div class="login-field">
         <label class="label" for="name">Full name</label>
-        <input id="name" type="text" name="name" class="input" placeholder="Your full name" required/>
+        <input id="name" type="text" name="name" class="input" placeholder="Your full name" required autofocus/>
       </div>
       <div class="login-field">
         <label class="label" for="password">Password</label>

@@ -79,7 +79,6 @@ async def accept_invite_page(request: Request, token: str = ""):
 async def accept_invite_submit(
     request: Request,
     token: str = Form(...),
-    email: str = Form(...),
     name: str = Form(...),
     password: str = Form(...),
     password2: str = Form(...),
@@ -100,12 +99,6 @@ async def accept_invite_submit(
                 error = "Invalid or expired invite link."
             elif user.get("invite_expires") and datetime.fromisoformat(user["invite_expires"].replace("Z", "+00:00")) < datetime.now(timezone.utc):
                 error = "Invite link has expired. Ask an admin to resend."
-            elif email.lower().strip() != (user.get("email") or "").lower().strip():
-                # Bind acceptance to the invited address: this link belongs to a
-                # specific email, and only that email may register it. Stops
-                # someone who received/opened the wrong person's link from
-                # registering the account.
-                error = "This invitation was sent to a different email address. Enter the exact address it was sent to."
             else:
                 pwd_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt(12)).decode()
                 db.from_("users").update({
