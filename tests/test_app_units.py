@@ -175,3 +175,17 @@ def test_20_crosscheck_passes_a_clean_file():
     res = crosscheck_csi_vs_xlsm(xlsm, entities, AIRTABLE, excluded=[])
     assert res["ok"] is True
     assert res["summary"] == "RCGEN2 matches with CSI"
+
+
+# ── 21: accrual journal date by cycle (period = wage month) ───────────────────
+def test_21_accrual_date_posts_at_end_of_period_month_for_next_month_cycles():
+    from app.routers.payroll_cases import _compute_journal_date as jd
+    # 7th/15th are paid the following month, but wages belong to the period
+    # month, so the accrual posts at the end of the period month — not prior.
+    assert jd("202605-7th")  == "2026-05-31"
+    assert jd("202605-15th") == "2026-05-31"
+    # Same-month cycles are unchanged.
+    assert jd("202605-25th") == "2026-05-25"
+    assert jd("202605-EOM")  == "2026-05-31"
+    # January period must stay in January (no wrap to the prior year).
+    assert jd("202601-7th")  == "2026-01-31"

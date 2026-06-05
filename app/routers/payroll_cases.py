@@ -401,10 +401,11 @@ def _compute_journal_date(period_str: str) -> str:
         last = calendar.monthrange(yr, mo)[1]
         return f"{yr:04d}-{mo:02d}-{last:02d}"
     elif cycle in ("7th", "15th"):
-        # Last day of prior month
-        pm, py = (mo - 1, yr) if mo > 1 else (12, yr - 1)
-        last = calendar.monthrange(py, pm)[1]
-        return f"{py:04d}-{pm:02d}-{last:02d}"
+        # Paid on the 7th/15th of the FOLLOWING month, but the wages belong to
+        # this period month — so the accrual posts at the end of the period
+        # month (e.g. May period → 31 May), not the prior month.
+        last = calendar.monthrange(yr, mo)[1]
+        return f"{yr:04d}-{mo:02d}-{last:02d}"
     else:
         last = calendar.monthrange(yr, mo)[1]
         return f"{yr:04d}-{mo:02d}-{last:02d}"
