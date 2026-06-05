@@ -1,11 +1,11 @@
 import secrets
-import bcrypt
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 
 from app.deps import get_current_user
 from app.services.db import get_db
-from app.services.email import send_account_created
+from app.services.email import send_invite
 from app.config import APP_URL
 
 router = APIRouter(prefix="/api/users")
@@ -36,40 +36,26 @@ async def list_users(request: Request):
 
 @router.post("/invite")
 async def invite_user(request: Request):
-    """Create (or re-provision) a user with an admin-set password.
-
-    The user is active immediately and signs in with their email + this
-    password — nothing depends on email delivery. If no password is supplied a
-    strong one is generated and returned so the admin can share it. The
-    plaintext is returned ONCE in this response (over HTTPS to the admin who
-    just created it) and never stored — only the bcrypt hash is persisted.
-    """
+    """Invite a user by email + role. They receive an invitation email; once
+    they accept it their account becomes active and they sign in with their
+    email address alone. No password is ever set."""
     admin = _require_admin(request)
     body = await request.json()
     email = body.get("email", "").lower().strip()
     name  = body.get("name", "").strip()
     role  = body.get("role", "preparer")
-    password = (body.get("password") or "").strip()
 
     if not email:
         return _err("Email is required.")
     if role not in VALID_ROLES:
         return _err(f"Role must be one of: {', '.join(sorted(VALID_ROLES))}.")
 
-    generated = False
-    if not password:
-        # Unambiguous chars only (no O/0, I/l/1) so it's easy to read out/type.
-        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
-        password = "".join(secrets.choice(alphabet) for _ in range(12))
-        generated = True
-    if len(password) < 8:
-        return _err("Password must be at least 8 characters.")
-
     db = get_db()
     if not db:
         return _err("Database not configured.", 503)
 
-    pwd_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt(12)).decode()
+    token   = secrets.token_hex(32)
+    expires = (datetime.now(timezone.utc) + timedelta(hours=48)).isoformat()
 
     try:
         existing = db.from_("users").select("id, name").eq("email", email).limit(1).execute()
@@ -79,10 +65,9 @@ async def invite_user(request: Request):
             db.from_("users").update({
                 "name": name or ex.get("name", ""),
                 "role": role,
-                "status": "active",
-                "password_hash": pwd_hash,
-                "invite_token": None,
-                "invite_expires": None,
+                "status": "invited",
+                "invite_token": token,
+                "invite_expires": expires,
             }).eq("id", ex["id"]).execute()
             user_id = ex["id"]
         else:
@@ -90,8 +75,9 @@ async def invite_user(request: Request):
                 "email": email,
                 "name": name,
                 "role": role,
-                "status": "active",
-                "password_hash": pwd_hash,
+                "status": "invited",
+                "invite_token": token,
+                "invite_expires": expires,
             }).execute()
             rows = res.data or []
             if not rows:
@@ -100,21 +86,14 @@ async def invite_user(request: Request):
     except Exception as e:
         return _err(f"Database error: {e}", 500)
 
-    login_url = f"{APP_URL}/login"
-    # Best-effort welcome email (login link only — never the password by email).
+    invite_url = f"{APP_URL}/accept-invite?token={token}"
+    sent = True
     try:
-        send_account_created(email, name, login_url, role)
+        send_invite(email, name, invite_url, role)
     except Exception:
-        pass
+        sent = False
 
-    return JSONResponse({
-        "ok": True,
-        "userId": user_id,
-        "email": email,
-        "loginUrl": login_url,
-        "password": password,
-        "generated": generated,
-    })
+    return JSONResponse({"ok": True, "userId": user_id, "inviteUrl": invite_url, "emailSent": sent})
 
 
 @router.delete("/{user_id}")

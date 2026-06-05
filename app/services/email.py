@@ -55,29 +55,12 @@ def send_invite(to: str, name: str, invite_url: str, role: str = "") -> None:
         <h2 style="font-size:20px;font-weight:700;color:#111;margin:0 0 8px">You're invited to Hexa Finance</h2>
         <p style="color:#555;font-size:14px;line-height:1.6;margin:0 0 16px">
           Hi {name or to},<br/><br/>
-          You have been added to <strong>Hexa Finance</strong> as a <strong>{role_label}</strong>.
-          Click the button below to set your password and activate your account.
+          You have been invited to <strong>Hexa Finance</strong> as a <strong>{role_label}</strong>.
+          Click the button below to accept and activate your account. After that you sign in
+          any time with this email address — no password needed.
         </p>
         <a href="{invite_url}" style="display:inline-block;background:#6366f1;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">Accept Invitation</a>
         <p style="color:#999;font-size:12px;margin-top:24px">This link expires in 48 hours. If you did not expect this invitation, you can ignore this email.</p>
-        <p style="color:#999;font-size:12px;margin-top:8px">© 2026 Hexamatics Nepal Private Limited</p>
-    """))
-
-
-def send_account_created(to: str, name: str, login_url: str, role: str = "") -> None:
-    """Welcome email sent when an admin provisions an account. Contains the
-    sign-in link only — the password is shared by the admin directly, never
-    emailed."""
-    role_label = {"preparer": "Preparer", "reviewer": "Reviewer", "approver": "Approver", "arranger": "Arranger", "admin": "Administrator"}.get(role, "User")
-    _send(to, "Your Hexa Finance account is ready", _wrap(f"""
-        <h2 style="font-size:20px;font-weight:700;color:#111;margin:0 0 8px">Your account is ready</h2>
-        <p style="color:#555;font-size:14px;line-height:1.6;margin:0 0 16px">
-          Hi {name or to},<br/><br/>
-          An account has been created for you on <strong>Hexa Finance</strong> as a <strong>{role_label}</strong>.
-          Sign in with your email address and the password your administrator gave you.
-        </p>
-        <a href="{login_url}" style="display:inline-block;background:#6366f1;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">Sign In</a>
-        <p style="color:#999;font-size:12px;margin-top:24px">If you didn't expect this, contact your administrator.</p>
         <p style="color:#999;font-size:12px;margin-top:8px">© 2026 Hexamatics Nepal Private Limited</p>
     """))
 

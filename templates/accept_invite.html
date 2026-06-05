@@ -27,7 +27,7 @@
     </div>
 
     <h1 class="login-title">Accept Invitation</h1>
-    <p class="login-subtitle">Set your name and password to activate your account</p>
+    <p class="login-subtitle">Confirm your name to activate your account. After this you sign in with just your email.</p>
 
     <form method="POST" action="/accept-invite" class="login-form">
       <input type="hidden" name="token" value="{{ token }}"/>
@@ -38,22 +38,14 @@
 
       <div class="login-field">
         <label class="label" for="name">Full name</label>
-        <input id="name" type="text" name="name" class="input" placeholder="Your full name" required autofocus/>
-      </div>
-      <div class="login-field">
-        <label class="label" for="password">Password</label>
-        <input id="password" type="password" name="password" class="input" placeholder="Min 8 characters" required/>
-      </div>
-      <div class="login-field">
-        <label class="label" for="password2">Confirm password</label>
-        <input id="password2" type="password" name="password2" class="input" placeholder="Repeat password" required/>
+        <input id="name" type="text" name="name" class="input" placeholder="Your full name" autofocus/>
       </div>
 
       <button type="submit" class="btn btn-primary btn-lg" style="width:100%;margin-top:8px">
-        Activate Account
+        Accept &amp; Enter
       </button>
     </form>
-    <p class="login-footer">Secure finance operations · Hexamatics Sdn Bhd</p>
+    <p class="login-footer">Invite-only · Hexamatics Sdn Bhd</p>
   </div>
 </div>
 </body>

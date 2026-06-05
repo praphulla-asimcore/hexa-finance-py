@@ -145,9 +145,10 @@ def test_email_field_visible(page: Page):
     expect(page.locator("#email")).to_be_visible()
 
 
-def test_password_field_visible(page: Page):
+def test_no_password_field(page: Page):
+    """Email-only sign-in: the login page must NOT ask for a password."""
     page.goto("/login")
-    expect(page.locator("#password")).to_be_visible()
+    expect(page.locator("#password")).to_have_count(0)
 
 
 def test_sign_in_button_visible(page: Page):
@@ -155,27 +156,24 @@ def test_sign_in_button_visible(page: Page):
     expect(page.get_by_role("button", name=re.compile("sign in", re.I))).to_be_visible()
 
 
-def test_fake_credentials_do_not_crash(page: Page):
-    """Submitting bogus credentials must not 500 — the app stays on /login and
-    shows an error (locally 'Database not configured.', on a real DB
-    'Invalid credentials.')."""
+def test_unknown_email_does_not_crash(page: Page):
+    """Submitting an email must not 500 — the app stays on /login and shows an
+    error (locally 'Database not configured.', on a real DB 'not authorized')."""
     page.goto("/login")
     page.fill("#email", "nobody@example.com")
-    page.fill("#password", "definitely-not-a-real-password")
     page.get_by_role("button", name=re.compile("sign in", re.I)).click()
     expect(page).to_have_url(re.compile(r"/login"))
     expect(page.locator(".error-msg")).to_be_visible()
 
 
-# ── optional authenticated test (real creds via env only) ────────────────────
+# ── optional authenticated test (real invited email via env only) ────────────
 @pytest.mark.skipif(
-    not (os.environ.get("PLAYWRIGHT_TEST_EMAIL") and os.environ.get("PLAYWRIGHT_TEST_PASSWORD")),
-    reason="set PLAYWRIGHT_TEST_EMAIL and PLAYWRIGHT_TEST_PASSWORD to run the authenticated test",
+    not os.environ.get("PLAYWRIGHT_TEST_EMAIL"),
+    reason="set PLAYWRIGHT_TEST_EMAIL (an active invited email) to run the authenticated test",
 )
 def test_authenticated_login(page: Page):
     page.goto("/login")
     page.fill("#email", os.environ["PLAYWRIGHT_TEST_EMAIL"])
-    page.fill("#password", os.environ["PLAYWRIGHT_TEST_PASSWORD"])
     page.get_by_role("button", name=re.compile("sign in", re.I)).click()
     page.wait_for_load_state("networkidle")
     expect(page).not_to_have_url(re.compile(r"/login(\?|$)"))
