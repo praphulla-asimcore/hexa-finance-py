@@ -72,6 +72,50 @@ async def _audit_log(db, case_id: str, event_type: str, by: str, user_id=None, i
         pass
 
 
+def _record_journal_post(db, kase: dict, *, org_id=None, journal_id=None,
+                         journal_date: str = "", posted_count: int = 0,
+                         total_amount=None, posted_by_email: str = "",
+                         posted_by_name: str = "") -> bool:
+    """Write the journal_posts ledger row for a posted case.
+
+    journal_posts is the single source of truth the reconciliation report reads
+    for 'Zoho actual', so EVERY path that flips a case to ``zoho_posted`` must
+    call this — otherwise the case shows RM0 actual against a non-zero accrual.
+    Idempotent on the case reference, so the confirm/director double-path, manual
+    re-posts, and the backfill script never double-count. Returns True if a row
+    was written. Failures are logged (not swallowed) but never abort the caller,
+    since the money has already posted to Zoho by the time we get here."""
+    ref = (kase.get("reference") or "").strip()
+    if not ref:
+        return False
+    cd = kase.get("check_data") or {}
+    if total_amount is None:
+        # The same accrual figure the dashboard sums, so the two views agree.
+        total_amount = cd.get("ctcTotal") or cd.get("grossPayrollTotal") or 0
+    try:
+        dup = db.from_("journal_posts").select("id").eq("reference_number", ref).limit(1).execute()
+        if dup.data:
+            return False
+        db.from_("journal_posts").insert({
+            "module":           (kase.get("type", "csi") or "csi").lower(),
+            "entity":           kase.get("entity"),
+            "org_id":           org_id or kase.get("zoho_org_id"),
+            "journal_id":       journal_id,
+            "reference_number": ref,
+            "journal_date":     journal_date or (kase.get("payment_date") or _now()[:10]),
+            "total_amount":     _round2(total_amount),
+            "notes":            f"{kase.get('type', '')} – {kase.get('period', '')} – "
+                                f"{kase.get('entity_name') or kase.get('entity')} – Ref: {ref} – "
+                                f"{posted_count} consultants posted",
+            "posted_by_email":  posted_by_email,
+            "posted_by_name":   posted_by_name or posted_by_email,
+        }).execute()
+        return True
+    except Exception:
+        logger.exception("journal_posts ledger insert failed for case ref %s", ref)
+        return False
+
+
 def _get_arranger_emails(db) -> list:
     try:
         resp = db.from_("users").select("email").eq("role", "arranger").eq("status", "active").execute()
@@ -824,6 +868,11 @@ async def _auto_book_payment_payroll(kase: dict, db) -> dict:
         "zoho_posted_at":   _now(),
         "status":           "zoho_posted",
     }).eq("id", kase["id"]).execute()
+    _record_journal_post(
+        db, kase, org_id=org_id, journal_id=(exp_ids[0] if exp_ids else None),
+        journal_date=payment_date, posted_count=len(posted),
+        posted_by_name=kase.get("payment_approved_by") or "",
+    )
     return {"success": len(failed) == 0, "posted": len(posted), "failed": len(failed), "expense_ids": exp_ids, "results": results}
 
 
@@ -1109,6 +1158,11 @@ async def _auto_book_payment(kase: dict, db) -> dict:
         "zoho_posted_at":   _now(),
         "status":           "zoho_posted",
     }).eq("id", kase["id"]).execute()
+    _record_journal_post(
+        db, kase, org_id=org_id, journal_id=(exp_ids[0] if exp_ids else None),
+        journal_date=payment_date, posted_count=len(posted),
+        posted_by_name=kase.get("payment_approved_by") or "",
+    )
     return {"success": True, "posted": len(posted), "failed": len(failed), "expense_ids": exp_ids, "results": results}
 
 
@@ -2326,20 +2380,17 @@ async def post_zoho(case_id: str, request: Request):
         "audit_assembled_at": now,
     }).eq("id", case_id).execute()
 
-    try:
-        total = _round2(sum(e.get("ctcHexa", 0) for e in all_employees))
-        db.from_("journal_posts").insert({
-            "module": kase.get("type", "csi").lower(),
-            "entity": sheet_name, "org_id": org_id,
-            "journal_id": journal_ids[0] if journal_ids else None,
-            "reference_number": kase["reference"],
-            "journal_date": journal_date, "total_amount": total,
-            "notes": f"{kase['type']} Payroll – {kase['period']} – {kase.get('entity_name') or kase.get('entity')} – Ref: {kase['reference']} – {len(posted)} consultants posted",
-            "posted_by_email": user.get("email", ""),
-            "posted_by_name": user.get("name") or user.get("email", ""),
-        }).execute()
-    except Exception:
-        pass
+    total = _round2(sum(e.get("ctcHexa", 0) for e in all_employees))
+    ledger_written = _record_journal_post(
+        db, kase, org_id=org_id, journal_id=(journal_ids[0] if journal_ids else None),
+        journal_date=journal_date, posted_count=len(posted), total_amount=total,
+        posted_by_email=user.get("email", ""),
+        posted_by_name=user.get("name") or user.get("email", ""),
+    )
+    if not ledger_written:
+        await _audit_log(db, case_id, "JOURNAL_LEDGER_SKIPPED", user.get("name") or user.get("email"),
+                         user.get("id"), _get_ip(request),
+                         {"reason": "insert failed or row already exists", "ref": kase["reference"]})
 
     await _audit_log(db, case_id, "ZOHO_POSTED", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {
         "journalIds": journal_ids, "posted": len(posted), "failed": len(failed), "orgId": org_id,
