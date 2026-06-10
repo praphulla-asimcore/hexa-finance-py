@@ -23,7 +23,7 @@ from app.services.zoho import (
 )
 from app.services.bank_files import (
     generate_and_store_bank_files, generate_and_store_bank_files_payroll,
-    fetch_airtable_consultants, match_consultant, id_conflict,
+    fetch_airtable_consultants, match_consultant, id_conflict, DOC_GATE_CODES,
 )
 from app.services.pdf import build_check_report_pdf, build_audit_package_pdf
 from app.services.email import (
@@ -1360,10 +1360,27 @@ def _bank_gate(kase: dict) -> dict:
             reasons.append("cross-check could not run (verification incomplete)")
 
     override = cd.get("bankGateOverride")
+
+    # Per-row document-gate exclusions (codes in DOC_GATE_CODES) are ADVISORY at the
+    # run level: the bank-file builder drops those individual rows while clean rows
+    # still pay, so they raise hasIssues for visibility but never set a blocking
+    # reason. Computed from the check flags so the notice shows before the file is
+    # built; an override releases them, matching the per-row builder behaviour.
+    doc_gate_rows = sorted({
+        (f.get("employeeId") or f.get("employee") or "")
+        for f in (cd.get("flags") or []) if f.get("code") in DOC_GATE_CODES
+    } - {""})
+    advisory = []
+    if doc_gate_rows and not override:
+        advisory.append(f"{len(doc_gate_rows)} consultant row(s) will be excluded from the "
+                        f"bank file by document gates")
+
     return {
         "blocked":  bool(reasons) and not override,
-        "hasIssues": bool(reasons),
+        "hasIssues": bool(reasons) or bool(advisory),
         "reasons":  reasons,
+        "advisory": advisory,
+        "docGateExcludedRows": doc_gate_rows,
         "override": override,
     }
 

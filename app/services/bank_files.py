@@ -587,6 +587,15 @@ def _run_crosscheck(xlsx_bytes, entities, account_source, excluded) -> dict:
                 "error": str(e)[:200], "issues": []}
 
 
+# Document-gate exception codes from the consultant-document check. A consultant
+# row carrying any of these is excluded from the bank file (per-row, the same skip
+# as a missing Favourite Beneficiary Code); an audited override releases them.
+DOC_GATE_CODES = {
+    "MISSING_TIMESHEET", "MISSING_CONTRACT", "TIMESHEET_NOT_CLIENT_SIGNED",
+    "PO_EXPIRED", "SIGHTING_INCOMPLETE",
+}
+
+
 async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> dict:
     entities = (kase.get("parsed_data") or {}).get("entities", [])
     check = kase.get("check_data") or {}
@@ -608,10 +617,41 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
     beneficiaries = []
     excluded_no_fav = []   # consultants with no Favourite Beneficiary Code — skipped + flagged
     id_conflicts = []      # rows whose Employee ID belongs to a DIFFERENT person — excluded
+    excluded_doc_gate = [] # consultants failing a document gate — excluded per-row
+    # Document-gate flags exclude a consultant's row; an audited override
+    # (second person + reason, recorded as bankGateOverride) releases them.
+    doc_gate_override = bool(check.get("bankGateOverride"))
+    doc_gate_by_emp: dict = {}
+    if not doc_gate_override:
+        for _fl in (check.get("flags") or []):
+            if _fl.get("code") in DOC_GATE_CODES:
+                _k = str(_fl.get("employeeId") or "").strip() or str(_fl.get("employee") or "").strip()
+                doc_gate_by_emp.setdefault(_k, set()).add(_fl["code"])
     seq_ref = 100
     for ent in entities:
         for emp in ent.get("employees", []):
             matched = match_consultant(emp, airtable_list)
+
+            # ── Document-gate exclusion (per row; same skip pattern as no-fav) ──
+            # A consultant whose check carries a document-gate flag is dropped from
+            # the file; clean consultants in the same run still proceed. Each
+            # exclusion is recorded in the audit trail with its reason code(s).
+            _emp_key = str(emp.get("employeeId") or "").strip() or str(emp.get("name") or "").strip()
+            _gate_codes = doc_gate_by_emp.get(_emp_key)
+            if _gate_codes:
+                excluded_doc_gate.append({"name": emp.get("name", ""),
+                                          "employeeId": emp.get("employeeId", ""),
+                                          "entity": ent["sheetName"], "reasons": sorted(_gate_codes)})
+                try:
+                    db.from_("payroll_audit_log").insert({
+                        "case_id": kase["id"], "event_type": "BANK_ROW_EXCLUDED_DOC_GATE",
+                        "performed_by": triggered_by, "user_id": None, "ip_address": None,
+                        "metadata": {"name": emp.get("name", ""), "employeeId": emp.get("employeeId", ""),
+                                     "entity": ent["sheetName"], "reasons": sorted(_gate_codes)},
+                    }).execute()
+                except Exception:
+                    pass
+                continue
 
             # SAFETY: if the CSI Employee ID resolves to a different-named
             # consultant, do NOT pay this row — paying it would route the CSI
@@ -664,6 +704,11 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
             })
             seq_ref += 1
 
+    # All consultants failed a document gate (and no override released them) →
+    # nothing valid to pay; block the whole file. Callers surface this message.
+    if excluded_doc_gate and not beneficiaries:
+        raise ValueError("No consultants cleared document gates — bank file cannot be generated")
+
     # ── Fill the official RCGEN2 macro workbook ('Domestic Payments' sheet).
     #    The maker opens this .xlsm and clicks its Generate button to emit the
     #    valid RCgen .txt — we no longer hand-build that .txt ourselves. ──
@@ -676,6 +721,7 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
     existing_check["missingBankAccounts"] = missing
     existing_check["excludedNoFavourite"] = excluded_no_fav
     existing_check["idConflicts"] = id_conflicts
+    existing_check["excludedDocGate"] = excluded_doc_gate
 
     # ── Independent cross-check: re-read the generated .xlsm and reconcile it
     #    against the CSI (identity + amount) and the consultant DB (account),
@@ -683,6 +729,7 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
     existing_check["crosscheck"] = _run_crosscheck(
         xlsx_bytes, entities, airtable_list,
         excluded=(missing + excluded_no_fav
+                  + [{"name": x["name"], "employeeId": x["employeeId"]} for x in excluded_doc_gate]
                   + [{"name": c["csiName"], "employeeId": c["csiEmployeeId"]} for c in id_conflicts]),
     )
 
