@@ -2,6 +2,7 @@ import secrets
 import hashlib
 import base64
 import bcrypt
+import httpx
 import calendar
 import logging
 import re as _re
@@ -10,7 +11,7 @@ from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse, HTMLResponse, Response, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from app.config import TEMPLATES_DIR, APP_URL, APPROVERS, PAYROLL_REVIEWER, ORGS, STATUTORY_NOS
+from app.config import TEMPLATES_DIR, APP_URL, APPROVERS, PAYROLL_REVIEWER, ORGS, STATUTORY_NOS, ARIA_WEBHOOK_URL
 from app.deps import get_current_user
 from app.services.db import get_db
 from app.services.parser import parse_excel_buffer, parse_payroll_excel_buffer
@@ -115,6 +116,70 @@ def _record_journal_post(db, kase: dict, *, org_id=None, journal_id=None,
     except Exception:
         logger.exception("journal_posts ledger insert failed for case ref %s", ref)
         return False
+
+
+async def fire_aria_webhook(db, case_id: str) -> None:
+    """Notify ARIA that a CSI run posted to Zoho. Best-effort: never blocks or
+    reverses the posting (called AFTER the status flip, outside the Zoho work).
+    Failures are recorded in the audit trail only."""
+    if not ARIA_WEBHOOK_URL:
+        return
+    try:
+        kase = db.from_("payroll_cases").select("*").eq("id", case_id).single().execute().data
+        if not kase:
+            return
+        ref  = (kase.get("reference") or "").strip()
+        docs = db.from_("consultant_documents").select("*").eq("case_id", case_id).execute().data or []
+
+        by_consultant: dict = {}
+        for d in docs:
+            cid = d.get("consultant_id")
+            g = by_consultant.setdefault(cid, {
+                "consultant_id": cid, "name": d.get("consultant_name") or cid,
+                "net_pay": None, "documents": [],
+            })
+            g["documents"].append({
+                "type": d.get("document_type"),
+                "file_url": d.get("file_url"),
+                "file_hash": d.get("file_hash"),
+                "client_signed": bool(d.get("client_signed")),
+                "fe_sighted": bool(d.get("fe_sighted")),
+                "fe_sighted_by": d.get("fe_sighted_by"),
+                "fe_sighted_at": d.get("fe_sighted_at"),
+            })
+
+        payload = {
+            "run_ref": ref,
+            "entity": kase.get("entity"),
+            "period_month": kase.get("period"),
+            "amount": (kase.get("check_data") or {}).get("netSalaryTotal"),
+            "currency": "MYR",
+            "payout_date": kase.get("payment_date"),
+            "payroll_report_signed": True,
+            "invoiced": bool(kase.get("invoiced", False)),
+            "consultants": list(by_consultant.values()),
+        }
+        headers = {"X-Source": "APEX", "X-Run-Ref": ref}
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(ARIA_WEBHOOK_URL, json=payload, headers=headers)
+
+        if r.status_code == 200:
+            await _audit_log(db, case_id, "ARIA_WEBHOOK_FIRED", "ARIA Webhook", None, None, {
+                "url": ARIA_WEBHOOK_URL, "run_ref": ref,
+                "consultantCount": len(by_consultant), "documentCount": len(docs), "status_code": 200,
+            })
+        else:
+            await _audit_log(db, case_id, "ARIA_WEBHOOK_FAILED", "ARIA Webhook", None, None, {
+                "url": ARIA_WEBHOOK_URL, "run_ref": ref,
+                "status_code": r.status_code, "error": (r.text or "")[:300],
+            })
+    except Exception as e:
+        try:
+            await _audit_log(db, case_id, "ARIA_WEBHOOK_FAILED", "ARIA Webhook", None, None,
+                             {"error": str(e)[:300]})
+        except Exception:
+            pass
 
 
 def _get_arranger_emails(db) -> list:
@@ -1254,6 +1319,8 @@ async def _auto_book_payment(kase: dict, db) -> dict:
         journal_date=payment_date, posted_count=len(posted),
         posted_by_name=kase.get("payment_approved_by") or "",
     )
+    # ARIA notification — best-effort, after the status flip (CSI runs only).
+    await fire_aria_webhook(db, kase["id"])
     return {"success": True, "posted": len(posted), "failed": len(failed), "expense_ids": exp_ids, "results": results}
 
 
@@ -2651,6 +2718,10 @@ async def post_zoho(case_id: str, request: Request):
         "journalIds": journal_ids, "posted": len(posted), "failed": len(failed), "orgId": org_id,
         "stamp": f"Posted by: System API | Initiated by: {user.get('name')} | {len(posted)} journals | Ref: {kase['reference']} | Date-Time: {now}",
     })
+
+    # ARIA notification — best-effort, after the status flip; CSI runs only.
+    if kase.get("type") == "CSI":
+        await fire_aria_webhook(db, case_id)
 
     return await _refresh_detail(case_id, db, request, user, 9)
 

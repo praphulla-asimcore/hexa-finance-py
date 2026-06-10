@@ -28,6 +28,8 @@ BANK_NOTIFY_EMAILS: list[str] = [
     e.strip() for e in os.getenv("BANK_NOTIFY_EMAILS", "").split(",") if e.strip()
 ]
 APEX_INGEST_API_KEY: str = os.getenv("APEX_INGEST_API_KEY", "")
+# ARIA reconciliation webhook — notified when a CSI run posts to Zoho. Empty ⇒ disabled.
+ARIA_WEBHOOK_URL: str = os.getenv("ARIA_WEBHOOK_URL", "")
 
 IS_PROD: bool = os.getenv("VERCEL_ENV") == "production"
 
