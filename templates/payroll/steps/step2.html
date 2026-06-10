@@ -34,6 +34,13 @@
           {% if d.fe_sighted %}✓ sighted{% else %}○ not sighted{% endif %}
           · {% if d.client_signed %}client-signed{% else %}unsigned{% endif %}
           {% if d.valid_to %} · valid to {{ d.valid_to }}{% endif %}
+          {% if not d.fe_sighted %}
+          <button class="btn btn-secondary" style="margin-left:10px;padding:3px 10px;font-size:12px"
+              hx-post="/cases/{{ kase.id }}/sight-document/{{ d.id }}"
+              hx-target="#case-detail-inner" hx-swap="innerHTML" hx-indicator=".spinner">
+            <span class="spinner htmx-indicator"></span> Mark as Sighted
+          </button>
+          {% endif %}
         </span>
       </div>
       {% endfor %}

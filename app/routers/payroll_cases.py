@@ -1721,6 +1721,52 @@ async def complete_sighting(case_id: str, request: Request):
     return await _refresh_detail(case_id, db, request, user, _get_active_step("uploaded"))
 
 
+# ─── Step 2 (ingested): per-document FE sighting toggle ──────────────────────
+
+@router.post("/cases/{case_id}/sight-document/{doc_id}")
+async def sight_document(case_id: str, doc_id: str, request: Request):
+    user = get_current_user(request)
+    db = get_db()
+
+    # (1) load the document
+    doc = db.from_("consultant_documents").select("*").eq("id", doc_id).single().execute().data
+    if not doc:
+        return HTMLResponse('<div class="error-msg">Document not found.</div>')
+
+    # (2) it must belong to the case in the URL
+    if str(doc.get("case_id")) != str(case_id):
+        return HTMLResponse('<div class="error-msg">Document does not belong to this case.</div>')
+
+    # (3) case must still be pending document review
+    kase = db.from_("payroll_cases").select("*").eq("id", case_id).single().execute().data
+    if not kase:
+        return HTMLResponse('<div class="error-msg">Case not found.</div>')
+    if kase.get("status") != "documents_pending_review":
+        return HTMLResponse(f'<div class="error-msg">Documents can only be sighted while a case is '
+                            f'pending review. Current: {kase["status"]}</div>')
+
+    # (4) mark sighted (fe_sighted_by is text — stores the UUID user id)
+    now = _now()
+    db.from_("consultant_documents").update({
+        "fe_sighted": True,
+        "fe_sighted_by": user.get("id"),
+        "fe_sighted_at": now,
+    }).eq("id", doc_id).execute()
+
+    # (5) audit
+    await _audit_log(db, case_id, "DOCUMENT_SIGHTED", user.get("name") or user.get("email"),
+                     user.get("id"), _get_ip(request), {
+        "doc_id": doc_id,
+        "document_type": doc.get("document_type"),
+        "consultant_name": doc.get("consultant_name"),
+        "sighted_by_name": user.get("name") or user.get("email"),
+        "sighted_by_email": user.get("email"),
+    })
+
+    # (6) re-render at the active step
+    return await _refresh_detail(case_id, db, request, user, _get_active_step(kase.get("status", "")))
+
+
 # ─── Step 2 (ingested): FE declaration (PIN-signed) ──────────────────────────
 
 _FE_DECLARATION_TEXT = (

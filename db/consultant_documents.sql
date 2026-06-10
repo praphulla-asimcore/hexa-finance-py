@@ -31,7 +31,7 @@ create table if not exists consultant_documents (
     po_value            numeric(15, 2),
     po_currency         varchar(5),
     fe_sighted          boolean      not null default false,
-    fe_sighted_by       integer,
+    fe_sighted_by       text,                              -- app user id (UUID string)
     fe_sighted_at       timestamptz,
     fe_checklist        jsonb,
     fe_rejection_reason text,
@@ -44,3 +44,11 @@ create table if not exists consultant_documents (
     constraint consultant_documents_unique_doc
         unique (case_id, consultant_id, document_type, period_month)
 );
+
+-- ── Migration (existing deployments) ────────────────────────────────────────
+-- fe_sighted_by records the app user id, which is a UUID string (the JWT stores
+-- str(user["id"])), not an integer. Widen the column so per-document sighting
+-- can store who sighted it. Idempotent: re-running TYPE text on a text column is
+-- a no-op-ish, and the USING cast safely handles any pre-existing integer rows.
+alter table consultant_documents
+    alter column fe_sighted_by type text using fe_sighted_by::text;
