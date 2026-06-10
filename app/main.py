@@ -8,6 +8,7 @@ from pathlib import Path
 
 from app.config import PUBLIC_DIR, TEMPLATES_DIR
 from app.routers import auth, users, payroll_cases, consultants, accounts, admin, journal_history, pages, statutory, ingest
+from app.jobs import aria_sync
 
 # Surface app logs (email send/fail, approval-token errors) in the Vercel
 # function console. Without this only WARNING+ reaches stderr by default, so
@@ -27,6 +28,7 @@ app.include_router(admin.router)
 app.include_router(journal_history.router)
 app.include_router(statutory.router)
 app.include_router(ingest.router)
+app.include_router(aria_sync.router)
 
 # --- Static assets served via Python (reliable in Vercel serverless) ---
 

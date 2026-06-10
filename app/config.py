@@ -30,6 +30,8 @@ BANK_NOTIFY_EMAILS: list[str] = [
 APEX_INGEST_API_KEY: str = os.getenv("APEX_INGEST_API_KEY", "")
 # ARIA reconciliation webhook — notified when a CSI run posts to Zoho. Empty ⇒ disabled.
 ARIA_WEBHOOK_URL: str = os.getenv("ARIA_WEBHOOK_URL", "")
+# Shared secret for the Vercel Cron trigger (GET /api/jobs/aria-sync). Empty ⇒ unauthenticated.
+CRON_SECRET: str = os.getenv("CRON_SECRET", "")
 
 IS_PROD: bool = os.getenv("VERCEL_ENV") == "production"
 
