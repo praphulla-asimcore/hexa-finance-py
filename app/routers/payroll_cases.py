@@ -1591,8 +1591,12 @@ async def case_detail_page(case_id: str, request: Request, poll: str | None = No
            "step_state": _step_state, "get_active_step": _get_active_step, "orgs": ORGS}
 
     if request.headers.get("HX-Request"):
-        # Refresh buttons target #case-detail-inner — return just the inner content
-        return templates.TemplateResponse(request, "payroll/detail_inner.html", ctx)
+        # On in-app nav (e.g. the case-list row), return the full case body —
+        # detail.html carries the #case-detail-inner wrapper that every step
+        # control targets. The bare detail_inner.html omits that wrapper, so the
+        # refresh buttons had no target and htmx fired nothing. Mirrors the
+        # create-case handler above.
+        return templates.TemplateResponse(request, "payroll/detail.html", ctx)
     return templates.TemplateResponse(request, "payroll/detail_page.html", ctx)
 
 
