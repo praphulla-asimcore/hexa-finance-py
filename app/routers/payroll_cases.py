@@ -1,6 +1,7 @@
 import secrets
 import hashlib
 import base64
+import bcrypt
 import calendar
 import logging
 import re as _re
@@ -237,7 +238,90 @@ async def _generate_ref(db, case_type: str, entity: str, period: str) -> tuple[s
     return ref, seq
 
 
-def _build_check_data(entities: list[dict], airtable_list: list | None = None) -> dict:
+def _sighting_rows(db, case_id: str) -> list[dict]:
+    """consultant_documents for a case, grouped per consultant for the FE-sighting
+    panel. Each group: {consultant_id, consultant_name, all_sighted, docs:[...]}.
+    Read-only; returns [] on any error."""
+    try:
+        rows = db.from_("consultant_documents").select("*").eq(
+            "case_id", case_id).execute().data or []
+    except Exception:
+        return []
+    grouped: dict = {}
+    for r in rows:
+        cid = r.get("consultant_id")
+        g = grouped.setdefault(cid, {"consultant_id": cid,
+                                     "consultant_name": r.get("consultant_name") or cid,
+                                     "docs": []})
+        g["docs"].append(r)
+    groups = list(grouped.values())
+    for g in groups:
+        g["all_sighted"] = bool(g["docs"]) and all(d.get("fe_sighted") for d in g["docs"])
+    return groups
+
+
+def _document_exception_flags(db, case_id: str) -> list[dict]:
+    """Per-consultant supporting-document exceptions for a case.
+
+    Loads consultant_documents for the case once and evaluates each consultant
+    in Python — the PgClient shim supports only equality filters, so the IN /
+    date comparisons are done here. The consultant set is exactly the distinct
+    consultant_id values on the case's documents (ingest guarantees >=1 document
+    per consultant). Flags mirror the in-memory shape: {code, employee, entity,
+    employeeId, ...}."""
+    today = date.today().isoformat()        # ISO date strings compare lexically
+    try:
+        rows = db.from_("consultant_documents").select("*").eq(
+            "case_id", case_id).execute().data or []
+    except Exception:
+        return []
+
+    by_consultant: dict = {}
+    for r in rows:
+        by_consultant.setdefault(r.get("consultant_id"), []).append(r)
+
+    flags: list[dict] = []
+    for cid, docs in by_consultant.items():
+        name   = docs[0].get("consultant_name") or cid
+        entity = docs[0].get("entity", "")
+        base   = {"employee": name, "entity": entity, "employeeId": cid}
+
+        timesheet = next((d for d in docs if d.get("document_type") == "TIMESHEET"), None)
+        po        = next((d for d in docs if d.get("document_type") in ("PO", "CONTRACT")), None)
+
+        # 1. MISSING_TIMESHEET — no TIMESHEET document for this consultant.
+        if timesheet is None:
+            flags.append({**base, "code": "MISSING_TIMESHEET"})
+
+        # 2. MISSING_CONTRACT — no still-active PO/CONTRACT (valid_to >= today or null).
+        active_po = next(
+            (d for d in docs
+             if d.get("document_type") in ("PO", "CONTRACT")
+             and (d.get("valid_to") is None or d.get("valid_to") >= today)),
+            None,
+        )
+        if active_po is None:
+            flags.append({**base, "code": "MISSING_CONTRACT"})
+
+        # 3. TIMESHEET_NOT_CLIENT_SIGNED — timesheet present but not client-signed.
+        if timesheet is not None and not timesheet.get("client_signed", False):
+            flags.append({**base, "code": "TIMESHEET_NOT_CLIENT_SIGNED",
+                          "documentType": "TIMESHEET"})
+
+        # 4. PO_EXPIRED — PO/CONTRACT exists with valid_to strictly before today.
+        if po is not None and po.get("valid_to") is not None and po.get("valid_to") < today:
+            flags.append({**base, "code": "PO_EXPIRED",
+                          "documentType": po.get("document_type"), "validTo": po.get("valid_to")})
+
+        # 5. SIGHTING_INCOMPLETE — timesheet present but FE has not sighted it.
+        if timesheet is not None and not timesheet.get("fe_sighted", False):
+            flags.append({**base, "code": "SIGHTING_INCOMPLETE", "documentType": "TIMESHEET"})
+
+    return flags
+
+
+def _build_check_data(entities: list[dict], airtable_list: list | None = None,
+                      case_id: str | None = None, db=None) -> dict:
     flags = []
     consultants = gross = ctc = net = 0
     total_billing = total_mgmt_fee = 0.0
@@ -398,6 +482,13 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None) -
                     flags.append({"code": "MISSING_BANK_ACCOUNT", "employee": name,
                                   "entity": entity, "employeeId": emp_id,
                                   "reason": "Bank account number not on file"})
+
+    # ── Per-consultant supporting-document exceptions (APEX-ingested cases) ───
+    # Sourced from consultant_documents, NOT the Excel `entities` (which are
+    # empty for ingested cases). Gated on case_id + db so the pre-insert upload
+    # path — where no case row exists yet — simply skips these checks.
+    if case_id and db is not None:
+        flags.extend(_document_exception_flags(db, case_id))
 
     # Revenue / profitability (Total Revenue = Total Billing):
     #   GP        = Total Billing − CTC
@@ -1210,9 +1301,13 @@ def _bank_gate(kase: dict) -> dict:
     }
 
 
-def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None) -> dict:
+def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None, db=None) -> dict:
     if selected_step is None:
         selected_step = _get_active_step(kase.get("status", ""))
+    consultant_docs = []
+    if db is not None and kase.get("status") == "documents_pending_review":
+        consultant_docs = _sighting_rows(db, str(kase.get("id")))
+    declaration_signed = any(l.get("event_type") == "FE_DECLARATION_SIGNED" for l in (logs or []))
     return {
         "kase": kase,
         "logs": logs,
@@ -1220,12 +1315,17 @@ def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None) -
         "orgs": ORGS,
         "approvers": APPROVERS,
         "bank_gate": _bank_gate(kase),
+        "consultant_docs": consultant_docs,
+        "all_sighted": bool(consultant_docs) and all(g["all_sighted"] for g in consultant_docs),
+        "declaration_signed": declaration_signed,
+        "declaration_text": _FE_DECLARATION_TEXT,
     }
 
 
 def _get_active_step(status: str) -> int:
     # Steps shown: 1, 2, 3, 4, 5, 6, 9  (7/8/10 removed)
     mapping = {
+        "documents_pending_review": 2,
         "uploaded": 2, "returned": 1, "check_generated": 3,
         "check_approval_sent": 3, "check_reviewer_approved": 3, "check_rejected": 3,
         "check_approved": 4, "bank_file_generated": 5, "bank_uploaded": 5,
@@ -1487,7 +1587,7 @@ async def case_detail_page(case_id: str, request: Request, poll: str | None = No
     logs = logs_resp.data or []
 
     module = "csi" if kase.get("type") == "CSI" else "payroll"
-    ctx = {**_case_detail_ctx(kase, logs), "request": request, "user": user, "module": module, "section": module,
+    ctx = {**_case_detail_ctx(kase, logs, db=db), "request": request, "user": user, "module": module, "section": module,
            "step_state": _step_state, "get_active_step": _get_active_step, "orgs": ORGS}
 
     if request.headers.get("HX-Request"):
@@ -1525,7 +1625,7 @@ async def step_panel(case_id: str, step_num: int, request: Request):
     tmpl = _STEP_TEMPLATES.get(step_num)
     if not tmpl:
         raise HTTPException(404)
-    ctx = {**_case_detail_ctx(kase, logs, step_num), "request": request, "user": user,
+    ctx = {**_case_detail_ctx(kase, logs, step_num, db=db), "request": request, "user": user,
            "step_state": _step_state, "get_active_step": _get_active_step, "orgs": ORGS}
     return templates.TemplateResponse(request, tmpl, ctx)
 
@@ -1548,7 +1648,7 @@ async def gen_check(case_id: str, request: Request):
     check_data = (
         _build_check_data_payroll(entities)
         if case_type == "PAYROLL"
-        else _build_check_data(entities)
+        else _build_check_data(entities, case_id=case_id, db=db)
     )
     now = _now()
     db.from_("payroll_cases").update({
@@ -1564,6 +1664,111 @@ async def gen_check(case_id: str, request: Request):
     # This allows the user to review flagged exceptions before booking to Zoho.
 
     return await _refresh_detail(case_id, db, request, user, 3)
+
+
+# ─── Step 2 (ingested): Complete FE sighting → generate check ────────────────
+
+@router.post("/cases/{case_id}/complete-sighting")
+async def complete_sighting(case_id: str, request: Request):
+    user = get_current_user(request)
+    db = get_db()
+    resp = db.from_("payroll_cases").select("*").eq("id", case_id).single().execute()
+    kase = resp.data
+    if not kase:
+        return HTMLResponse('<div class="error-msg">Case not found.</div>')
+    if kase.get("status") != "documents_pending_review":
+        return HTMLResponse(f'<div class="error-msg">Sighting can only be completed for cases pending '
+                            f'document review. Current: {kase["status"]}</div>')
+
+    # All supporting documents for the case must be FE-sighted.
+    docs = db.from_("consultant_documents").select("*").eq("case_id", case_id).execute().data or []
+    if not docs:
+        return HTMLResponse('<div class="error-msg">No consultant documents found for this case.</div>')
+    unsighted = sorted({(d.get("consultant_name") or d.get("consultant_id"))
+                        for d in docs if not d.get("fe_sighted")})
+    if unsighted:
+        return HTMLResponse('<div class="error-msg">Not yet sighted: ' + ", ".join(unsighted)
+                            + '. Sight every document before completing.</div>')
+
+    # The FE declaration must already be signed (recorded in the audit log).
+    decl = db.from_("payroll_audit_log").select("id").eq(
+        "case_id", case_id).eq("event_type", "FE_DECLARATION_SIGNED").limit(1).execute()
+    if not decl.data:
+        return HTMLResponse('<div class="error-msg">FE declaration not signed yet — sign the '
+                            'declaration before completing sighting.</div>')
+
+    # Ingested cases have no Excel entities; the 5 document-gate checks run off
+    # consultant_documents via _document_exception_flags (case_id + db).
+    check_data = _build_check_data([], case_id=str(case_id), db=db)
+
+    now = _now()
+    db.from_("payroll_cases").update({
+        "status": "uploaded", "check_data": check_data, "check_generated_at": now,
+    }).eq("id", case_id).execute()
+
+    await _audit_log(db, case_id, "CHECK_GENERATED_FROM_SIGHTING",
+                     user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {
+        "stamp": f"Sighting completed by: {user.get('name') or user.get('email')} | "
+                 f"Ref: {kase['reference']} | Generated: {now}",
+        "consultantCount": len({d.get('consultant_id') for d in docs}),
+        "documentCount": len(docs), "flagCount": check_data["flagCount"],
+    })
+
+    return await _refresh_detail(case_id, db, request, user, _get_active_step("uploaded"))
+
+
+# ─── Step 2 (ingested): FE declaration (PIN-signed) ──────────────────────────
+
+_FE_DECLARATION_TEXT = (
+    "I confirm that I have reviewed and sighted all supporting documents for this run. "
+    "Timesheets are client-signed and cover the billing period. POs/contracts are active "
+    "and amounts are within authorised limits. Statutory computations have been verified "
+    "against applicable rate tables. Bank account details have been verified. I am satisfied "
+    "this run is accurate, complete, and authorised for payment."
+)
+
+
+@router.post("/cases/{case_id}/sign-declaration")
+async def sign_declaration(case_id: str, request: Request, pin: str = Form(...)):
+    user = get_current_user(request)
+    db = get_db()
+    resp = db.from_("payroll_cases").select("*").eq("id", case_id).single().execute()
+    kase = resp.data
+    if not kase:
+        return HTMLResponse('<div class="error-msg">Case not found.</div>')
+    if kase.get("status") != "documents_pending_review":
+        return HTMLResponse(f'<div class="error-msg">The declaration can only be signed while a case is '
+                            f'pending document review. Current: {kase["status"]}</div>')
+
+    # Verify the PIN against the logged-in user's password — same bcrypt pattern as auth.py.
+    email = (user.get("email") or "").lower().strip()
+    urow = db.from_("users").select("*").eq("email", email).single().execute().data
+    if not urow or not urow.get("password_hash"):
+        return HTMLResponse('<div class="error-msg">No password set for your account — cannot sign.</div>')
+    try:
+        ok = bcrypt.checkpw((pin or "").encode(), urow["password_hash"].encode())
+    except Exception:
+        ok = False
+    if not ok:
+        return HTMLResponse('<div class="error-msg">Incorrect PIN — the declaration was not signed.</div>')
+
+    # Prevent double-signing.
+    existing = db.from_("payroll_audit_log").select("id").eq(
+        "case_id", case_id).eq("event_type", "FE_DECLARATION_SIGNED").limit(1).execute()
+    if existing.data:
+        return HTMLResponse('<div class="error-msg">The FE declaration has already been signed for this case.</div>')
+
+    now = _now()
+    await _audit_log(db, case_id, "FE_DECLARATION_SIGNED", user.get("name") or email,
+                     user.get("id"), _get_ip(request), {
+        "case_id": case_id,
+        "declared_by_name": user.get("name") or email,
+        "declared_by_email": email,
+        "signed_at": now,
+        "declaration_text": _FE_DECLARATION_TEXT,
+    })
+
+    return await _refresh_detail(case_id, db, request, user, _get_active_step(kase.get("status", "")))
 
 
 # ─── Step 2b: Return to preparer ─────────────────────────────────────────────
@@ -2530,6 +2735,6 @@ async def _refresh_detail(case_id: str, db, request: Request, user: dict, step: 
     logs_resp = db.from_("payroll_audit_log").select("*").eq("case_id", case_id).order("created_at").execute()
     logs = logs_resp.data or []
     module = "csi" if kase.get("type") == "CSI" else "payroll"
-    ctx = {**_case_detail_ctx(kase, logs, step), "request": request, "user": user, "module": module, "section": module,
+    ctx = {**_case_detail_ctx(kase, logs, step, db=db), "request": request, "user": user, "module": module, "section": module,
            "step_state": _step_state, "get_active_step": _get_active_step, "orgs": ORGS}
     return templates.TemplateResponse(request, "payroll/detail_inner.html", ctx)

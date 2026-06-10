@@ -12,6 +12,71 @@
     <p class="pf-panel-sub">Rule-based validation against the uploaded file.</p>
   </div>
 
+  {% if kase.status == 'documents_pending_review' %}
+  <div class="pf-action-zone">
+    <p class="pf-action-desc">Field Executive sighting of consultant supporting documents.
+       Every document must be sighted before the check file can be generated.</p>
+
+    {% for g in consultant_docs %}
+    <div class="pf-detail-card">
+      <div class="pf-detail-card-title">
+        {{ g.consultant_name }}
+        {% if g.all_sighted %}
+          <span style="margin-left:8px;font-size:11px;color:#065f46;background:#d1fae5;padding:2px 8px;border-radius:10px">All sighted</span>
+        {% else %}
+          <span style="margin-left:8px;font-size:11px;color:#92400e;background:#fef3c7;padding:2px 8px;border-radius:10px">Pending sighting</span>
+        {% endif %}
+      </div>
+      {% for d in g.docs %}
+      <div class="pf-stat-row">
+        <span class="pf-stat-key">{{ d.document_type }}</span>
+        <span>
+          {% if d.fe_sighted %}✓ sighted{% else %}○ not sighted{% endif %}
+          · {% if d.client_signed %}client-signed{% else %}unsigned{% endif %}
+          {% if d.valid_to %} · valid to {{ d.valid_to }}{% endif %}
+        </span>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="pf-flags-card pf-flags-warn">No consultant documents found for this case.</div>
+    {% endfor %}
+
+    {% if all_sighted %}
+      {% if declaration_signed %}
+      <div class="pf-flags-card pf-flags-ok" style="margin-top:14px">✓ FE declaration signed — you may complete sighting.</div>
+      {% else %}
+      <form class="pf-detail-card" style="margin-top:14px"
+            hx-post="/cases/{{ kase.id }}/sign-declaration"
+            hx-target="#case-detail-inner" hx-swap="innerHTML" hx-indicator=".spinner">
+        <div class="pf-detail-card-title">Field Executive Declaration</div>
+        <p style="font-size:13px;color:#374151;line-height:1.5;margin:8px 0 12px">{{ declaration_text }}</p>
+        <label style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px">Enter your PIN (account password) to sign</label>
+        <input type="password" name="pin" required autocomplete="off" placeholder="PIN"
+               style="padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;max-width:240px;width:100%;font-size:14px" />
+        <div style="margin-top:12px">
+          <button type="submit" class="btn btn-primary"><span class="spinner htmx-indicator"></span> Sign Declaration</button>
+        </div>
+      </form>
+      {% endif %}
+    {% endif %}
+
+    <button class="btn btn-primary" style="margin-top:14px"
+        hx-post="/cases/{{ kase.id }}/complete-sighting"
+        hx-target="#case-detail-inner"
+        hx-swap="innerHTML"
+        hx-indicator=".spinner"
+        {% if not (all_sighted and declaration_signed) %}disabled title="Sight all documents and sign the FE declaration first"{% endif %}>
+      <span class="spinner htmx-indicator"></span>
+      Complete Sighting
+    </button>
+    {% if not (all_sighted and declaration_signed) %}
+    <p class="pf-action-desc" style="margin-top:8px;color:#92400e">
+      Enables once every document is sighted and the FE declaration is signed.</p>
+    {% endif %}
+  </div>
+
+  {% else %}
   {% if kase.status == 'uploaded' %}
   <div class="pf-action-zone">
     <p class="pf-action-desc">Generate the check file to validate consultant counts, payroll totals, and statutory breakdown.</p>
@@ -82,5 +147,6 @@
     <div class="pf-flags-card pf-flags-ok">No exceptions — all checks passed.</div>
     {% endif %}
   </div>
+  {% endif %}
   {% endif %}
 </div>
