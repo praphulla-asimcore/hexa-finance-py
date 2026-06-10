@@ -27,6 +27,7 @@ BANK_DEBIT_ACCOUNT: str = os.getenv("BANK_DEBIT_ACCOUNT", "")
 BANK_NOTIFY_EMAILS: list[str] = [
     e.strip() for e in os.getenv("BANK_NOTIFY_EMAILS", "").split(",") if e.strip()
 ]
+APEX_INGEST_API_KEY: str = os.getenv("APEX_INGEST_API_KEY", "")
 
 IS_PROD: bool = os.getenv("VERCEL_ENV") == "production"
 

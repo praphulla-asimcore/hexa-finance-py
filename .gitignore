@@ -10,3 +10,4 @@ venv/
 dist/
 .DS_Store
 .vercel
+start_local.sh
