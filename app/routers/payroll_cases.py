@@ -305,7 +305,9 @@ async def _generate_ref(db, case_type: str, entity: str, period: str) -> tuple[s
 
 def _sighting_rows(db, case_id: str) -> list[dict]:
     """consultant_documents for a case, grouped per consultant for the FE-sighting
-    panel. Each group: {consultant_id, consultant_name, all_sighted, docs:[...]}.
+    panel. Each group: {consultant_id, consultant_name, cost_centre, docs, all_sighted,
+    required_docs, missing_docs, ready_to_complete}. required_docs/missing_docs derive
+    from the consultant's client profile (client_document_profiles by cost_centre).
     Read-only; returns [] on any error."""
     try:
         rows = db.from_("consultant_documents").select("*").eq(
@@ -319,9 +321,54 @@ def _sighting_rows(db, case_id: str) -> list[dict]:
                                      "consultant_name": r.get("consultant_name") or cid,
                                      "docs": []})
         g["docs"].append(r)
+
+    # Resolve the active client profile per cost centre (cached — several consultants
+    # often share one client, so this is one query per distinct client, not per row).
+    _profile_cache: dict = {}
+
+    def _profile_for(cost_centre):
+        if cost_centre in _profile_cache:
+            return _profile_cache[cost_centre]
+        profile = None
+        try:
+            prows = db.from_("client_document_profiles").select("*").eq(
+                "client_name_csi", cost_centre).execute().data or []
+            active = [p for p in prows if p.get("effective_to") is None]
+            profile = active[0] if active else None
+        except Exception:
+            profile = None
+        _profile_cache[cost_centre] = profile
+        return profile
+
     groups = list(grouped.values())
     for g in groups:
-        g["all_sighted"] = bool(g["docs"]) and all(d.get("fe_sighted") for d in g["docs"])
+        docs = g["docs"]
+        g["all_sighted"] = bool(docs) and all(d.get("fe_sighted") for d in docs)
+        g["cost_centre"] = docs[0].get("cost_centre") if docs else None
+
+        profile = _profile_for(g["cost_centre"])
+        if profile is None:
+            g["required_docs"] = []
+            g["missing_docs"] = []
+            g["ready_to_complete"] = g["all_sighted"]
+            continue
+
+        required = []
+        if profile.get("work_order_required"):       required.append("WORK_ORDER")
+        if profile.get("timesheet_required"):        required.append("TIMESHEET")
+        if profile.get("payroll_report_required"):   required.append("APPROVED_PAYROLL_REPORT")
+        if profile.get("po_required"):               required.append("PO")
+        if profile.get("hiring_note_required"):      required.append("HIRING_NOTE")
+        if profile.get("letter_to_hire_required"):   required.append("LETTER_TO_HIRE")
+        if profile.get("wcn_required"):              required.append("WCN")
+        if profile.get("approved_costing_required"): required.append("APPROVED_COSTING")
+
+        uploaded_types = {d.get("document_type") for d in docs}
+        missing = [r for r in required if r not in uploaded_types]
+        g["required_docs"] = required
+        g["missing_docs"] = missing
+        g["ready_to_complete"] = g["all_sighted"] and not missing
+
     return groups
 
 
@@ -1456,7 +1503,7 @@ def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None, d
         "approvers": APPROVERS,
         "bank_gate": _bank_gate(kase),
         "consultant_docs": consultant_docs,
-        "all_sighted": bool(consultant_docs) and all(g["all_sighted"] for g in consultant_docs),
+        "all_sighted": bool(consultant_docs) and all(g["ready_to_complete"] for g in consultant_docs),
         "declaration_signed": declaration_signed,
         "declaration_text": _FE_DECLARATION_TEXT,
     }

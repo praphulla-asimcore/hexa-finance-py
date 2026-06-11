@@ -21,12 +21,15 @@
     <div class="pf-detail-card">
       <div class="pf-detail-card-title">
         {{ g.consultant_name }}
-        {% if g.all_sighted %}
-          <span style="margin-left:8px;font-size:11px;color:#065f46;background:#d1fae5;padding:2px 8px;border-radius:10px">All sighted</span>
+        {% if g.ready_to_complete %}
+          <span style="margin-left:8px;font-size:11px;color:#065f46;background:#d1fae5;padding:2px 8px;border-radius:10px">Ready</span>
+        {% elif g.missing_docs %}
+          <span style="margin-left:8px;font-size:11px;color:#9a3412;background:#ffedd5;padding:2px 8px;border-radius:10px">DOCS MISSING</span>
         {% else %}
           <span style="margin-left:8px;font-size:11px;color:#92400e;background:#fef3c7;padding:2px 8px;border-radius:10px">Pending sighting</span>
         {% endif %}
       </div>
+      <span style="font-size:11px;color:var(--text-muted)">{{ g.cost_centre or 'No client assigned' }}</span>
       {% for d in g.docs %}
       <div class="pf-stat-row">
         <span class="pf-stat-key">{{ d.document_type }}</span>
@@ -44,6 +47,17 @@
         </span>
       </div>
       {% endfor %}
+
+      {% if g.missing_docs %}
+      <div style="margin-top:8px">
+        {% for missing in g.missing_docs %}
+        <div class="pf-stat-row" style="color:#b45309;background:#fef3c7;border-radius:6px;padding:4px 8px;margin-bottom:4px">
+          <span class="pf-stat-key">{{ missing }}</span>
+          <span style="font-size:11px">⚠ Required — not yet uploaded</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
 
       {# ── Upload / re-upload a document for this consultant ── #}
       <details style="margin-top:10px">
