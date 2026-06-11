@@ -195,8 +195,8 @@ async def apex_ingest(request: Request):
                             (consultant_id, consultant_name, entity, period_month, document_type,
                              filename, file_url, file_data, file_hash, hash_verified, source,
                              client_signed, signed_by, signed_at, valid_from, valid_to,
-                             po_value, po_currency, uploaded_by)
-                        VALUES (%s,%s,%s,%s,%s, %s,%s,%s,%s,%s,%s, %s,%s,%s,%s,%s, %s,%s,%s)
+                             po_value, po_currency, uploaded_by, cost_centre)
+                        VALUES (%s,%s,%s,%s,%s, %s,%s,%s,%s,%s,%s, %s,%s,%s,%s,%s, %s,%s,%s,%s)
                         RETURNING id
                         """,
                         [
@@ -207,6 +207,7 @@ async def apex_ingest(request: Request):
                             bool(d.get("client_signed", False)), _opt(d.get("signed_by")),
                             _opt(d.get("signed_at")), _opt(d.get("valid_from")), _opt(d.get("valid_to")),
                             _opt(d.get("po_value")), _opt(d.get("po_currency")), generated_by,
+                            _opt(c.get("cost_centre")),
                         ],
                     )
                     inserted_doc_ids.append(cur.fetchone()["id"])
