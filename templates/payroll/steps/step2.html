@@ -44,6 +44,68 @@
         </span>
       </div>
       {% endfor %}
+
+      {# ── Upload / re-upload a document for this consultant ── #}
+      <details style="margin-top:10px">
+        <summary style="cursor:pointer;font-size:12px;color:#4f46e5;font-weight:600">+ Upload Document</summary>
+        <form style="margin-top:10px"
+              hx-post="/cases/{{ kase.id }}/upload-document"
+              hx-target="#case-detail-inner" hx-swap="innerHTML"
+              hx-encoding="multipart/form-data" hx-indicator=".spinner">
+          <input type="hidden" name="consultant_id" value="{{ g.consultant_id }}">
+          <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">
+            <div>
+              <label style="display:block;font-size:11px;color:#6b7280;margin-bottom:3px">File</label>
+              <input type="file" name="file" accept=".pdf,.jpg,.jpeg,.png" required style="font-size:12px">
+            </div>
+            <div>
+              <label style="display:block;font-size:11px;color:#6b7280;margin-bottom:3px">Document Type</label>
+              <select name="document_type" required
+                      style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px">
+                {% for dt in ['WORK_ORDER','TIMESHEET','APPROVED_PAYROLL_REPORT','PO','HIRING_NOTE',
+                              'LETTER_TO_HIRE','WCN','APPROVED_COSTING','CONTRACT','CUSTOM'] %}
+                <option value="{{ dt }}">{{ dt }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <label style="font-size:12px;color:#374151;display:flex;align-items:center;gap:5px">
+              <input type="checkbox" name="client_signed"> Client signed
+            </label>
+          </div>
+          <details style="margin-top:8px">
+            <summary style="cursor:pointer;font-size:11px;color:#6b7280">Optional details</summary>
+            <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:8px">
+              <div>
+                <label style="display:block;font-size:11px;color:#6b7280;margin-bottom:3px">Signed by</label>
+                <input type="text" name="signed_by" placeholder="Name"
+                       style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px">
+              </div>
+              <div>
+                <label style="display:block;font-size:11px;color:#6b7280;margin-bottom:3px">Valid to</label>
+                <input type="date" name="valid_to"
+                       style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px">
+              </div>
+              <div>
+                <label style="display:block;font-size:11px;color:#6b7280;margin-bottom:3px">PO Value</label>
+                <input type="number" name="po_value" placeholder="0.00" step="0.01" min="0"
+                       style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:110px">
+              </div>
+              <div>
+                <label style="display:block;font-size:11px;color:#6b7280;margin-bottom:3px">Currency</label>
+                <select name="po_currency"
+                        style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px">
+                  <option value="MYR">MYR</option>
+                  <option value="USD">USD</option>
+                  <option value="SGD">SGD</option>
+                </select>
+              </div>
+            </div>
+          </details>
+          <button type="submit" class="btn btn-secondary" style="margin-top:10px;padding:5px 12px;font-size:12px">
+            <span class="spinner htmx-indicator"></span> Upload Document
+          </button>
+        </form>
+      </details>
     </div>
     {% else %}
     <div class="pf-flags-card pf-flags-warn">No consultant documents found for this case.</div>

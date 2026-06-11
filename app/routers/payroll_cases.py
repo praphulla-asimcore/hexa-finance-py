@@ -351,36 +351,92 @@ def _document_exception_flags(db, case_id: str) -> list[dict]:
         entity = docs[0].get("entity", "")
         base   = {"employee": name, "entity": entity, "employeeId": cid}
 
-        timesheet = next((d for d in docs if d.get("document_type") == "TIMESHEET"), None)
-        po        = next((d for d in docs if d.get("document_type") in ("PO", "CONTRACT")), None)
+        # ── Look up the active client profile by cost centre (client name) ──────
+        cost_centre = docs[0].get("cost_centre")
+        try:
+            profile_rows = db.from_("client_document_profiles").select("*").eq(
+                "client_name_csi", cost_centre).execute().data or []
+        except Exception:
+            profile_rows = []
+        active = [p for p in profile_rows if p.get("effective_to") is None]
+        profile = active[0] if active else None
 
-        # 1. MISSING_TIMESHEET — no TIMESHEET document for this consultant.
-        if timesheet is None:
-            flags.append({**base, "code": "MISSING_TIMESHEET"})
+        # ── No profile → warn and fall back to the fixed default checks ─────────
+        if profile is None:
+            logger.warning("No client profile found for: %s", cost_centre)
+            timesheet = next((d for d in docs if d.get("document_type") == "TIMESHEET"), None)
+            po        = next((d for d in docs if d.get("document_type") in ("PO", "CONTRACT")), None)
+            if timesheet is None:
+                flags.append({**base, "code": "MISSING_TIMESHEET"})
+            active_po = next(
+                (d for d in docs
+                 if d.get("document_type") in ("PO", "CONTRACT")
+                 and (d.get("valid_to") is None or d.get("valid_to") >= today)),
+                None,
+            )
+            if active_po is None:
+                flags.append({**base, "code": "MISSING_CONTRACT"})
+            if timesheet is not None and not timesheet.get("client_signed", False):
+                flags.append({**base, "code": "TIMESHEET_NOT_CLIENT_SIGNED",
+                              "documentType": "TIMESHEET"})
+            if po is not None and po.get("valid_to") is not None and po.get("valid_to") < today:
+                flags.append({**base, "code": "PO_EXPIRED",
+                              "documentType": po.get("document_type"), "validTo": po.get("valid_to")})
+            if timesheet is not None and not timesheet.get("fe_sighted", False):
+                flags.append({**base, "code": "SIGHTING_INCOMPLETE", "documentType": "TIMESHEET"})
+            continue
 
-        # 2. MISSING_CONTRACT — no still-active PO/CONTRACT (valid_to >= today or null).
-        active_po = next(
-            (d for d in docs
-             if d.get("document_type") in ("PO", "CONTRACT")
-             and (d.get("valid_to") is None or d.get("valid_to") >= today)),
-            None,
-        )
-        if active_po is None:
-            flags.append({**base, "code": "MISSING_CONTRACT"})
+        # ── Profile found → client-aware checks for the documents IT requires ───
+        doc_types = {d.get("document_type") for d in docs}
 
-        # 3. TIMESHEET_NOT_CLIENT_SIGNED — timesheet present but not client-signed.
-        if timesheet is not None and not timesheet.get("client_signed", False):
-            flags.append({**base, "code": "TIMESHEET_NOT_CLIENT_SIGNED",
-                          "documentType": "TIMESHEET"})
+        if profile.get("work_order_required") and "WORK_ORDER" not in doc_types:
+            flags.append({**base, "code": "MISSING_WORK_ORDER"})
 
-        # 4. PO_EXPIRED — PO/CONTRACT exists with valid_to strictly before today.
-        if po is not None and po.get("valid_to") is not None and po.get("valid_to") < today:
-            flags.append({**base, "code": "PO_EXPIRED",
-                          "documentType": po.get("document_type"), "validTo": po.get("valid_to")})
+        if profile.get("timesheet_required"):
+            if "TIMESHEET" not in doc_types:
+                flags.append({**base, "code": "MISSING_TIMESHEET"})
+            else:
+                timesheet = next((d for d in docs if d.get("document_type") == "TIMESHEET"), None)
+                if timesheet and not timesheet.get("client_signed"):
+                    flags.append({**base, "code": "TIMESHEET_NOT_CLIENT_SIGNED",
+                                  "documentType": "TIMESHEET"})
 
-        # 5. SIGHTING_INCOMPLETE — timesheet present but FE has not sighted it.
-        if timesheet is not None and not timesheet.get("fe_sighted", False):
-            flags.append({**base, "code": "SIGHTING_INCOMPLETE", "documentType": "TIMESHEET"})
+        if profile.get("payroll_report_required") and "APPROVED_PAYROLL_REPORT" not in doc_types:
+            flags.append({**base, "code": "MISSING_PAYROLL_REPORT"})
+
+        if profile.get("po_required"):
+            po = next((d for d in docs if d.get("document_type") == "PO"), None)
+            if po is None:
+                flags.append({**base, "code": "MISSING_PO"})
+            elif po.get("valid_to") and po.get("valid_to") < date.today().isoformat():
+                flags.append({**base, "code": "PO_EXPIRED",
+                              "documentType": "PO", "validTo": po.get("valid_to")})
+
+        if profile.get("hiring_note_required") and "HIRING_NOTE" not in doc_types:
+            flags.append({**base, "code": "MISSING_HIRING_NOTE"})
+
+        if profile.get("letter_to_hire_required") and "LETTER_TO_HIRE" not in doc_types:
+            flags.append({**base, "code": "MISSING_LETTER_TO_HIRE"})
+
+        if profile.get("wcn_required") and "WCN" not in doc_types:
+            flags.append({**base, "code": "MISSING_WCN"})
+
+        if profile.get("approved_costing_required") and "APPROVED_COSTING" not in doc_types:
+            flags.append({**base, "code": "MISSING_APPROVED_COSTING"})
+
+        # SIGHTING_INCOMPLETE — any required document present but not FE-sighted.
+        required_types = set()
+        if profile.get("timesheet_required"):
+            required_types.add("TIMESHEET")
+        if profile.get("work_order_required"):
+            required_types.add("WORK_ORDER")
+        if profile.get("payroll_report_required"):
+            required_types.add("APPROVED_PAYROLL_REPORT")
+        for d in docs:
+            if d.get("document_type") in required_types and not d.get("fe_sighted"):
+                flags.append({**base, "code": "SIGHTING_INCOMPLETE",
+                              "documentType": d.get("document_type")})
+                break  # one flag per consultant is enough
 
     return flags
 
@@ -1848,6 +1904,131 @@ async def sight_document(case_id: str, doc_id: str, request: Request):
     })
 
     # (6) re-render at the active step
+    return await _refresh_detail(case_id, db, request, user, _get_active_step(kase.get("status", "")))
+
+
+# ─── Step 2 (ingested): manual document upload ───────────────────────────────
+
+@router.post("/cases/{case_id}/upload-document")
+async def upload_document(
+    case_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+    consultant_id: str = Form(...),
+    document_type: str = Form(...),
+    signed_by: str = Form(""),
+    valid_from: str = Form(""),
+    valid_to: str = Form(""),
+    po_value: str = Form(""),
+    po_currency: str = Form("MYR"),
+    client_signed: str = Form(""),   # checkbox: present ("on") ⇒ true
+):
+    user = get_current_user(request)
+    db = get_db()
+
+    # (1) case must exist and still be pending document review
+    kase = db.from_("payroll_cases").select("*").eq("id", case_id).single().execute().data
+    if not kase:
+        return HTMLResponse('<div class="error-msg">Case not found.</div>')
+    if kase.get("status") != "documents_pending_review":
+        return HTMLResponse(f'<div class="error-msg">Documents can only be uploaded while a case is '
+                            f'pending review. Current: {kase["status"]}</div>')
+
+    # (2) validate inputs (VALID_DOC_TYPES imported lazily — ingest imports payroll_cases)
+    from app.routers.ingest import VALID_DOC_TYPES
+    document_type = (document_type or "").strip().upper()
+    consultant_id = (consultant_id or "").strip()
+    if not consultant_id:
+        return HTMLResponse('<div class="error-msg">Consultant is required.</div>')
+    if document_type not in VALID_DOC_TYPES:
+        return HTMLResponse(f'<div class="error-msg">Invalid document type: {document_type}</div>')
+
+    # (3) read bytes + validate type/size
+    content = await file.read()
+    ALLOWED_TYPES = {"application/pdf", "image/jpeg", "image/png"}
+    MAX_SIZE = 10 * 1024 * 1024  # 10MB
+    if file.content_type not in ALLOWED_TYPES:
+        return HTMLResponse('<div class="error-msg">Only PDF, JPG, and PNG files are accepted.</div>')
+    if len(content) > MAX_SIZE:
+        return HTMLResponse('<div class="error-msg">File is too large. Maximum size is 10MB.</div>')
+    if not content:
+        return HTMLResponse('<div class="error-msg">The uploaded file is empty.</div>')
+    file_hash = _sha256(content)
+
+    def _opt(v):
+        return v if v not in ("", None) else None
+
+    def _num(v):
+        try:
+            return float(v) if v not in ("", None) else None
+        except (TypeError, ValueError):
+            return None
+
+    # Consultant context comes from an existing ingested doc (the sighting panel
+    # only shows consultants that already have docs); fall back to the case.
+    existing = db.from_("consultant_documents").select("*").eq("case_id", case_id).eq(
+        "consultant_id", consultant_id).execute().data or []
+    ref = existing[0] if existing else {}
+    consultant_name = ref.get("consultant_name") or consultant_id
+    entity          = ref.get("entity") or kase.get("entity", "")
+    period_month    = ref.get("period_month") or kase.get("period", "")
+    cost_centre     = ref.get("cost_centre")
+
+    now = _now()
+    uploaded_by = user.get("name") or user.get("email", "")
+
+    # fields written on both insert and update (fe_sighted reset to false)
+    payload = {
+        "filename":      file.filename or f"{document_type}.pdf",
+        "file_data":     base64.b64encode(content).decode(),
+        "file_hash":     file_hash,
+        "hash_verified": True,
+        "source":        "MANUAL_UPLOAD",
+        "client_signed": bool(client_signed),
+        "signed_by":     _opt(signed_by),
+        "valid_from":    _opt(valid_from),
+        "valid_to":      _opt(valid_to),
+        "po_value":      _num(po_value),
+        "po_currency":   _opt(po_currency),
+        "fe_sighted":    False,
+        "fe_sighted_by": None,
+        "fe_sighted_at": None,
+        "uploaded_by":   uploaded_by,
+        "uploaded_at":   now,
+    }
+
+    # (4) replace existing (case_id + consultant_id + document_type + period_month) or insert
+    dup = db.from_("consultant_documents").select("id").eq("case_id", case_id).eq(
+        "consultant_id", consultant_id).eq("document_type", document_type).eq(
+        "period_month", period_month).execute().data or []
+    if dup:
+        db.from_("consultant_documents").update(payload).eq("id", dup[0]["id"]).execute()
+        # Replacing a document invalidates the FE declaration — re-signing required.
+        db.from_("payroll_audit_log").delete().eq(
+            "case_id", case_id).eq("event_type", "FE_DECLARATION_SIGNED").execute()
+        await _audit_log(db, case_id, "DECLARATION_INVALIDATED", uploaded_by, user.get("id"),
+                         _get_ip(request), {
+            "reason": "Document replaced — re-declaration required",
+            "document_type": document_type,
+            "consultant_id": consultant_id,
+        })
+    else:
+        db.from_("consultant_documents").insert({
+            **payload,
+            "case_id": case_id, "consultant_id": consultant_id,
+            "consultant_name": consultant_name, "entity": entity,
+            "period_month": period_month, "document_type": document_type,
+            "cost_centre": cost_centre,
+        }).execute()
+
+    # (7) audit
+    await _audit_log(db, case_id, "DOCUMENT_UPLOADED", uploaded_by, user.get("id"), _get_ip(request), {
+        "consultant_id": consultant_id, "document_type": document_type,
+        "filename": file.filename, "uploaded_by": uploaded_by,
+        "replaced": bool(dup),
+    })
+
+    # (8) re-render the sighting panel
     return await _refresh_detail(case_id, db, request, user, _get_active_step(kase.get("status", "")))
 
 
