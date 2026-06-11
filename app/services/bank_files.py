@@ -591,8 +591,13 @@ def _run_crosscheck(xlsx_bytes, entities, account_source, excluded) -> dict:
 # row carrying any of these is excluded from the bank file (per-row, the same skip
 # as a missing Favourite Beneficiary Code); an audited override releases them.
 DOC_GATE_CODES = {
-    "MISSING_TIMESHEET", "MISSING_CONTRACT", "TIMESHEET_NOT_CLIENT_SIGNED",
-    "PO_EXPIRED", "SIGHTING_INCOMPLETE",
+    # Client-aware codes (_document_exception_flags with a client profile)
+    "MISSING_WORK_ORDER", "MISSING_TIMESHEET", "TIMESHEET_NOT_CLIENT_SIGNED",
+    "MISSING_PAYROLL_REPORT", "MISSING_PO", "PO_EXPIRED", "MISSING_HIRING_NOTE",
+    "MISSING_LETTER_TO_HIRE", "MISSING_WCN", "MISSING_APPROVED_COSTING",
+    "SIGHTING_INCOMPLETE",
+    # Legacy fallback code (no-profile path still emits this)
+    "MISSING_CONTRACT",
 }
 
 

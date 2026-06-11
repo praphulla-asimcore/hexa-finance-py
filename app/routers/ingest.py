@@ -32,7 +32,10 @@ from app.routers.payroll_cases import _audit_log, _get_ip, _now, _sha256
 router = APIRouter()
 logger = logging.getLogger("hexa.ingest")
 
-VALID_DOC_TYPES = {"TIMESHEET", "PO", "WCN", "CONTRACT"}
+VALID_DOC_TYPES = {
+    "TIMESHEET", "PO", "WORK_ORDER", "HIRING_NOTE", "LETTER_TO_HIRE", "WCN",
+    "APPROVED_COSTING", "APPROVED_PAYROLL_REPORT", "CONTRACT", "CUSTOM",
+}
 _PERIOD_RE = re.compile(r"^\d{4}-\d{2}$")   # YYYY-MM
 _CASE_STATUS = "documents_pending_review"
 
