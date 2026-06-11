@@ -103,6 +103,12 @@ def _validate(body: dict) -> list[str]:
 
 @router.post("/api/apex/ingest")
 async def apex_ingest(request: Request):
+    def _safe_float(v, default=0.0):
+        try:
+            return float(v) if v not in (None, "") else default
+        except (TypeError, ValueError):
+            return default
+
     # ── Auth FIRST (before body parsing) — constant-time, empty key rejects all ──
     api_key = request.headers.get("x-api-key")
     if not APEX_INGEST_API_KEY or not api_key or not secrets.compare_digest(api_key, APEX_INGEST_API_KEY):
@@ -172,8 +178,7 @@ async def apex_ingest(request: Request):
                            "message": "One or more documents failed hash verification; nothing was stored",
                            "failures": mismatches})
 
-    consultant_count = len(consultants)
-    document_count   = len(verified)
+    document_count = len(verified)
 
     # ── Steps 5–8: ONE raw psycopg transaction (rollback on any failure) ─────
     try:
@@ -216,11 +221,47 @@ async def apex_ingest(request: Request):
                     inserted_doc_ids.append(cur.fetchone()["id"])
 
                 # Step 7: open the payroll case (run_ref→reference, period_month→period).
+                # Build parsed_data.entities so the full check engine runs on ingested
+                # cases — exact employee field names _build_check_data reads. All salary
+                # fields optional; _safe_float defaults bad/missing numbers to 0.
+                employees = [
+                    {
+                        "employeeId":   c.get("consultant_id", ""),
+                        "name":         c.get("name", ""),
+                        "costCentre":   c.get("cost_centre", ""),
+                        "category":     c.get("category", "Local"),
+                        "grossSalary":  _safe_float(c.get("gross")),
+                        "basicSalary":  _safe_float(c.get("basic")),
+                        "claim":        _safe_float(c.get("claims")),
+                        "bonus":        _safe_float(c.get("bonus")),
+                        "netSalary":    _safe_float(c.get("net_salary")),
+                        "ctcHexa":      _safe_float(c.get("ctc_hexa")),
+                        "ctcHexaFile":  _safe_float(c.get("ctc_hexa")),
+                        "ctcClient":    _safe_float(c.get("ctc_client")),
+                        "epfEmployee":  _safe_float(c.get("epf_employee")),
+                        "epfEmployer":  _safe_float(c.get("epf_employer")),
+                        "epfBasis":     c.get("epf_basis", "local_under_60"),
+                        "socsoEmployee":_safe_float(c.get("socso_employee")),
+                        "socsoEmployer":_safe_float(c.get("socso_employer")),
+                        "eisEmployee":  _safe_float(c.get("eis_employee")),
+                        "eisEmployer":  _safe_float(c.get("eis_employer")),
+                        "mtd":          _safe_float(c.get("mtd")),
+                        "hrdf":         _safe_float(c.get("hrdf")),
+                        "totalBilling": _safe_float(c.get("total_billing")),
+                        "mgmtFee":      _safe_float(c.get("mgmt_fee")),
+                        "bankAccountNumber": c.get("bank_account", ""),
+                        "bankName":     c.get("bank_name", ""),
+                        "favouriteBeneficiaryCode": c.get("favourite_beneficiary_code", ""),
+                    }
+                    for c in consultants
+                ]
+                entities = [{"sheetName": entity, "employees": employees}]
+                consultant_count = len(employees)
                 parsed = {
                     "source": "APEX_CSI_GENERATOR", "run_ref": run_ref,
                     "generated_by": generated_by, "generated_at": generated_at,
                     "consultant_count": consultant_count, "document_count": document_count,
-                    "entities": [],
+                    "entities": entities,
                 }
                 cur.execute(
                     """
