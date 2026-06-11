@@ -129,7 +129,11 @@ def make_payload(run_ref="RUN-001"):
         "run_ref": run_ref, "entity": "HSSB", "period_month": "2026-05",
         "generated_by": "CSI Generator", "generated_at": "2026-05-31T00:00:00Z",
         "consultants": [
-            {"consultant_id": "C1", "name": "Ahmad", "documents": [
+            {"consultant_id": "C1", "name": "Ahmad",
+             "gross": 8000.00, "basic": 7000.00, "claims": 500.00,
+             "net_salary": 6800.00, "epf_employer": 1040.00, "mtd": 450.00,
+             "cost_centre": "CIMB Bank Berhad", "category": "Local",
+             "documents": [
                 {"type": "TIMESHEET", "filename": "ts1.pdf",
                  "file_url": "https://x/ts1", "file_hash": KNOWN_HASH},
                 {"type": "PO", "filename": "po1.pdf",

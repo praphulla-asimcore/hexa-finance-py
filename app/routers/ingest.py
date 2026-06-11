@@ -51,6 +51,17 @@ def _opt(v):
     return v if v not in ("", None) else None
 
 
+def _safe_float(v, default=0.0):
+    """Parse a payload numeric → float; bad/missing/non-numeric → default. Strips
+    thousands separators so '1,000' → 1000.0 instead of silently becoming 0."""
+    try:
+        if v in (None, ""):
+            return default
+        return float(str(v).replace(",", ""))
+    except (TypeError, ValueError):
+        return default
+
+
 def _validate(body: dict) -> list[str]:
     """All required fields present and well-formed. Returns a list of problems
     (empty ⇒ valid). Drives the 422 in step 1."""
@@ -103,12 +114,6 @@ def _validate(body: dict) -> list[str]:
 
 @router.post("/api/apex/ingest")
 async def apex_ingest(request: Request):
-    def _safe_float(v, default=0.0):
-        try:
-            return float(v) if v not in (None, "") else default
-        except (TypeError, ValueError):
-            return default
-
     # ── Auth FIRST (before body parsing) — constant-time, empty key rejects all ──
     api_key = request.headers.get("x-api-key")
     if not APEX_INGEST_API_KEY or not api_key or not secrets.compare_digest(api_key, APEX_INGEST_API_KEY):
