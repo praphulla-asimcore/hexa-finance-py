@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% macro profile_form(action, p, submit_label, form_id) %}
+{% set default_on = ['work_order_required', 'payment_blocked_without_docs'] %}
+<form method="post" action="{{ action }}" id="{{ form_id }}" class="cp-form">
+  <div class="cp-grid">
+    <div><label class="label">Client Name (CSI) <span class="req">*</span></label>
+      <input class="input" name="client_name_csi" required value="{{ p.client_name_csi if p else '' }}"></div>
+    <div><label class="label">Client Name (Zoho)</label>
+      <input class="input" name="client_name_zoho" value="{{ (p.client_name_zoho or '') if p else '' }}"></div>
+    <div><label class="label">Entity</label>
+      <input class="input" name="entity" value="{{ p.entity if p else 'HSSB' }}"></div>
+    <div><label class="label">Invoicing From</label>
+      <input class="input" name="invoicing_from" value="{{ (p.invoicing_from or '') if p else '' }}"></div>
+    <div><label class="label">Invoicing Currency</label>
+      <input class="input" name="invoicing_currency" value="{{ (p.invoicing_currency or '') if p else 'MYR' }}"></div>
+  </div>
+  <div class="cp-checks">
+    {% set checks = [
+      ('work_order_required','Work Order'), ('timesheet_required','Timesheet'),
+      ('payroll_report_required','Payroll Report'), ('po_required','Purchase Order'),
+      ('hiring_note_required','Hiring Note'), ('letter_to_hire_required','Letter to Hire'),
+      ('wcn_required','Work Completion Cert'), ('approved_costing_required','Approved Costing'),
+      ('payment_blocked_without_docs','Block Payment if Missing') ] %}
+    {% for field, lbl in checks %}
+    <label class="cp-check">
+      <input type="checkbox" name="{{ field }}"
+        {% if (p and p[field]) or (not p and field in default_on) %}checked{% endif %}> {{ lbl }}
+    </label>
+    {% endfor %}
+  </div>
+  <button type="submit" class="btn btn-primary btn-sm">{{ submit_label }}</button>
+</form>
+{% endmacro %}
+
+{% block content %}
+<div class="cp-page">
+  <div class="cp-head">
+    <div>
+      <h1 class="cp-title">Client Document Profiles</h1>
+      <div class="cp-sub">{{ profiles|length }} active profile(s) — drives the per-client document gates.</div>
+    </div>
+    <button class="btn btn-primary" onclick="cpToggle('add-form')">+ Add New Client Profile</button>
+  </div>
+
+  <div id="add-form" class="cp-addbox" style="display:none">
+    {{ profile_form('/admin/client-profiles/new', none, 'Create Profile', 'addform') }}
+  </div>
+
+  <table class="admin-table cp-table">
+    <thead><tr>
+      <th>Client (CSI)</th><th>Zoho Name</th><th>Entity</th><th>Cur</th>
+      <th>WO</th><th>TS</th><th>PR</th><th>PO</th><th>HN</th><th>LH</th><th>WCN</th><th>AC</th>
+      <th>Blocked</th><th>Actions</th>
+    </tr></thead>
+    <tbody>
+      {% for p in profiles %}
+      <tr>
+        <td><strong>{{ p.client_name_csi }}</strong></td>
+        <td style="font-size:12px;color:var(--text-muted)">{{ p.client_name_zoho or '—' }}</td>
+        <td>{{ p.entity }}</td>
+        <td>{{ p.invoicing_currency or '—' }}</td>
+        <td>{{ '✓' if p.work_order_required else '—' }}</td>
+        <td>{{ '✓' if p.timesheet_required else '—' }}</td>
+        <td>{{ '✓' if p.payroll_report_required else '—' }}</td>
+        <td>{{ '✓' if p.po_required else '—' }}</td>
+        <td>{{ '✓' if p.hiring_note_required else '—' }}</td>
+        <td>{{ '✓' if p.letter_to_hire_required else '—' }}</td>
+        <td>{{ '✓' if p.wcn_required else '—' }}</td>
+        <td>{{ '✓' if p.approved_costing_required else '—' }}</td>
+        <td>{{ '✓' if p.payment_blocked_without_docs else '—' }}</td>
+        <td style="white-space:nowrap">
+          <button class="btn btn-secondary btn-sm" onclick="cpToggle('edit-{{ p.id }}')">Edit</button>
+          <form method="post" action="/admin/client-profiles/{{ p.id }}/deactivate" style="display:inline"
+                onsubmit="return confirm('Deactivate {{ p.client_name_csi }} ({{ p.invoicing_currency or '—' }})?')">
+            <button type="submit" class="btn btn-danger btn-sm">Deactivate</button>
+          </form>
+        </td>
+      </tr>
+      <tr id="edit-{{ p.id }}" style="display:none">
+        <td colspan="14" class="cp-editcell">
+          {{ profile_form('/admin/client-profiles/' ~ p.id ~ '/edit', p, 'Save Changes', 'edit-form-' ~ p.id) }}
+        </td>
+      </tr>
+      {% endfor %}
+      {% if not profiles %}
+      <tr><td colspan="14" style="color:var(--text-muted);padding:18px">No active profiles. Add one above.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+<style>
+.cp-page { padding: 24px 28px; max-width: 1200px; }
+.cp-head { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:18px; }
+.cp-title { font-size:20px; font-weight:800; color:var(--text-primary); margin:0; }
+.cp-sub { font-size:12px; color:var(--text-muted); margin-top:4px; }
+.cp-addbox, .cp-editcell { background:var(--surface,#fff); border:1px solid var(--border); border-radius:10px; padding:14px; }
+.cp-addbox { margin-bottom:16px; }
+.cp-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:10px; }
+.cp-checks { display:flex; flex-wrap:wrap; gap:10px 18px; margin:10px 0 12px; }
+.cp-check { font-size:12px; color:var(--text-secondary); display:flex; align-items:center; gap:6px; }
+.cp-table th, .cp-table td { text-align:center; }
+.cp-table th:first-child, .cp-table td:first-child,
+.cp-table th:nth-child(2), .cp-table td:nth-child(2) { text-align:left; }
+</style>
+<script>
+function cpToggle(id){ var e=document.getElementById(id); e.style.display=(e.style.display==='none'?'':'none'); }
+</script>
+{% endblock %}
