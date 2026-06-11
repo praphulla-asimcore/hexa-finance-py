@@ -30,6 +30,10 @@
     <div class="pf-detail-title">
       <span class="pf-ref-tag pf-ref-large">{{ kase.reference }}</span>
       <span class="badge badge-{{ badge_info[1] }}">{{ badge_info[0] }}</span>
+      {% if (kase.parsed_data or {}).get('source') == 'APEX_CSI_GENERATOR' %}
+      <span class="badge" style="background:rgba(233,30,140,0.12);color:#e91e8c"
+            title="Ingested via the HexaFlow CSI Generator">Ingested via HexaFlow</span>
+      {% endif %}
     </div>
     <div class="pf-detail-meta">
       {{ kase.entity_name or kase.entity }} · {{ kase.period }}

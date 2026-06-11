@@ -267,12 +267,12 @@ async def apex_ingest(request: Request):
                     """
                     INSERT INTO payroll_cases
                         (reference, type, entity, entity_name, period, seq_no, status,
-                         parsed_data, uploaded_by_name, uploaded_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                         parsed_data, uploaded_by_name, uploaded_by_email, uploaded_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     RETURNING id
                     """,
                     [run_ref, "CSI", entity, entity, period_month, seq_no, _CASE_STATUS,
-                     Jsonb(parsed), generated_by, _now()],
+                     Jsonb(parsed), generated_by, generated_by, _now()],
                 )
                 case_id = cur.fetchone()["id"]
 
