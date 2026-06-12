@@ -38,6 +38,12 @@ VALID_DOC_TYPES = {
 }
 _PERIOD_RE = re.compile(r"^\d{4}-\d{2}$")   # YYYY-MM
 _CASE_STATUS = "documents_pending_review"
+# Only these totals keys are persisted from a HexaFlow payload (whitelist —
+# the totals dict is never stored wholesale).
+_TOTALS_FIELDS = (
+    "invoice_total", "net_salary_total", "epf_total", "socso_total",
+    "eis_total", "pcb_total", "gp_total",
+)
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
@@ -91,9 +97,10 @@ def _validate(body: dict) -> list[str]:
         if not isinstance(docs, list):
             errors.append(f"consultants[{ci}].documents must be a list")
             continue
-        if not docs:
-            errors.append(f"consultants[{ci}].documents must not be empty")
-            continue
+        # Phase 1 (HexaFlow Pack 3): empty documents are accepted — HexaFlow
+        # sends documents: []. When documents ARE provided, each is still fully
+        # validated here and hash-verified at step 3. Pack 4 will require real
+        # document refs (or relax this further on the HexaFlow side).
         for di, d in enumerate(docs):
             if not isinstance(d, dict):
                 errors.append(f"consultants[{ci}].documents[{di}] must be an object")
@@ -143,6 +150,18 @@ async def apex_ingest(request: Request):
     generated_by  = str(body["generated_by"]).strip()
     generated_at  = str(body["generated_at"]).strip()
     consultants   = body["consultants"]
+    # HexaFlow Pack 3 metadata — accepted and persisted into parsed_data (not
+    # required; older CSI-Generator payloads omit them).
+    apex_run_ref        = _opt(body.get("apex_run_ref"))
+    hexaflow_csi_run_id = _opt(body.get("hexaflow_csi_run_id"))
+    cycle_code          = _opt(body.get("cycle_code"))
+    # Whitelist totals — never persist the dict wholesale (it could carry stray
+    # keys). Missing / non-dict totals → None (safe default).
+    _raw_totals = body.get("totals")
+    totals = (
+        {k: _raw_totals.get(k) for k in _TOTALS_FIELDS}
+        if isinstance(_raw_totals, dict) else None
+    )
 
     db = get_db()
     if not db:
@@ -264,8 +283,12 @@ async def apex_ingest(request: Request):
                 consultant_count = len(employees)
                 parsed = {
                     "source": "APEX_CSI_GENERATOR", "run_ref": run_ref,
+                    "apex_run_ref": apex_run_ref,
+                    "hexaflow_csi_run_id": hexaflow_csi_run_id,
+                    "cycle_code": cycle_code,
                     "generated_by": generated_by, "generated_at": generated_at,
                     "consultant_count": consultant_count, "document_count": document_count,
+                    "totals": totals,
                     "entities": entities,
                 }
                 cur.execute(
