@@ -2100,7 +2100,12 @@ async def upload_document(
 
     consultant_name = ref.get("consultant_name") or roster.get("consultant_name") or consultant_id
     entity          = ref.get("entity") or roster.get("entity") or kase.get("entity", "")
-    period_month    = ref.get("period_month") or kase.get("period", "")
+    _raw_period = ref.get("period_month") or kase.get("period", "")
+    # Normalize YYYYMM-CYCLE (manual-upload case.period) → YYYY-MM (varchar(7) column)
+    if len(_raw_period) >= 6 and _raw_period[:6].isdigit():
+        period_month = f"{_raw_period[:4]}-{_raw_period[4:6]}"
+    else:
+        period_month = _raw_period
     cost_centre     = ref.get("cost_centre") or roster.get("cost_centre")
 
     now = _now()
