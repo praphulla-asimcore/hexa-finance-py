@@ -86,35 +86,6 @@
               <input type="checkbox" name="client_signed"> Client signed
             </label>
           </div>
-          <details style="margin-top:8px">
-            <summary style="cursor:pointer;font-size:11px;color:#6b7280">Optional details</summary>
-            <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:8px">
-              <div>
-                <label style="display:block;font-size:11px;color:#6b7280;margin-bottom:3px">Signed by</label>
-                <input type="text" name="signed_by" placeholder="Name"
-                       style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px">
-              </div>
-              <div>
-                <label style="display:block;font-size:11px;color:#6b7280;margin-bottom:3px">Valid to</label>
-                <input type="date" name="valid_to"
-                       style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px">
-              </div>
-              <div>
-                <label style="display:block;font-size:11px;color:#6b7280;margin-bottom:3px">PO Value</label>
-                <input type="number" name="po_value" placeholder="0.00" step="0.01" min="0"
-                       style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:110px">
-              </div>
-              <div>
-                <label style="display:block;font-size:11px;color:#6b7280;margin-bottom:3px">Currency</label>
-                <select name="po_currency"
-                        style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px">
-                  <option value="MYR">MYR</option>
-                  <option value="USD">USD</option>
-                  <option value="SGD">SGD</option>
-                </select>
-              </div>
-            </div>
-          </details>
           <button type="submit" class="btn btn-secondary" style="margin-top:10px;padding:5px 12px;font-size:12px">
             <span class="spinner htmx-indicator"></span> Upload Document
           </button>
@@ -124,6 +95,25 @@
     {% else %}
     <div class="pf-flags-card pf-flags-warn">No consultant documents found for this case.</div>
     {% endfor %}
+
+    <div class="pf-detail-card" style="margin-top:16px">
+      <div class="pf-detail-card-title">Run-level Declaration Details</div>
+      <p style="font-size:12px;color:var(--text-muted)">These details apply to the entire CSI run and will be recorded with your sighting sign-off.</p>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px">
+        <div>
+          <label class="label">Reviewed by</label>
+          <input class="input" id="run_signed_by" placeholder="Your name">
+        </div>
+        <div>
+          <label class="label">Review date</label>
+          <input class="input" type="date" id="run_review_date">
+        </div>
+        <div>
+          <label class="label">Notes (optional)</label>
+          <input class="input" id="run_notes" placeholder="Any notes for this run">
+        </div>
+      </div>
+    </div>
 
     {% if all_sighted %}
       {% if declaration_signed %}
@@ -155,7 +145,7 @@
     </button>
     {% if not (all_sighted and declaration_signed) %}
     <p class="pf-action-desc" style="margin-top:8px;color:#92400e">
-      Enables once every document is sighted and the FE declaration is signed.</p>
+      Enables once at least one consultant has all required documents sighted. Consultants with missing documents will be flagged and excluded from the bank file.</p>
     {% endif %}
   </div>
 

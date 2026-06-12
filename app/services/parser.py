@@ -24,6 +24,11 @@ def _json_safe(obj):
 # New template column names (HSSB_CSI Template_New.xlsx)
 # Old template column names kept as fallbacks for backwards compatibility.
 
+_ENTITY_ALIASES: dict[str, str] = {
+    "HEDU": "KISB",
+}
+
+
 def _to_num(val) -> float:
     if val is None or val == "":
         return 0.0
@@ -74,6 +79,7 @@ def _parse_employee(row, col_map) -> dict | None:
         "employeeId":    str(emp_id_val).strip(),
         # New template uses "Name"; old uses "Nickname / Name"
         "name":          _get_str(row, col_map, "Nickname / Name", "Name"),
+        "nationality":   _get_str(row, col_map, "Nationality"),
         # New template uses "Client"; old uses "Cost Centre"
         "costCentre":    _get_str(row, col_map, "Cost Centre", "Client"),
         # Maybank CMS Favourite Beneficiary/Biller Code — written into col 4 of the
@@ -85,6 +91,7 @@ def _parse_employee(row, col_map) -> dict | None:
             "Favourite Beneficiary/Biller Code", "Favorite Beneficiary/Biller Code"),
         "clientType":    _get_str(row, col_map, "Client Type", "Margin Type").upper() or "CC",
         "grossSalary":   _get(row, col_map, "Gross Salary"),
+        "basicSalary":   _get(row, col_map, "Basic Pay", "Basic Salary"),
         # New template uses "Claims Amount"; old uses "Claim"
         "claim":         _get(row, col_map, "Claim", "Claims Amount"),
         "bonus":         sum(_get(row, col_map, c) for c in [
@@ -149,7 +156,7 @@ def _process_sheets(sheets: list[tuple[str, list]]) -> list[dict]:
                 if emp is None:
                     continue
                 entity_val = str(row[entity_col_idx] or "").strip() if entity_col_idx < len(row) else ""
-                group_key = entity_val or sheet_name.strip()
+                group_key = _ENTITY_ALIASES.get(entity_val, entity_val) or sheet_name.strip()
                 groups[group_key].append(emp)
 
             for ent_name, emps in groups.items():

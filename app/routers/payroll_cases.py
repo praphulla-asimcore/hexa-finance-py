@@ -1545,7 +1545,7 @@ def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None, d
         "approvers": APPROVERS,
         "bank_gate": _bank_gate(kase),
         "consultant_docs": consultant_docs,
-        "all_sighted": bool(consultant_docs) and all(g["ready_to_complete"] for g in consultant_docs),
+        "all_sighted": bool(consultant_docs) and any(g["ready_to_complete"] for g in consultant_docs),
         "declaration_signed": declaration_signed,
         "declaration_text": _FE_DECLARATION_TEXT,
     }
@@ -1930,19 +1930,18 @@ async def complete_sighting(case_id: str, request: Request):
     if not groups:
         return HTMLResponse('<div class="error-msg">No consultants found for this case.</div>')
 
-    blocked = []
-    for g in groups:
-        if g["ready_to_complete"]:
-            continue
-        problems = []
-        if g.get("missing_docs"):
-            problems.append("missing " + ", ".join(g["missing_docs"]))
-        if not g["all_sighted"]:
-            problems.append("unsighted documents")
-        blocked.append(f"{g['consultant_name']} ({'; '.join(problems) or 'incomplete'})")
-    if blocked:
-        return HTMLResponse('<div class="error-msg">Cannot complete sighting — '
-                            + "; ".join(blocked) + '.</div>')
+    ready_groups = [g for g in groups if g["ready_to_complete"]]
+    if not ready_groups:
+        return HTMLResponse('<div class="error-msg">No consultants are ready — upload and sight '
+                            'the required documents for at least one consultant before completing '
+                            'sighting.</div>')
+
+    excluded = [g["consultant_name"] for g in groups if not g["ready_to_complete"]]
+    if excluded:
+        await _audit_log(
+            db, case_id, "CONSULTANTS_EXCLUDED",
+            user.get("name", ""), user.get("id"), _get_ip(request),
+            {"excluded": excluded, "reason": "missing_required_documents"})
 
     # The FE declaration must already be signed (recorded in the audit log).
     decl = db.from_("payroll_audit_log").select("id").eq(
@@ -1966,8 +1965,8 @@ async def complete_sighting(case_id: str, request: Request):
                      user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {
         "stamp": f"Sighting completed by: {user.get('name') or user.get('email')} | "
                  f"Ref: {kase['reference']} | Generated: {now}",
-        "consultantCount": len(groups),
-        "documentCount": sum(len(g["docs"]) for g in groups), "flagCount": check_data["flagCount"],
+        "consultantCount": len(ready_groups),
+        "documentCount": sum(len(g["docs"]) for g in ready_groups), "flagCount": check_data["flagCount"],
     })
 
     return await _refresh_detail(case_id, db, request, user, _get_active_step("uploaded"))
@@ -2057,9 +2056,11 @@ async def upload_document(
 
     # (3) read bytes + validate type/size
     content = await file.read()
-    ALLOWED_TYPES = {"application/pdf", "image/jpeg", "image/png"}
+    import os as _os
+    ALLOWED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}
     MAX_SIZE = 10 * 1024 * 1024  # 10MB
-    if file.content_type not in ALLOWED_TYPES:
+    ext = _os.path.splitext(file.filename or "")[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
         return HTMLResponse('<div class="error-msg">Only PDF, JPG, and PNG files are accepted.</div>')
     if len(content) > MAX_SIZE:
         return HTMLResponse('<div class="error-msg">File is too large. Maximum size is 10MB.</div>')
