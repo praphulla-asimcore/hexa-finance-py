@@ -32,6 +32,11 @@ APEX_INGEST_API_KEY: str = os.getenv("APEX_INGEST_API_KEY", "")
 ARIA_WEBHOOK_URL: str = os.getenv("ARIA_WEBHOOK_URL", "")
 # Shared secret for the Vercel Cron trigger (GET /api/jobs/aria-sync). Empty ⇒ unauthenticated.
 CRON_SECRET: str = os.getenv("CRON_SECRET", "")
+# HexaFlow finance-status events (Pack 4): outbound notifications to HexaFlow's
+# inbound endpoint (POST /api/finance/apex/events). Empty URL or secret ⇒ disabled.
+# The secret is sent as the X-Apex-Webhook-Secret header only — never logged/stored.
+HEXAFLOW_EVENTS_URL: str = os.getenv("HEXAFLOW_EVENTS_URL", "")
+HEXAFLOW_EVENTS_SECRET: str = os.getenv("HEXAFLOW_EVENTS_SECRET", "")
 
 IS_PROD: bool = os.getenv("VERCEL_ENV") == "production"
 
