@@ -303,24 +303,64 @@ async def _generate_ref(db, case_type: str, entity: str, period: str) -> tuple[s
     return ref, seq
 
 
-def _sighting_rows(db, case_id: str) -> list[dict]:
+def _sighting_rows(db, case_id: str, kase: dict | None = None) -> list[dict]:
     """consultant_documents for a case, grouped per consultant for the FE-sighting
-    panel. Each group: {consultant_id, consultant_name, cost_centre, docs, all_sighted,
-    required_docs, missing_docs, ready_to_complete}. required_docs/missing_docs derive
-    from the consultant's client profile (client_document_profiles by cost_centre).
+    panel. Each group: {consultant_id, consultant_name, cost_centre, entity, docs,
+    all_sighted, required_docs, missing_docs, ready_to_complete}. required_docs/
+    missing_docs derive from the consultant's client profile (client_document_profiles
+    by cost_centre).
+
+    The consultant roster is seeded from the case's parsed_data.entities (the payroll
+    file's consultant rows) so every consultant appears even before any supporting
+    document is uploaded — this is what lets a *manually* uploaded CSI case go through
+    the same FE-sighting gate as a HexaFlow-ingested one. Uploaded documents are then
+    merged in by consultant id. Ingested cases carry the same id on both sides (APEX
+    consultant_id), so the str-normalised key prevents double rows.
+
     Read-only; returns [] on any error."""
     try:
         rows = db.from_("consultant_documents").select("*").eq(
             "case_id", case_id).execute().data or []
     except Exception:
-        return []
+        rows = []
+
     grouped: dict = {}
+    order: list = []  # preserve roster order, then any doc-only consultants
+
+    def _ensure(cid, name=None, cost_centre=None, entity=None) -> dict:
+        key = str(cid)
+        g = grouped.get(key)
+        if g is None:
+            g = {"consultant_id": key, "consultant_name": name or key,
+                 "cost_centre": cost_centre, "entity": entity, "docs": []}
+            grouped[key] = g
+            order.append(key)
+        else:
+            if name and (not g["consultant_name"] or g["consultant_name"] == key):
+                g["consultant_name"] = name
+            if cost_centre and not g.get("cost_centre"):
+                g["cost_centre"] = cost_centre
+            if entity and not g.get("entity"):
+                g["entity"] = entity
+        return g
+
+    # Seed the roster from the payroll file's consultant rows.
+    for ent in ((kase or {}).get("parsed_data") or {}).get("entities", []):
+        sheet = ent.get("sheetName", "")
+        for emp in ent.get("employees", []):
+            cid = emp.get("employeeId") or emp.get("name") or ""
+            if not cid:
+                continue
+            _ensure(cid, emp.get("name") or str(cid),
+                    (emp.get("costCentre") or "").strip() or None, sheet)
+
+    # Merge in uploaded documents (doc cost_centre wins — it is the authoritative copy).
     for r in rows:
-        cid = r.get("consultant_id")
-        g = grouped.setdefault(cid, {"consultant_id": cid,
-                                     "consultant_name": r.get("consultant_name") or cid,
-                                     "docs": []})
+        g = _ensure(r.get("consultant_id"), r.get("consultant_name"),
+                    r.get("cost_centre"), r.get("entity"))
         g["docs"].append(r)
+        if r.get("cost_centre"):
+            g["cost_centre"] = r.get("cost_centre")
 
     # Resolve the active client profile per cost centre (cached — several consultants
     # often share one client, so this is one query per distinct client, not per row).
@@ -340,11 +380,13 @@ def _sighting_rows(db, case_id: str) -> list[dict]:
         _profile_cache[cost_centre] = profile
         return profile
 
-    groups = list(grouped.values())
+    groups = [grouped[k] for k in order]
     for g in groups:
         docs = g["docs"]
-        g["all_sighted"] = bool(docs) and all(d.get("fe_sighted") for d in docs)
-        g["cost_centre"] = docs[0].get("cost_centre") if docs else None
+        # Vacuously sighted when there are no documents yet — readiness is then
+        # decided purely by missing required docs below (a roster consultant with
+        # no profile requirements and no uploads has nothing to sight).
+        g["all_sighted"] = all(d.get("fe_sighted") for d in docs)
 
         profile = _profile_for(g["cost_centre"])
         if profile is None:
@@ -1493,7 +1535,7 @@ def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None, d
         selected_step = _get_active_step(kase.get("status", ""))
     consultant_docs = []
     if db is not None and kase.get("status") == "documents_pending_review":
-        consultant_docs = _sighting_rows(db, str(kase.get("id")))
+        consultant_docs = _sighting_rows(db, str(kase.get("id")), kase)
     declaration_signed = any(l.get("event_type") == "FE_DECLARATION_SIGNED" for l in (logs or []))
     return {
         "kase": kase,
@@ -1683,8 +1725,12 @@ async def _upload_case_inner(
     enrich_entities_statutory(parsed_entities, airtable_list)
 
     try:
-        # The check file is NOT generated here. The case lands on Step 2 with the
-        # "Generate Check File" button so the user walks each step explicitly.
+        # The check file is NOT generated here. CSI cases enter document sighting
+        # (Step 2) exactly like HexaFlow-ingested cases — the FE uploads/sights the
+        # supporting docs, then "Complete Sighting" and "Generate Check File" walk
+        # the remaining steps. PAYROLL has no document gate, so it lands directly on
+        # the Step 2 "Generate Check File" button.
+        initial_status = "documents_pending_review" if type_up == "CSI" else "uploaded"
         file_hash = _sha256(content)
         ip = _get_ip(request)
         now_ts = _now()
@@ -1694,7 +1740,7 @@ async def _upload_case_inner(
         insert_resp = db.from_("payroll_cases").insert({
             "reference": ref, "type": type_up, "entity": entity_code,
             "entity_name": entity_name or parsed_entities[0].get("sheetName", entity_code),
-            "period": period, "seq_no": seq, "status": "uploaded",
+            "period": period, "seq_no": seq, "status": initial_status,
             "original_file_name": file.filename,
             "original_file_hash": file_hash,
             "parsed_data": {"entities": parsed_entities},
@@ -1718,12 +1764,13 @@ async def _upload_case_inner(
         "consultantCount": sum(len(e.get("employees", [])) for e in parsed_entities),
     })
 
-    # Return case detail directly — open at Step 2 (generate the check file).
-    # The CHECK_GENERATED audit entry and arranger-exception email fire later,
-    # when the user clicks "Generate Check File" (see gen_check).
+    # Return case detail directly — open at Step 2. CSI lands on the document
+    # sighting panel (status documents_pending_review); PAYROLL on the generate
+    # button (status uploaded). The CHECK_GENERATED audit entry and arranger-
+    # exception email fire later, when the user clicks "Generate Check File".
     logs_resp = db.from_("payroll_audit_log").select("*").eq("case_id", kase["id"]).order("created_at").execute()
     logs = logs_resp.data or []
-    ctx = {**_case_detail_ctx(kase, logs, 2), "request": request, "user": user,
+    ctx = {**_case_detail_ctx(kase, logs, 2, db=db), "request": request, "user": user,
            "module": module, "section": module,
            "step_state": _step_state, "get_active_step": _get_active_step, "orgs": ORGS}
     tmpl = "payroll/detail.html" if request.headers.get("HX-Request") else "payroll/detail_page.html"
@@ -1875,15 +1922,27 @@ async def complete_sighting(case_id: str, request: Request):
         return HTMLResponse(f'<div class="error-msg">Sighting can only be completed for cases pending '
                             f'document review. Current: {kase["status"]}</div>')
 
-    # All supporting documents for the case must be FE-sighted.
-    docs = db.from_("consultant_documents").select("*").eq("case_id", case_id).execute().data or []
-    if not docs:
-        return HTMLResponse('<div class="error-msg">No consultant documents found for this case.</div>')
-    unsighted = sorted({(d.get("consultant_name") or d.get("consultant_id"))
-                        for d in docs if not d.get("fe_sighted")})
-    if unsighted:
-        return HTMLResponse('<div class="error-msg">Not yet sighted: ' + ", ".join(unsighted)
-                            + '. Sight every document before completing.</div>')
+    # Readiness is computed from the consultant roster (parsed_data.entities) merged
+    # with uploaded documents — exactly the view the FE sees in the sighting panel.
+    # Every consultant must have its required documents uploaded AND sighted. This is
+    # the same gate for manually-uploaded and HexaFlow-ingested CSI cases.
+    groups = _sighting_rows(db, str(case_id), kase)
+    if not groups:
+        return HTMLResponse('<div class="error-msg">No consultants found for this case.</div>')
+
+    blocked = []
+    for g in groups:
+        if g["ready_to_complete"]:
+            continue
+        problems = []
+        if g.get("missing_docs"):
+            problems.append("missing " + ", ".join(g["missing_docs"]))
+        if not g["all_sighted"]:
+            problems.append("unsighted documents")
+        blocked.append(f"{g['consultant_name']} ({'; '.join(problems) or 'incomplete'})")
+    if blocked:
+        return HTMLResponse('<div class="error-msg">Cannot complete sighting — '
+                            + "; ".join(blocked) + '.</div>')
 
     # The FE declaration must already be signed (recorded in the audit log).
     decl = db.from_("payroll_audit_log").select("id").eq(
@@ -1892,9 +1951,11 @@ async def complete_sighting(case_id: str, request: Request):
         return HTMLResponse('<div class="error-msg">FE declaration not signed yet — sign the '
                             'declaration before completing sighting.</div>')
 
-    # Ingested cases have no Excel entities; the 5 document-gate checks run off
-    # consultant_documents via _document_exception_flags (case_id + db).
-    check_data = _build_check_data([], case_id=str(case_id), db=db)
+    # Run the full check engine over the file's consultant rows; the 5 client-aware
+    # document-gate checks run off consultant_documents (case_id + db). Both flows
+    # carry parsed_data.entities (manual at upload, ingested at ingest time).
+    entities = (kase.get("parsed_data") or {}).get("entities", [])
+    check_data = _build_check_data(entities, case_id=str(case_id), db=db)
 
     now = _now()
     db.from_("payroll_cases").update({
@@ -1905,8 +1966,8 @@ async def complete_sighting(case_id: str, request: Request):
                      user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {
         "stamp": f"Sighting completed by: {user.get('name') or user.get('email')} | "
                  f"Ref: {kase['reference']} | Generated: {now}",
-        "consultantCount": len({d.get('consultant_id') for d in docs}),
-        "documentCount": len(docs), "flagCount": check_data["flagCount"],
+        "consultantCount": len(groups),
+        "documentCount": sum(len(g["docs"]) for g in groups), "flagCount": check_data["flagCount"],
     })
 
     return await _refresh_detail(case_id, db, request, user, _get_active_step("uploaded"))
@@ -2015,15 +2076,31 @@ async def upload_document(
         except (TypeError, ValueError):
             return None
 
-    # Consultant context comes from an existing ingested doc (the sighting panel
-    # only shows consultants that already have docs); fall back to the case.
+    # Consultant context: prefer an existing doc for this consultant; otherwise
+    # resolve from the payroll file's consultant roster (parsed_data.entities) so a
+    # manually-uploaded CSI case — which starts with zero documents — still gets the
+    # consultant name, entity and cost_centre (the cost_centre drives the client
+    # document profile). Falls back to the case header as a last resort.
     existing = db.from_("consultant_documents").select("*").eq("case_id", case_id).eq(
         "consultant_id", consultant_id).execute().data or []
     ref = existing[0] if existing else {}
-    consultant_name = ref.get("consultant_name") or consultant_id
-    entity          = ref.get("entity") or kase.get("entity", "")
+
+    roster = {}
+    if not ref:
+        for ent in (kase.get("parsed_data") or {}).get("entities", []):
+            for emp in ent.get("employees", []):
+                if str(emp.get("employeeId") or emp.get("name") or "") == consultant_id:
+                    roster = {"consultant_name": emp.get("name"),
+                              "entity": ent.get("sheetName"),
+                              "cost_centre": (emp.get("costCentre") or "").strip() or None}
+                    break
+            if roster:
+                break
+
+    consultant_name = ref.get("consultant_name") or roster.get("consultant_name") or consultant_id
+    entity          = ref.get("entity") or roster.get("entity") or kase.get("entity", "")
     period_month    = ref.get("period_month") or kase.get("period", "")
-    cost_centre     = ref.get("cost_centre")
+    cost_centre     = ref.get("cost_centre") or roster.get("cost_centre")
 
     now = _now()
     uploaded_by = user.get("name") or user.get("email", "")
