@@ -29,10 +29,8 @@ def _fmt_rm(n) -> str:
 
 def _send(to: str | list, subject: str, html: str) -> None:
     if not RESEND_API_KEY:
-        # No silent disappearance — make it obvious in the logs why nothing was
-        # delivered (e.g. the RESEND_API_KEY env var is missing on this deploy).
-        logger.warning("Email NOT sent — RESEND_API_KEY not configured | to=%s | subject=%s", to, subject)
-        return
+        logger.error("Email NOT sent — RESEND_API_KEY not configured | to=%s | subject=%s", to, subject)
+        raise RuntimeError("RESEND_API_KEY is not configured — email delivery is disabled on this deployment")
     resend_sdk.api_key = RESEND_API_KEY
     try:
         resend_sdk.Emails.send({

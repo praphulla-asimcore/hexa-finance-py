@@ -157,6 +157,12 @@
         hx-get="/cases/{{ kase.id }}" hx-target="#case-detail-inner" hx-swap="innerHTML">
       Refresh
     </button>
+    <button class="btn btn-secondary btn-sm" style="margin-left:8px"
+        hx-post="/cases/{{ kase.id }}/resend-check-email"
+        hx-target="#case-detail-inner" hx-swap="innerHTML">
+      <span class="spinner htmx-indicator"></span>
+      Resend email
+    </button>
   </div>
   {% endif %}
   {% endif %}
