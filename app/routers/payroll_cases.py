@@ -567,11 +567,6 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None,
             # "client < cost" flags. Falls back to ``c`` if the file omitted it.
             ctc_hexa_file = float(emp.get("ctcHexaFile") or 0) or c
             cc  = (emp.get("costCentre") or "").strip()
-            # Contractors are intentionally statutory-free (EPF/SOCSO/EIS/MTD all
-            # zeroed in statutory_enrich), so the statutory-presence checks below
-            # do not apply to them — gating avoids guaranteed false positives.
-            is_contractor = emp.get("category") == "Contractor"
-
             cats[emp.get("category", "Local")] = cats.get(emp.get("category", "Local"), 0) + 1
             gross += g; ctc += c; net += n
             stat["epf"] += epf; stat["eis"] += eis
@@ -637,7 +632,7 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None,
             # ── EPF employer rate sanity check ────────────────────────────────
             # Foreign workers (2%) and 60+ locals (6–6.5%) legitimately fall
             # below the under-60 local band, so only check the standard case.
-            if not is_contractor and g > 0 and epf > 0 and emp.get("epfBasis", "local_under_60") == "local_under_60":
+            if emp.get("category") not in (None, "Contractor") and g > 0 and epf > 0 and emp.get("epfBasis", "local_under_60") == "local_under_60":
                 rate = epf / g
                 if rate < 0.10 or rate > 0.145:
                     flags.append({"code": "EPF_RATE_VARIANCE", "employee": name,
@@ -646,18 +641,18 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None,
                                   "diff": _round2(epf)})
 
             # ── SOCSO ceiling (RM 104.15 / month employer, RM6,000 wage) ─────
-            if not is_contractor and soc > 104.15 + 0.01:
+            if emp.get("category") not in (None, "Contractor") and soc > 104.15 + 0.01:
                 flags.append({"code": "SOCSO_CEILING", "employee": name,
                                "entity": entity, "diff": _round2(soc - 104.15)})
 
             # ── EIS ceiling (RM 11.90 / month employer, RM6,000 wage) ────────
-            if not is_contractor and eis > 11.90 + 0.01:
+            if emp.get("category") not in (None, "Contractor") and eis > 11.90 + 0.01:
                 flags.append({"code": "EIS_CEILING", "employee": name,
                                "entity": entity, "diff": _round2(eis - 11.90)})
 
             # ── MTD = 0 for high earner (Gross > RM 5,000) ───────────────────
             # Contractors legitimately have MTD = 0, so exclude them.
-            if not is_contractor and mtd == 0 and g > 5000:
+            if emp.get("category") not in (None, "Contractor") and mtd == 0 and g > 5000:
                 flags.append({"code": "MTD_ZERO_HIGH_EARNER", "employee": name,
                                "entity": entity, "gross": _round2(g)})
 
