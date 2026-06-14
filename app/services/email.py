@@ -2,6 +2,7 @@ import logging
 
 import resend as resend_sdk
 from app.config import RESEND_API_KEY, EMAIL_FROM, APP_URL
+from app.services.bank_files import DOC_GATE_CODES
 
 logger = logging.getLogger("hexa.email")
 
@@ -73,8 +74,19 @@ def email_check_approval(to: str, name: str, role: str, kase: dict, approve_url:
         for emp in ent.get("employees", [])
     ]
 
-    emp_rows = "".join(f"""
-        <tr style="background:{'#fff' if i % 2 == 0 else '#f8fafc'}">
+    # Split into Approved for Payment vs Hold for Payment using the same
+    # DOC_GATE_CODES the bank-file builder uses to drop rows.
+    held_ids = {
+        str(f.get("employeeId") or f.get("employee") or "").strip()
+        for f in (check.get("flags") or [])
+        if f.get("code") in DOC_GATE_CODES
+    } - {""}
+    approved_emps = [e for e in all_employees if str(e.get("employeeId","")).strip() not in held_ids]
+    held_emps     = [e for e in all_employees if str(e.get("employeeId","")).strip() in held_ids]
+
+    def _emp_table_rows(emps, bg_even="#fff", bg_odd="#f8fafc"):
+        return "".join(f"""
+        <tr style="background:{bg_even if i % 2 == 0 else bg_odd}">
           <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:12px">{emp['employeeId']}</td>
           <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:12px">{emp['name']}</td>
           <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:12px">{emp['entity']}</td>
@@ -84,7 +96,28 @@ def email_check_approval(to: str, name: str, role: str, kase: dict, approve_url:
           <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;text-align:right;font-weight:600">{_fmt_rm(emp.get('ctcHexa'))}</td>
           <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;text-align:right">{_fmt_rm(emp.get('epfEmployer'))}</td>
           <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;text-align:right">{_fmt_rm(emp.get('mtd'))}</td>
-        </tr>""" for i, emp in enumerate(all_employees[:100]))
+        </tr>""" for i, emp in enumerate(emps[:100]))
+
+    _TABLE_HEAD = """<thead><tr style="background:#f1f5f9">
+              <th style="padding:6px 8px;text-align:left;border-bottom:2px solid #e2e8f0">Emp ID</th>
+              <th style="padding:6px 8px;text-align:left;border-bottom:2px solid #e2e8f0">Name</th>
+              <th style="padding:6px 8px;text-align:left;border-bottom:2px solid #e2e8f0">Entity</th>
+              <th style="padding:6px 8px;text-align:left;border-bottom:2px solid #e2e8f0">Category</th>
+              <th style="padding:6px 8px;text-align:right;border-bottom:2px solid #e2e8f0">Gross</th>
+              <th style="padding:6px 8px;text-align:right;border-bottom:2px solid #e2e8f0">Net</th>
+              <th style="padding:6px 8px;text-align:right;border-bottom:2px solid #e2e8f0">CTC</th>
+              <th style="padding:6px 8px;text-align:right;border-bottom:2px solid #e2e8f0">EPF</th>
+              <th style="padding:6px 8px;text-align:right;border-bottom:2px solid #e2e8f0">MTD</th>
+            </tr></thead>"""
+
+    def _table_foot(emps):
+        return f"""<tfoot><tr style="background:#f8fafc;font-weight:700">
+              <td colspan="4" style="padding:6px 8px;border-top:2px solid #e2e8f0">TOTAL ({len(emps)})</td>
+              <td style="padding:6px 8px;border-top:2px solid #e2e8f0;text-align:right">{_fmt_rm(sum(float(e.get('grossSalary') or 0) for e in emps))}</td>
+              <td style="padding:6px 8px;border-top:2px solid #e2e8f0;text-align:right">{_fmt_rm(sum(float(e.get('netSalary') or 0) for e in emps))}</td>
+              <td style="padding:6px 8px;border-top:2px solid #e2e8f0;text-align:right">{_fmt_rm(sum(float(e.get('ctcHexa') or 0) for e in emps))}</td>
+              <td colspan="2" style="padding:6px 8px;border-top:2px solid #e2e8f0"></td>
+            </tr></tfoot>"""
 
     stat_rows = "".join(
         _row(k.upper(), _fmt_rm(v))
@@ -145,30 +178,20 @@ def email_check_approval(to: str, name: str, role: str, kase: dict, approve_url:
 
         {flag_section}
 
-        <p style="font-size:12px;font-weight:700;color:#6366f1;text-transform:uppercase;margin:16px 0 6px">Full Consultant List ({len(all_employees)})</p>
-        <div style="overflow-x:auto;margin-bottom:24px">
+        <p style="font-size:12px;font-weight:700;color:#22c55e;text-transform:uppercase;margin:16px 0 6px">✓ Approved for Payment ({len(approved_emps)})</p>
+        <div style="overflow-x:auto;margin-bottom:{"24px" if not held_emps else "16px"}">
           <table style="width:100%;border-collapse:collapse;font-size:12px">
-            <thead><tr style="background:#f1f5f9">
-              <th style="padding:6px 8px;text-align:left;border-bottom:2px solid #e2e8f0">Emp ID</th>
-              <th style="padding:6px 8px;text-align:left;border-bottom:2px solid #e2e8f0">Name</th>
-              <th style="padding:6px 8px;text-align:left;border-bottom:2px solid #e2e8f0">Entity</th>
-              <th style="padding:6px 8px;text-align:left;border-bottom:2px solid #e2e8f0">Category</th>
-              <th style="padding:6px 8px;text-align:right;border-bottom:2px solid #e2e8f0">Gross</th>
-              <th style="padding:6px 8px;text-align:right;border-bottom:2px solid #e2e8f0">Net</th>
-              <th style="padding:6px 8px;text-align:right;border-bottom:2px solid #e2e8f0">CTC</th>
-              <th style="padding:6px 8px;text-align:right;border-bottom:2px solid #e2e8f0">EPF</th>
-              <th style="padding:6px 8px;text-align:right;border-bottom:2px solid #e2e8f0">MTD</th>
-            </tr></thead>
-            <tbody>{emp_rows}</tbody>
-            <tfoot><tr style="background:#f8fafc;font-weight:700">
-              <td colspan="4" style="padding:6px 8px;border-top:2px solid #e2e8f0">TOTAL</td>
-              <td style="padding:6px 8px;border-top:2px solid #e2e8f0;text-align:right">{_fmt_rm(check.get('grossPayrollTotal'))}</td>
-              <td style="padding:6px 8px;border-top:2px solid #e2e8f0;text-align:right">{_fmt_rm(check.get('netSalaryTotal'))}</td>
-              <td style="padding:6px 8px;border-top:2px solid #e2e8f0;text-align:right">{_fmt_rm(check.get('ctcTotal'))}</td>
-              <td colspan="2" style="padding:6px 8px;border-top:2px solid #e2e8f0"></td>
-            </tr></tfoot>
+            {_TABLE_HEAD}<tbody>{_emp_table_rows(approved_emps)}</tbody>{_table_foot(approved_emps)}
           </table>
         </div>
+        {"" if not held_emps else f"""
+        <p style="font-size:12px;font-weight:700;color:#ef4444;text-transform:uppercase;margin:16px 0 6px">⏸ Hold for Payment — Documents Incomplete ({len(held_emps)})</p>
+        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:4px;margin-bottom:24px;overflow-x:auto">
+          <table style="width:100%;border-collapse:collapse;font-size:12px">
+            {_TABLE_HEAD}<tbody>{_emp_table_rows(held_emps, "#fff8f8", "#fff2f2")}</tbody>{_table_foot(held_emps)}
+          </table>
+        </div>
+        """}
 
         <div style="margin:24px 0">
           <a href="{approve_url}" style="display:inline-block;background:#22c55e;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;margin-right:12px">Approve</a>
