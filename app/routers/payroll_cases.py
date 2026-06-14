@@ -414,6 +414,68 @@ def _sighting_rows(db, case_id: str, kase: dict | None = None) -> list[dict]:
     return groups
 
 
+def _excluded_consultants(db, case_id: str, kase: dict | None = None) -> list[dict]:
+    """Consultants excluded from the bank file due to missing documents,
+    not yet resubmitted. Returns [] on any error."""
+    try:
+        excl_rows = db.from_("payroll_audit_log").select("*").eq(
+            "case_id", case_id).eq("event_type", "CONSULTANTS_EXCLUDED").execute().data or []
+    except Exception:
+        return []
+
+    excluded_names: dict[str, str] = {}   # name → excluded_at timestamp
+    for row in excl_rows:
+        ts = row.get("created_at", "")
+        for name in (row.get("metadata") or {}).get("excluded", []):
+            if name not in excluded_names:
+                excluded_names[name] = ts
+
+    if not excluded_names:
+        return []
+
+    try:
+        resub_rows = db.from_("payroll_audit_log").select("*").eq(
+            "case_id", case_id).eq("event_type", "CONSULTANT_RESUBMITTED").execute().data or []
+    except Exception:
+        resub_rows = []
+
+    resubmitted = {(r.get("metadata") or {}).get("consultant_name", "") for r in resub_rows}
+    pending = {n: ts for n, ts in excluded_names.items() if n not in resubmitted}
+    if not pending:
+        return []
+
+    try:
+        docs = db.from_("consultant_documents").select(
+            "consultant_id,consultant_name,cost_centre").eq(
+            "case_id", case_id).execute().data or []
+    except Exception:
+        docs = []
+    by_name: dict[str, dict] = {}
+    for d in docs:
+        n = d.get("consultant_name", "")
+        if n and n not in by_name:
+            by_name[n] = d
+
+    flags = ((kase or {}).get("check_data") or {}).get("flags") or []
+    gate_by_name: dict[str, list[str]] = {}
+    for f in flags:
+        if f.get("code") in DOC_GATE_CODES:
+            n = f.get("employee", "")
+            gate_by_name.setdefault(n, []).append(f["code"])
+
+    result = []
+    for name, ts in pending.items():
+        d = by_name.get(name, {})
+        result.append({
+            "consultant_id":   d.get("consultant_id", ""),
+            "consultant_name": name,
+            "cost_centre":     d.get("cost_centre") or "",
+            "missing_docs":    gate_by_name.get(name, []),
+            "excluded_at":     ts,
+        })
+    return sorted(result, key=lambda x: x["consultant_name"])
+
+
 def _document_exception_flags(db, case_id: str) -> list[dict]:
     """Per-consultant supporting-document exceptions for a case.
 
@@ -1525,6 +1587,12 @@ def _bank_gate(kase: dict) -> dict:
     }
 
 
+_EXCL_PANEL_STATUSES = {
+    "bank_uploaded", "payment_approval_sent", "payment_approved",
+    "payment_rejected", "zoho_posted",
+}
+
+
 def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None, db=None) -> dict:
     if selected_step is None:
         selected_step = _get_active_step(kase.get("status", ""))
@@ -1532,6 +1600,9 @@ def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None, d
     if db is not None and kase.get("status") == "documents_pending_review":
         consultant_docs = _sighting_rows(db, str(kase.get("id")), kase)
     declaration_signed = any(l.get("event_type") == "FE_DECLARATION_SIGNED" for l in (logs or []))
+    excluded_consultants = []
+    if db is not None and kase.get("status") in _EXCL_PANEL_STATUSES:
+        excluded_consultants = _excluded_consultants(db, str(kase.get("id")), kase)
     return {
         "kase": kase,
         "logs": logs,
@@ -1543,6 +1614,7 @@ def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None, d
         "all_sighted": bool(consultant_docs) and any(g["ready_to_complete"] for g in consultant_docs),
         "declaration_signed": declaration_signed,
         "declaration_text": _FE_DECLARATION_TEXT,
+        "excluded_consultants": excluded_consultants,
     }
 
 
@@ -2159,6 +2231,113 @@ async def upload_document(
 
     # (8) re-render the sighting panel
     return await _refresh_detail(case_id, db, request, user, _get_active_step(kase.get("status", "")))
+
+
+# ─── Excluded-consultant document upload (late-stage cases) ─────────────────
+
+@router.post("/cases/{case_id}/upload-excluded-document")
+async def upload_excluded_document(
+    case_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+    consultant_id: str = Form(...),
+    consultant_name: str = Form(""),
+    document_type: str = Form(...),
+):
+    user = get_current_user(request)
+    db = get_db()
+
+    kase = db.from_("payroll_cases").select("*").eq("id", case_id).single().execute().data
+    if not kase:
+        return HTMLResponse('<div class="error-msg">Case not found.</div>')
+    if kase.get("status") not in _EXCL_PANEL_STATUSES:
+        return HTMLResponse(
+            f'<div class="error-msg">Resubmission upload is only available on closed cases. '
+            f'Current status: {kase.get("status")}</div>'
+        )
+
+    from app.routers.ingest import VALID_DOC_TYPES
+    document_type = (document_type or "").strip().upper()
+    consultant_id = (consultant_id or "").strip()
+    consultant_name = (consultant_name or consultant_id).strip()
+    if not consultant_id:
+        return HTMLResponse('<div class="error-msg">Consultant is required.</div>')
+    if document_type not in VALID_DOC_TYPES:
+        return HTMLResponse(f'<div class="error-msg">Invalid document type: {document_type}</div>')
+
+    content = await file.read()
+    import os as _os
+    ALLOWED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}
+    MAX_SIZE = 10 * 1024 * 1024
+    ext = _os.path.splitext(file.filename or "")[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        return HTMLResponse('<div class="error-msg">Only PDF, JPG, and PNG files are accepted.</div>')
+    if len(content) > MAX_SIZE:
+        return HTMLResponse('<div class="error-msg">File is too large. Maximum size is 10MB.</div>')
+    if not content:
+        return HTMLResponse('<div class="error-msg">The uploaded file is empty.</div>')
+    file_hash = _sha256(content)
+
+    existing = db.from_("consultant_documents").select("*").eq("case_id", case_id).eq(
+        "consultant_id", consultant_id).execute().data or []
+    ref = existing[0] if existing else {}
+
+    resolved_name = ref.get("consultant_name") or consultant_name
+    entity        = ref.get("entity") or kase.get("entity", "")
+    cost_centre   = ref.get("cost_centre")
+    _raw_period   = ref.get("period_month") or kase.get("period", "")
+    if len(_raw_period) >= 6 and _raw_period[:6].isdigit():
+        period_month = f"{_raw_period[:4]}-{_raw_period[4:6]}"
+    else:
+        period_month = _raw_period
+
+    now          = _now()
+    uploaded_by  = user.get("name") or user.get("email", "")
+
+    payload = {
+        "filename":      file.filename or f"{document_type}.pdf",
+        "file_data":     base64.b64encode(content).decode(),
+        "file_hash":     file_hash,
+        "hash_verified": True,
+        "source":        "MANUAL_UPLOAD",
+        "client_signed": False,
+        "signed_by":     None,
+        "valid_from":    None,
+        "valid_to":      None,
+        "po_value":      None,
+        "po_currency":   None,
+        "fe_sighted":    False,
+        "fe_sighted_by": None,
+        "fe_sighted_at": None,
+        "uploaded_by":   uploaded_by,
+        "uploaded_at":   now,
+    }
+
+    dup = db.from_("consultant_documents").select("id").eq("case_id", case_id).eq(
+        "consultant_id", consultant_id).eq("document_type", document_type).eq(
+        "period_month", period_month).execute().data or []
+    if dup:
+        db.from_("consultant_documents").update(payload).eq("id", dup[0]["id"]).execute()
+    else:
+        db.from_("consultant_documents").insert({
+            **payload,
+            "case_id": case_id, "consultant_id": consultant_id,
+            "consultant_name": resolved_name, "entity": entity,
+            "period_month": period_month, "document_type": document_type,
+            "cost_centre": cost_centre,
+        }).execute()
+
+    await _audit_log(db, case_id, "CONSULTANT_RESUBMITTED", uploaded_by, user.get("id"),
+                     _get_ip(request), {
+        "consultant_name": resolved_name,
+        "consultant_id":   consultant_id,
+        "document_type":   document_type,
+        "filename":        file.filename,
+        "note":            "Document uploaded — pending mini-case creation for payment",
+    })
+
+    return await _refresh_detail(case_id, db, request, user,
+                                 _get_active_step(kase.get("status", "")))
 
 
 # ─── Step 2 (ingested): FE declaration (PIN-signed) ──────────────────────────
