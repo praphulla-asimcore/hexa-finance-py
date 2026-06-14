@@ -2318,26 +2318,141 @@ async def upload_excluded_document(
         "period_month", period_month).execute().data or []
     if dup:
         db.from_("consultant_documents").update(payload).eq("id", dup[0]["id"]).execute()
+        uploaded_doc_id = dup[0]["id"]
     else:
-        db.from_("consultant_documents").insert({
+        ins = db.from_("consultant_documents").insert({
             **payload,
             "case_id": case_id, "consultant_id": consultant_id,
             "consultant_name": resolved_name, "entity": entity,
             "period_month": period_month, "document_type": document_type,
             "cost_centre": cost_centre,
-        }).execute()
+        }).select("id").execute()
+        uploaded_doc_id = (ins.data or [{}])[0].get("id")
 
+    # Resubmission upload implies FE sighting — auto-sight the just-stored doc
+    if uploaded_doc_id:
+        db.from_("consultant_documents").update({
+            "fe_sighted":    True,
+            "fe_sighted_by": uploaded_by,
+            "fe_sighted_at": now,
+        }).eq("id", uploaded_doc_id).execute()
+
+    # ── Readiness check: all required docs for this consultant present and sighted? ──
+    groups     = _sighting_rows(db, str(case_id), kase)
+    this_group = next((g for g in groups
+                       if str(g.get("consultant_id", "")) == consultant_id), None)
+
+    if this_group is None or not this_group.get("ready_to_complete"):
+        # Still missing — log a non-RESUBMITTED event so the consultant stays in the panel
+        await _audit_log(db, case_id, "RESUBMISSION_DOCUMENT_UPLOADED", uploaded_by,
+                         user.get("id"), _get_ip(request), {
+            "consultant_name": resolved_name,
+            "consultant_id":   consultant_id,
+            "document_type":   document_type,
+            "filename":        file.filename,
+            "missing_still":   (this_group or {}).get("missing_docs", []),
+        })
+        return await _refresh_detail(case_id, db, request, user,
+                                     _get_active_step(kase.get("status", "")))
+
+    # ── All docs ready → CONSULTANT_RESUBMITTED + mini-case creation ─────────────
     await _audit_log(db, case_id, "CONSULTANT_RESUBMITTED", uploaded_by, user.get("id"),
                      _get_ip(request), {
         "consultant_name": resolved_name,
         "consultant_id":   consultant_id,
         "document_type":   document_type,
         "filename":        file.filename,
-        "note":            "Document uploaded — pending mini-case creation for payment",
+        "note":            "All required documents present — creating mini-case for payment",
     })
 
-    return await _refresh_detail(case_id, db, request, user,
-                                 _get_active_step(kase.get("status", "")))
+    # Pull this consultant's employee dict from the original case's parsed_data
+    emp_dict: dict | None = None
+    for ent in (kase.get("parsed_data") or {}).get("entities", []):
+        for emp in ent.get("employees", []):
+            if str(emp.get("employeeId", "")) == consultant_id:
+                emp_dict = emp
+                break
+        if emp_dict:
+            break
+
+    if emp_dict is None:
+        emp_dict = {
+            "employeeId": consultant_id, "name": resolved_name,
+            "costCentre": cost_centre or "", "grossSalary": 0,
+            "netSalary": 0, "ctcHexa": 0, "ctcHexaFile": 0,
+        }
+
+    original_ref    = kase.get("reference", case_id)
+    original_entity = kase.get("entity", "")
+    mini_ref        = f"{original_ref}-RESUB-{consultant_id}"
+    mini_entities   = [{"sheetName": original_entity, "employees": [emp_dict],
+                        "missingColumns": []}]
+    # case_id=None, db=None → doc-gate checks skipped (already verified above)
+    check_data = _build_check_data(mini_entities, case_id=None, db=None)
+
+    mini_parsed = {
+        "source":           "RESUBMISSION",
+        "resubmission_of":  case_id,
+        "original_run_ref": original_ref,
+        "consultant_id":    consultant_id,
+        "consultant_name":  resolved_name,
+        "entities":         mini_entities,
+        "skip_accrual":     True,
+        "generated_by":     uploaded_by,
+        "generated_at":     now,
+    }
+
+    try:
+        insert_resp = db.from_("payroll_cases").insert({
+            "reference":          mini_ref,
+            "type":               kase.get("type", "CSI"),
+            "entity":             original_entity,
+            "entity_name":        kase.get("entity_name", ""),
+            "period":             kase.get("period", ""),
+            "seq_no":             1,
+            "status":             "check_generated",
+            "parsed_data":        mini_parsed,
+            "check_data":         check_data,
+            "check_generated_at": now,
+            "uploaded_by_name":   uploaded_by,
+            "uploaded_by_email":  user.get("email", ""),
+            "uploaded_at":        now,
+            "upload_ip":          _get_ip(request),
+        }).select().execute()
+    except Exception as e:
+        return HTMLResponse(f'<div class="error-msg">Failed to create mini-case: {e}</div>')
+
+    mini_kase = (insert_resp.data or [None])[0]
+    if not mini_kase:
+        return HTMLResponse('<div class="error-msg">Mini-case insert returned no data.</div>')
+    new_case_id = str(mini_kase["id"])
+
+    # Audit on new mini-case
+    await _audit_log(db, new_case_id, "CASE_CREATED_FROM_RESUBMISSION",
+                     uploaded_by, user.get("id"), _get_ip(request), {
+        "original_case_id":   case_id,
+        "original_reference": original_ref,
+        "consultant_id":      consultant_id,
+        "consultant_name":    resolved_name,
+    })
+    await _audit_log(db, new_case_id, "CHECK_GENERATED",
+                     uploaded_by, user.get("id"), _get_ip(request), {
+        "stamp":           f"Generated by: Hexa Check Engine | Ref: {mini_ref} | Generated: {now}",
+        "consultantCount": check_data.get("consultantCount", 1),
+        "flagCount":       check_data.get("flagCount", 0),
+    })
+
+    # Audit on original case — links the two cases for traceability
+    await _audit_log(db, case_id, "RESUBMISSION_CASE_CREATED",
+                     uploaded_by, user.get("id"), _get_ip(request), {
+        "new_case_id":     new_case_id,
+        "new_reference":   mini_ref,
+        "consultant_id":   consultant_id,
+        "consultant_name": resolved_name,
+    })
+
+    # Navigate FE to the new mini-case — lands at Step 3 (check_generated → approval)
+    return HTMLResponse("", headers={"HX-Redirect": f"/cases/{new_case_id}"})
 
 
 # ─── Step 2 (ingested): FE declaration (PIN-signed) ──────────────────────────
