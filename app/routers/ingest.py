@@ -28,6 +28,7 @@ from fastapi.responses import JSONResponse
 from app.config import APEX_INGEST_API_KEY, DATABASE_URL
 from app.services.db import get_db
 from app.routers.payroll_cases import _audit_log, _get_ip, _now, _sha256
+from app.services.statutory_rates import is_local_national
 
 router = APIRouter()
 logger = logging.getLogger("hexa.ingest")
@@ -264,7 +265,13 @@ async def apex_ingest(request: Request):
                         "ctcClient":    _safe_float(c.get("ctc_client")),
                         "epfEmployee":  _safe_float(c.get("epf_employee")),
                         "epfEmployer":  _safe_float(c.get("epf_employer")),
-                        "epfBasis":     c.get("epf_basis", "local_under_60"),
+                        "epfBasis":     (c.get("epf_basis") or (
+                                            "contractor" if c.get("category") == "Contractor"
+                                            else "foreign" if (
+                                                c.get("category") == "Foreign"
+                                                or not is_local_national(c.get("nationality"))
+                                            ) else "local_under_60"
+                                        )),
                         "socsoEmployee":_safe_float(c.get("socso_employee")),
                         "socsoEmployer":_safe_float(c.get("socso_employer")),
                         "eisEmployee":  _safe_float(c.get("eis_employee")),
