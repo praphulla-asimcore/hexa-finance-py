@@ -2769,6 +2769,20 @@ async def post_accrual_manual(case_id: str, request: Request):
         if (log.get("metadata") or {}).get("success"):
             return await _refresh_detail(case_id, db, request, user, 3)
 
+    # Resubmission cases skip the accrual journal — CTC already posted in original run
+    skip_accrual = (kase.get("parsed_data") or {}).get("skip_accrual", False)
+    if skip_accrual:
+        await _audit_log(db, case_id, "ZOHO_ACCRUAL_STARTED",
+                         user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {})
+        await _audit_log(db, case_id, "ACCRUAL_SKIPPED", "System", None, None, {
+            "reason": "Resubmission case — accrual already posted in original case",
+            "original_case_id": (kase.get("parsed_data") or {}).get("resubmission_of"),
+        })
+        await _audit_log(db, case_id, "ZOHO_ACCRUAL_AUTO",
+                         user.get("name") or user.get("email"), user.get("id"), _get_ip(request),
+                         {"success": True, "resubmission_skip": True})
+        return await _refresh_detail(case_id, db, request, user, 3)
+
     # Mark in-progress BEFORE the slow Zoho work so the 3s detail poller sees
     # the accrual is already running and suppresses its auto-fire — otherwise a
     # second concurrent post-accrual could double-post the journal entry.
