@@ -1441,10 +1441,21 @@ async def _auto_book_payment(kase: dict, db) -> dict:
 
     # Build payment rows from parsed employee data.
     # Description matches accrual format exactly: {entity_code}_CSI_{costCentre}_{name}_{mmm_yy}
+    check = kase.get("check_data") or {}
+    excluded_ids: set[str] = set()
+    for fl in (check.get("excludedNoFavourite") or []):
+        excluded_ids.add(str(fl.get("employeeId", "")))
+    for fl in (check.get("excludedDocGate") or []):
+        excluded_ids.add(str(fl.get("employeeId", "")))
+    for fl in (check.get("idConflicts") or []):
+        excluded_ids.add(str(fl.get("csiEmployeeId", "")))
+
     payment_rows = []  # list of (amount, description, reference, vendor_name)
     entities = (kase.get("parsed_data") or {}).get("entities", [])
     for ent in entities:
         for emp in ent.get("employees", []):
+            if str(emp.get("employeeId", "")) in excluded_ids:
+                continue
             amount = _round2(emp.get("netSalary", 0))
             if amount <= 0:
                 continue
