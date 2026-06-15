@@ -112,7 +112,8 @@
         <form style="margin-top:10px"
               hx-post="/cases/{{ kase.id }}/upload-excluded-document"
               hx-target="#case-detail-inner" hx-swap="innerHTML"
-              hx-encoding="multipart/form-data" hx-indicator=".spinner">
+              hx-encoding="multipart/form-data" hx-indicator=".spinner"
+              hx-disabled-elt="find button[type=submit]">
           <input type="hidden" name="consultant_id"   value="{{ exc.consultant_id }}">
           <input type="hidden" name="consultant_name" value="{{ exc.consultant_name }}">
           <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end">
@@ -142,6 +143,26 @@
     </div>
   </div>
   {% endfor %}
+  <script>
+  (function() {
+    document.querySelectorAll('#case-detail-inner details').forEach(function(d) {
+      d.addEventListener('toggle', function() {
+        var poller = document.getElementById('approval-poller');
+        if (!poller) return;
+        var anyOpen = Array.from(
+          document.querySelectorAll('#case-detail-inner details')
+        ).some(function(x) { return x.open; });
+        if (anyOpen) {
+          poller.setAttribute('hx-trigger', 'none');
+          htmx.process(poller);
+        } else {
+          poller.setAttribute('hx-trigger', 'every 3s');
+          htmx.process(poller);
+        }
+      });
+    });
+  })();
+  </script>
 </div>
 {% endif %}
 
