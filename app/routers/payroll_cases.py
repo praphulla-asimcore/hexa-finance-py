@@ -2021,11 +2021,30 @@ async def complete_sighting(case_id: str, request: Request):
     # document-gate checks run off consultant_documents (case_id + db). Both flows
     # carry parsed_data.entities (manual at upload, ingested at ingest time).
     entities = (kase.get("parsed_data") or {}).get("entities", [])
-    check_data = _build_check_data(entities, case_id=str(case_id), db=db)
+
+    ready_ids = {g["consultant_id"] for g in ready_groups}
+    filtered_entities = []
+    for ent in entities:
+        filtered_employees = [
+            emp for emp in ent.get("employees", [])
+            if str(emp.get("employeeId", "")) in ready_ids
+        ]
+        if filtered_employees:
+            filtered_entities.append({**ent, "employees": filtered_employees})
+
+    check_data = _build_check_data(filtered_entities, case_id=str(case_id), db=db)
 
     now = _now()
+    updated_parsed = {
+        **(kase.get("parsed_data") or {}),
+        "original_entities": entities,
+        "entities":          filtered_entities,
+    }
     db.from_("payroll_cases").update({
-        "status": "uploaded", "check_data": check_data, "check_generated_at": now,
+        "status":             "uploaded",
+        "check_data":         check_data,
+        "check_generated_at": now,
+        "parsed_data":        updated_parsed,
     }).eq("id", case_id).execute()
 
     await _audit_log(db, case_id, "CHECK_GENERATED_FROM_SIGHTING",
@@ -2367,10 +2386,14 @@ async def upload_excluded_document(
 
     # Pull this consultant's employee dict from the original case's parsed_data
     emp_dict: dict | None = None
-    for ent in (kase.get("parsed_data") or {}).get("entities", []):
-        for emp in ent.get("employees", []):
-            if str(emp.get("employeeId", "")) == consultant_id:
-                emp_dict = emp
+    parsed = kase.get("parsed_data") or {}
+    for pool in [parsed.get("original_entities") or [], parsed.get("entities") or []]:
+        for ent in pool:
+            for emp in ent.get("employees", []):
+                if str(emp.get("employeeId", "")) == consultant_id:
+                    emp_dict = emp
+                    break
+            if emp_dict:
                 break
         if emp_dict:
             break
