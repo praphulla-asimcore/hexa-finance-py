@@ -450,6 +450,30 @@ async def fetch_airtable_consultants() -> list[dict]:
     return records
 
 
+def fetch_local_bank_overrides(db) -> list[dict]:
+    """Read consultant_bank_overrides and return records shaped like Airtable
+    consultant records so match_consultant sees them transparently."""
+    try:
+        rows = (db.from_("consultant_bank_overrides")
+                  .select("*").execute().data or [])
+    except Exception:
+        return []
+    return [
+        {
+            "employeeNumber":            r["employee_id"],
+            "employeeId":                r["employee_id"],
+            "name":                      r["consultant_name"],
+            "bankName":                  r.get("bank_name") or "",
+            "accountNo":                 r.get("bank_account_number") or "",
+            "bankCode":                  r.get("bank_code") or "",
+            "idNumber":                  "",
+            "idType":                    "",
+            "favouriteBeneficiaryCode":  r.get("favourite_beneficiary_code") or "",
+        }
+        for r in rows
+    ]
+
+
 def _norm_name(s: str) -> str:
     """Lowercase and collapse non-alphanumerics to single spaces, for comparing a
     CSI nickname/short name against an Airtable full legal name."""
@@ -616,6 +640,11 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
         airtable_list = await fetch_airtable_consultants()
     except Exception:
         pass
+    # Local overrides prepended — they take priority over Airtable for the same
+    # employee_id. match_consultant sees them as ordinary consultant records.
+    local_overrides = fetch_local_bank_overrides(db)
+    if local_overrides:
+        airtable_list = local_overrides + airtable_list
 
     notify_emails = BANK_NOTIFY_EMAILS
 
