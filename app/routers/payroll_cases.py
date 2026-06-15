@@ -1102,7 +1102,7 @@ async def _auto_book_accruals_payroll(kase: dict, db) -> dict:
         try:
             journal = await post_journal_entry(org_id, {
                 "journal_date":     journal_date,
-                "reference_number": f"ACCR-{kase['reference']}-{emp.get('employeeId', '')}",
+                "reference_number": f"ACCR-{kase['period']}-{kase['entity']}-{emp.get('employeeId', '')}-{str(kase['id'])[-8:]}",
                 "notes": f"Payroll Accrual – {kase.get('period')} – Internal – {cons} – Ref: {kase['reference']}",
                 "line_items": line_items,
             })
@@ -1379,7 +1379,7 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
         try:
             journal = await post_journal_entry(org_id, {
                 "journal_date":     journal_date,
-                "reference_number": f"ACCR-{kase['reference']}-{emp.get('employeeId', '')}",
+                "reference_number": f"ACCR-{kase['period']}-{kase['entity']}-{emp.get('employeeId', '')}-{str(kase['id'])[-8:]}",
                 "notes": f"CSI Payroll Accrual – {kase.get('period')} – {client} – {cons} – Ref: {kase['reference']}",
                 "line_items": line_items,
             })
@@ -3326,7 +3326,7 @@ async def post_zoho(case_id: str, request: Request):
                 "date": journal_date,
                 "amount": amount,
                 "description": f"{kase['type']} Salary Payment – {emp['name']} ({emp['employeeId']}) – {kase['period']} – Ref: {kase['reference']} – Approved: {kase.get('payment_approved_by')}",
-                "reference_number": f"PMT-{kase['reference']}-{emp['employeeId']}",
+                "reference_number": f"PMT-{kase['period']}-{kase['entity']}-{emp['employeeId']}-{str(kase['id'])[-8:]}",
                 "currency_code": "MYR", "exchange_rate": 1, "is_billable": False,
             })
             results.append({"employeeId": emp["employeeId"], "name": emp["name"], "amount": amount, "journalId": expense.get("expense_id"), "success": True})
