@@ -1163,7 +1163,7 @@ async def _auto_book_payment_payroll(kase: dict, db) -> dict:
                 continue
             cons = (emp.get("name") or emp.get("employeeId") or "").strip()
             desc = f"{entity_code}_Salary_Internal_{cons.replace(' ', '_')}_{mmm_yy}"
-            ref  = f"PMT-{kase['reference']}-{emp.get('employeeId', '')}"
+            ref  = f"PMT-{kase['period']}-{kase['entity']}-{emp.get('employeeId', '')}-{str(kase['id'])[-8:]}"
             payment_rows.append((amount, desc, ref, cons))
 
     if not payment_rows:
@@ -1452,7 +1452,7 @@ async def _auto_book_payment(kase: dict, db) -> dict:
             cust = (emp.get("costCentre") or "").replace(" ", "_")
             cons = (emp.get("name") or emp.get("employeeId", "")).replace(" ", "_")
             desc = f"{entity_code}_CSI_{cust}_{cons}_{mmm_yy}"
-            ref  = f"PMT-{kase['reference']}-{emp.get('employeeId', '')}"
+            ref  = f"PMT-{kase['period']}-{kase['entity']}-{emp.get('employeeId', '')}-{str(kase['id'])[-8:]}"
             payment_rows.append((amount, desc, ref, vendor_name))
 
     if not payment_rows:
