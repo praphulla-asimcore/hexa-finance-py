@@ -3310,7 +3310,22 @@ async def post_zoho(case_id: str, request: Request):
         return HTMLResponse('<div class="error-msg">All fields are required.</div>')
 
     entities = (kase.get("parsed_data") or {}).get("entities", [])
-    all_employees = [{**emp, "entityName": ent["sheetName"]} for ent in entities for emp in ent.get("employees", [])]
+    check = kase.get("check_data") or {}
+
+    excluded_ids: set[str] = set()
+    for fl in (check.get("excludedNoFavourite") or []):
+        excluded_ids.add(str(fl.get("employeeId", "")))
+    for fl in (check.get("excludedDocGate") or []):
+        excluded_ids.add(str(fl.get("employeeId", "")))
+    for fl in (check.get("idConflicts") or []):
+        excluded_ids.add(str(fl.get("csiEmployeeId", "")))
+
+    all_employees = [
+        {**emp, "entityName": ent["sheetName"]}
+        for ent in entities
+        for emp in ent.get("employees", [])
+        if str(emp.get("employeeId", "")) not in excluded_ids
+    ]
 
     if not all_employees:
         return HTMLResponse('<div class="error-msg">No employee data found in case.</div>')
