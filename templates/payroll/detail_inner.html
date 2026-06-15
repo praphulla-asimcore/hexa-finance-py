@@ -113,7 +113,8 @@
               hx-post="/cases/{{ kase.id }}/upload-excluded-document"
               hx-target="#case-detail-inner" hx-swap="innerHTML"
               hx-encoding="multipart/form-data" hx-indicator=".spinner"
-              hx-disabled-elt="find button[type=submit]">
+              hx-disabled-elt="find button[type=submit]"
+              hx-validate="true">
           <input type="hidden" name="consultant_id"   value="{{ exc.consultant_id }}">
           <input type="hidden" name="consultant_name" value="{{ exc.consultant_name }}">
           <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end">
