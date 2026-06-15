@@ -172,6 +172,16 @@ def crosscheck_csi_vs_xlsm(xlsx_bytes: bytes, entities: list[dict],
              f"Bank file total RM{file_total:,.2f} does not equal the expected CSI total "
              f"(excluding flagged rows) RM{expected_total:,.2f}.")
 
+    # ── All-excluded guard ──────────────────────────────────────────────────
+    # file_rows=0 + all CSI consultants excluded is never a legitimate pass.
+    # A zero-payment file sailing through as "ok" masks a setup failure
+    # (missing Favourite Beneficiary Codes, all ID mismatches, etc.).
+    if csi and not file_rows:
+        crit("ALL_EXCLUDED",
+             f"ALL {len(csi)} consultant(s) were excluded — NO PAYMENTS in this "
+             f"file. Resolve missing Favourite Beneficiary Codes or ID mismatches "
+             f"before uploading to the bank.")
+
     critical = [x for x in issues if x["level"] == "critical"]
     ok = not critical
     if ok and not issues:
