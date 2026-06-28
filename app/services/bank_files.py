@@ -648,10 +648,22 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
 
     notify_emails = BANK_NOTIFY_EMAILS
 
+    # Fetch consultant_sighting for this case (backward compatible — old cases have no rows).
+    sighting_rows = []
+    try:
+        sighting_rows = db.from_("consultant_sighting").select("employee_id,status").eq(
+            "case_id", kase["id"]).execute().data or []
+    except Exception:
+        pass
+    missing_ids: set[str] = {
+        r["employee_id"] for r in sighting_rows if r["status"] == "missing"
+    }
+
     beneficiaries = []
     excluded_no_fav = []   # consultants with no Favourite Beneficiary Code — skipped + flagged
     id_conflicts = []      # rows whose Employee ID belongs to a DIFFERENT person — excluded
     excluded_doc_gate = [] # consultants failing a document gate — excluded per-row
+    excluded_missing = []  # consultants marked 'missing' in consultant_sighting — excluded
     # Document-gate flags exclude a consultant's row; an audited override
     # (second person + reason, recorded as bankGateOverride) releases them.
     doc_gate_override = bool(check.get("bankGateOverride"))
@@ -665,6 +677,16 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
     for ent in entities:
         for emp in ent.get("employees", []):
             matched = match_consultant(emp, airtable_list)
+
+            # ── Missing-sighting exclusion (only when sighting table has rows) ──
+            emp_id = str(emp.get("employeeId", "")).strip()
+            if missing_ids and emp_id in missing_ids:
+                excluded_missing.append({
+                    "name": emp.get("name", ""),
+                    "employeeId": emp_id,
+                    "entity": ent["sheetName"],
+                })
+                continue
 
             # ── Document-gate exclusion (per row; same skip pattern as no-fav) ──
             # A consultant whose check carries a document-gate flag is dropped from
@@ -756,6 +778,7 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
     existing_check["excludedNoFavourite"] = excluded_no_fav
     existing_check["idConflicts"] = id_conflicts
     existing_check["excludedDocGate"] = excluded_doc_gate
+    existing_check["excludedMissing"] = excluded_missing
 
     # ── Independent cross-check: re-read the generated .xlsm and reconcile it
     #    against the CSI (identity + amount) and the consultant DB (account),
@@ -764,6 +787,7 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
         xlsx_bytes, entities, airtable_list,
         excluded=(missing + excluded_no_fav
                   + [{"name": x["name"], "employeeId": x["employeeId"]} for x in excluded_doc_gate]
+                  + [{"name": x["name"], "employeeId": x["employeeId"]} for x in excluded_missing]
                   + [{"name": c["csiName"], "employeeId": c["csiEmployeeId"]} for c in id_conflicts]),
     )
 
