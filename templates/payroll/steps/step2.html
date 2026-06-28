@@ -14,139 +14,99 @@
 
   {% if kase.status == 'documents_pending_review' %}
   <div class="pf-action-zone">
-    <p class="pf-action-desc">Field Executive sighting of consultant supporting documents.
-       Every document must be sighted before the check file can be generated.</p>
+    <p class="pf-action-desc">Click <strong>Document Sighted</strong> or <strong>Document Missing</strong> for each consultant.
+       Once all consultants are marked the check file is generated automatically.</p>
+
+    {# Progress counter #}
+    {% set sp = sighting_progress %}
+    <div style="margin-bottom:16px;padding:10px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:13px">
+      {% if sp %}
+        <strong>{{ sp.marked }} / {{ sp.total }}</strong> consultants marked
+        {% if sp.marked > 0 %}
+          &nbsp;·&nbsp; <span style="color:#065f46">{{ sp.sighted }} sighted</span>
+          {% if sp.missing > 0 %}&nbsp;·&nbsp; <span style="color:#9a3412">{{ sp.missing }} missing</span>{% endif %}
+        {% endif %}
+        {% if sp.complete %}
+          &nbsp;&nbsp;<span style="color:#065f46;font-weight:600">✓ All marked — advancing…</span>
+        {% endif %}
+      {% else %}
+        0 / 0 consultants marked
+      {% endif %}
+    </div>
 
     {% for g in consultant_docs %}
-    <div class="pf-detail-card">
-      <div class="pf-detail-card-title">
-        {{ g.consultant_name }}
-        {% if g.ready_to_complete %}
-          <span style="margin-left:8px;font-size:11px;color:#065f46;background:#d1fae5;padding:2px 8px;border-radius:10px">Ready</span>
-        {% elif g.missing_docs %}
-          <span style="margin-left:8px;font-size:11px;color:#9a3412;background:#ffedd5;padding:2px 8px;border-radius:10px">DOCS MISSING</span>
+    {% set sr = sighting_map.get(g.consultant_id) if sighting_map else none %}
+    <div class="pf-detail-card" style="margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
+        <div>
+          <div class="pf-detail-card-title" style="margin-bottom:2px">{{ g.consultant_name }}</div>
+          <div style="font-size:11px;color:var(--text-muted)">
+            {{ g.consultant_id }}
+            {% if g.entity %}&nbsp;·&nbsp;{{ g.entity }}{% endif %}
+            {% if g.cost_centre %}&nbsp;·&nbsp;{{ g.cost_centre }}{% endif %}
+          </div>
+        </div>
+
+        {% if sr is none %}
+        {# Not yet marked — show both action buttons #}
+        <div style="display:flex;gap:8px;flex-shrink:0">
+          <form hx-post="/cases/{{ kase.id }}/sight-consultant"
+                hx-target="#case-detail-inner" hx-swap="innerHTML" hx-indicator=".spinner">
+            <input type="hidden" name="consultant_id" value="{{ g.consultant_id }}">
+            <button type="submit" class="btn btn-primary"
+                    style="padding:5px 12px;font-size:12px;background:#059669;border-color:#059669">
+              <span class="spinner htmx-indicator"></span> ✓ Document Sighted
+            </button>
+          </form>
+          <form hx-post="/cases/{{ kase.id }}/mark-missing"
+                hx-target="#case-detail-inner" hx-swap="innerHTML" hx-indicator=".spinner">
+            <input type="hidden" name="consultant_id" value="{{ g.consultant_id }}">
+            <button type="submit" class="btn btn-secondary"
+                    style="padding:5px 12px;font-size:12px;color:#b91c1c;border-color:#fca5a5">
+              <span class="spinner htmx-indicator"></span> ✗ Document Missing
+            </button>
+          </form>
+        </div>
+
+        {% elif sr.status == 'sighted' %}
+        {# Already sighted #}
+        <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+          <span style="font-size:12px;color:#065f46;background:#d1fae5;padding:3px 10px;border-radius:10px;font-weight:600">
+            ✓ Sighted
+          </span>
+          <span style="font-size:11px;color:var(--text-muted)">{{ sr.sighted_by }} · {{ sr.sighted_at[:16].replace('T',' ') if sr.sighted_at else '' }}</span>
+          <form hx-post="/cases/{{ kase.id }}/mark-missing"
+                hx-target="#case-detail-inner" hx-swap="innerHTML" hx-indicator=".spinner">
+            <input type="hidden" name="consultant_id" value="{{ g.consultant_id }}">
+            <button type="submit" class="btn btn-secondary"
+                    style="padding:2px 8px;font-size:11px;color:#6b7280;border-color:#d1d5db">
+              Change to Missing
+            </button>
+          </form>
+        </div>
+
         {% else %}
-          <span style="margin-left:8px;font-size:11px;color:#92400e;background:#fef3c7;padding:2px 8px;border-radius:10px">Pending sighting</span>
+        {# Already marked missing #}
+        <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+          <span style="font-size:12px;color:#b91c1c;background:#fee2e2;padding:3px 10px;border-radius:10px;font-weight:600">
+            ✗ Missing
+          </span>
+          <span style="font-size:11px;color:var(--text-muted)">{{ sr.sighted_by }} · {{ sr.sighted_at[:16].replace('T',' ') if sr.sighted_at else '' }}</span>
+          <form hx-post="/cases/{{ kase.id }}/sight-consultant"
+                hx-target="#case-detail-inner" hx-swap="innerHTML" hx-indicator=".spinner">
+            <input type="hidden" name="consultant_id" value="{{ g.consultant_id }}">
+            <button type="submit" class="btn btn-secondary"
+                    style="padding:2px 8px;font-size:11px;color:#6b7280;border-color:#d1d5db">
+              Change to Sighted
+            </button>
+          </form>
+        </div>
         {% endif %}
       </div>
-      <span style="font-size:11px;color:var(--text-muted)">{{ g.cost_centre or 'No client assigned' }}</span>
-      {% for d in g.docs %}
-      <div class="pf-stat-row">
-        <span class="pf-stat-key">{{ d.document_type }}</span>
-        <span>
-          {% if d.fe_sighted %}✓ sighted{% else %}○ not sighted{% endif %}
-          · {% if d.client_signed %}client-signed{% else %}unsigned{% endif %}
-          {% if d.valid_to %} · valid to {{ d.valid_to }}{% endif %}
-          {% if not d.fe_sighted %}
-          <button class="btn btn-secondary" style="margin-left:10px;padding:3px 10px;font-size:12px"
-              hx-post="/cases/{{ kase.id }}/sight-document/{{ d.id }}"
-              hx-target="#case-detail-inner" hx-swap="innerHTML" hx-indicator=".spinner">
-            <span class="spinner htmx-indicator"></span> Mark as Sighted
-          </button>
-          {% endif %}
-        </span>
-      </div>
-      {% endfor %}
-
-      {% if g.missing_docs %}
-      <div style="margin-top:8px">
-        {% for missing in g.missing_docs %}
-        <div class="pf-stat-row" style="color:#b45309;background:#fef3c7;border-radius:6px;padding:4px 8px;margin-bottom:4px">
-          <span class="pf-stat-key">{{ missing }}</span>
-          <span style="font-size:11px">⚠ Required — not yet uploaded</span>
-        </div>
-        {% endfor %}
-      </div>
-      {% endif %}
-
-      {# ── Upload / re-upload a document for this consultant ── #}
-      <details style="margin-top:10px">
-        <summary style="cursor:pointer;font-size:12px;color:#4f46e5;font-weight:600">+ Upload Document</summary>
-        <form style="margin-top:10px"
-              hx-post="/cases/{{ kase.id }}/upload-document"
-              hx-target="#case-detail-inner" hx-swap="innerHTML"
-              hx-encoding="multipart/form-data" hx-indicator=".spinner">
-          <input type="hidden" name="consultant_id" value="{{ g.consultant_id }}">
-          <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">
-            <div>
-              <label style="display:block;font-size:11px;color:#6b7280;margin-bottom:3px">File</label>
-              <input type="file" name="file" accept=".pdf,.jpg,.jpeg,.png" required style="font-size:12px">
-            </div>
-            <div>
-              <label style="display:block;font-size:11px;color:#6b7280;margin-bottom:3px">Document Type</label>
-              <select name="document_type" required
-                      style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px">
-                {% for dt in ['WORK_ORDER','TIMESHEET','APPROVED_PAYROLL_REPORT','PO','HIRING_NOTE',
-                              'LETTER_TO_HIRE','WCN','APPROVED_COSTING','CONTRACT','CUSTOM'] %}
-                <option value="{{ dt }}">{{ dt }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <label style="font-size:12px;color:#374151;display:flex;align-items:center;gap:5px">
-              <input type="checkbox" name="client_signed"> Client signed
-            </label>
-          </div>
-          <button type="submit" class="btn btn-secondary" style="margin-top:10px;padding:5px 12px;font-size:12px">
-            <span class="spinner htmx-indicator"></span> Upload Document
-          </button>
-        </form>
-      </details>
     </div>
     {% else %}
-    <div class="pf-flags-card pf-flags-warn">No consultant documents found for this case.</div>
+    <div class="pf-flags-card pf-flags-warn">No consultants found for this case.</div>
     {% endfor %}
-
-    <div class="pf-detail-card" style="margin-top:16px">
-      <div class="pf-detail-card-title">Run-level Declaration Details</div>
-      <p style="font-size:12px;color:var(--text-muted)">These details apply to the entire CSI run and will be recorded with your sighting sign-off.</p>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px">
-        <div>
-          <label class="label">Reviewed by</label>
-          <input class="input" id="run_signed_by" placeholder="Your name">
-        </div>
-        <div>
-          <label class="label">Review date</label>
-          <input class="input" type="date" id="run_review_date">
-        </div>
-        <div>
-          <label class="label">Notes (optional)</label>
-          <input class="input" id="run_notes" placeholder="Any notes for this run">
-        </div>
-      </div>
-    </div>
-
-    {% if all_sighted %}
-      {% if declaration_signed %}
-      <div class="pf-flags-card pf-flags-ok" style="margin-top:14px">✓ FE declaration signed — you may complete sighting.</div>
-      {% else %}
-      <form class="pf-detail-card" style="margin-top:14px"
-            hx-post="/cases/{{ kase.id }}/sign-declaration"
-            hx-target="#case-detail-inner" hx-swap="innerHTML" hx-indicator=".spinner">
-        <div class="pf-detail-card-title">Field Executive Declaration</div>
-        <p style="font-size:13px;color:#374151;line-height:1.5;margin:8px 0 12px">{{ declaration_text }}</p>
-        <label style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px">Enter your PIN (account password) to sign</label>
-        <input type="password" name="pin" required autocomplete="off" placeholder="PIN"
-               style="padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;max-width:240px;width:100%;font-size:14px" />
-        <div style="margin-top:12px">
-          <button type="submit" class="btn btn-primary"><span class="spinner htmx-indicator"></span> Sign Declaration</button>
-        </div>
-      </form>
-      {% endif %}
-    {% endif %}
-
-    <button class="btn btn-primary" style="margin-top:14px"
-        hx-post="/cases/{{ kase.id }}/complete-sighting"
-        hx-target="#case-detail-inner"
-        hx-swap="innerHTML"
-        hx-indicator=".spinner"
-        {% if not (all_sighted and declaration_signed) %}disabled title="Sight all documents and sign the FE declaration first"{% endif %}>
-      <span class="spinner htmx-indicator"></span>
-      Complete Sighting
-    </button>
-    {% if not (all_sighted and declaration_signed) %}
-    <p class="pf-action-desc" style="margin-top:8px;color:#92400e">
-      Enables once at least one consultant has all required documents sighted. Consultants with missing documents will be flagged and excluded from the bank file.</p>
-    {% endif %}
   </div>
 
   {% else %}
