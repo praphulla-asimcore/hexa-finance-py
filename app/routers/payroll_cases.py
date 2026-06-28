@@ -1625,8 +1625,31 @@ def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None, d
         sighting_progress = _sighting_progress(db, str(kase.get("id")), total)
     declaration_signed = any(l.get("event_type") == "FE_DECLARATION_SIGNED" for l in (logs or []))
     excluded_consultants = []
+    sighting_missing_consultants: list[dict] = []
     if db is not None and kase.get("status") in _EXCL_PANEL_STATUSES:
-        excluded_consultants = _excluded_consultants(db, str(kase.get("id")), kase)
+        # New flow: read from consultant_sighting status='missing', excluding already-resubmitted
+        try:
+            s_missing = db.from_("consultant_sighting").select("*").eq(
+                "case_id", str(kase.get("id"))).eq("status", "missing").execute().data or []
+            resub_ids: set[str] = set()
+            try:
+                rlogs = db.from_("payroll_audit_log").select("metadata").eq(
+                    "case_id", str(kase.get("id"))).eq(
+                    "event_type", "CONSULTANT_RESUBMITTED").execute().data or []
+                for rl in rlogs:
+                    cid = (rl.get("metadata") or {}).get("consultant_id", "")
+                    if cid:
+                        resub_ids.add(str(cid))
+            except Exception:
+                pass
+            sighting_missing_consultants = [
+                r for r in s_missing if r["employee_id"] not in resub_ids
+            ]
+        except Exception:
+            sighting_missing_consultants = []
+        # Old flow fallback: audit-log based exclusions (cases without sighting table)
+        if not sighting_missing_consultants:
+            excluded_consultants = _excluded_consultants(db, str(kase.get("id")), kase)
     return {
         "kase": kase,
         "logs": logs,
@@ -1639,6 +1662,7 @@ def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None, d
         "declaration_signed": declaration_signed,
         "declaration_text": _FE_DECLARATION_TEXT,
         "excluded_consultants": excluded_consultants,
+        "sighting_missing_consultants": sighting_missing_consultants,
         "sighting_map": sighting_map,
         "sighting_progress": sighting_progress,
     }
@@ -2634,6 +2658,128 @@ async def upload_excluded_document(
     })
 
     # Navigate FE to the new mini-case — lands at Step 3 (check_generated → approval)
+    return HTMLResponse("", headers={"HX-Redirect": f"/cases/{new_case_id}"})
+
+
+# ─── Resubmission: Mark as Sighted (new sighting flow) ───────────────────────
+
+@router.post("/cases/{case_id}/resight-consultant")
+async def resight_consultant(case_id: str, request: Request,
+                             consultant_id: str = Form(...)):
+    user = get_current_user(request)
+    db = get_db()
+    kase = db.from_("payroll_cases").select("*").eq("id", case_id).single().execute().data
+    if not kase:
+        return HTMLResponse('<div class="error-msg">Case not found.</div>')
+    if kase.get("status") not in _EXCL_PANEL_STATUSES:
+        return HTMLResponse(
+            f'<div class="error-msg">Resubmission requires case status in closed statuses. '
+            f'Current: {kase.get("status")}</div>')
+
+    consultant_id = (consultant_id or "").strip()
+    sr = db.from_("consultant_sighting").select("*").eq("case_id", case_id).eq(
+        "employee_id", consultant_id).execute().data
+    if not sr:
+        return HTMLResponse(f'<div class="error-msg">Consultant {consultant_id} not found in sighting table.</div>')
+    sr = sr[0]
+    if sr.get("status") != "missing":
+        return HTMLResponse(f'<div class="error-msg">Consultant is not marked missing — cannot resight.</div>')
+
+    # Find employee dict in parsed_data
+    parsed = kase.get("parsed_data") or {}
+    emp_dict: dict | None = None
+    for pool in [parsed.get("original_entities") or [], parsed.get("entities") or []]:
+        for ent in pool:
+            for emp in ent.get("employees", []):
+                if str(emp.get("employeeId", "")).strip() == consultant_id:
+                    emp_dict = emp
+                    break
+            if emp_dict:
+                break
+        if emp_dict:
+            break
+    if emp_dict is None:
+        emp_dict = {
+            "employeeId": consultant_id, "name": sr.get("consultant_name", consultant_id),
+            "costCentre": "", "grossSalary": 0, "netSalary": 0, "ctcHexa": 0, "ctcHexaFile": 0,
+        }
+
+    now = _now()
+    uploaded_by = user.get("name") or user.get("email") or "unknown"
+    original_ref = kase.get("reference", case_id)
+    original_entity = kase.get("entity", "")
+    mini_ref = f"{original_ref}-RESUB-{consultant_id}"
+    mini_entities = [{"sheetName": original_entity, "employees": [emp_dict], "missingColumns": []}]
+    check_data = _build_check_data(mini_entities, case_id=None, db=None)
+    mini_parsed = {
+        "source": "RESUBMISSION",
+        "resubmission_of": case_id,
+        "original_run_ref": original_ref,
+        "consultant_id": consultant_id,
+        "consultant_name": sr.get("consultant_name", consultant_id),
+        "entities": mini_entities,
+        "skip_accrual": True,
+        "generated_by": uploaded_by,
+        "generated_at": now,
+    }
+
+    try:
+        insert_resp = db.from_("payroll_cases").insert({
+            "reference": mini_ref,
+            "type": kase.get("type", "CSI"),
+            "entity": original_entity,
+            "entity_name": kase.get("entity_name", ""),
+            "period": kase.get("period", ""),
+            "seq_no": 1,
+            "status": "check_generated",
+            "parsed_data": mini_parsed,
+            "check_data": check_data,
+            "check_generated_at": now,
+            "uploaded_by_name": uploaded_by,
+            "uploaded_by_email": user.get("email", ""),
+            "uploaded_at": now,
+            "upload_ip": _get_ip(request),
+        }).select().execute()
+    except Exception as e:
+        return HTMLResponse(f'<div class="error-msg">Failed to create mini-case: {e}</div>')
+
+    mini_kase = (insert_resp.data or [None])[0]
+    if not mini_kase:
+        return HTMLResponse('<div class="error-msg">Mini-case insert returned no data.</div>')
+    new_case_id = str(mini_kase["id"])
+
+    # Update sighting row to sighted
+    db.from_("consultant_sighting").update({
+        "status": "sighted", "sighted_by": uploaded_by, "sighted_at": now,
+    }).eq("case_id", case_id).eq("employee_id", consultant_id).execute()
+
+    await _audit_log(db, case_id, "CONSULTANT_RESUBMITTED", uploaded_by, user.get("id"),
+                     _get_ip(request), {
+        "consultant_id": consultant_id,
+        "consultant_name": sr.get("consultant_name", consultant_id),
+        "note": "Mark as Sighted via resight flow — mini-case created",
+    })
+    await _audit_log(db, new_case_id, "CASE_CREATED_FROM_RESUBMISSION",
+                     uploaded_by, user.get("id"), _get_ip(request), {
+        "original_case_id": case_id,
+        "original_reference": original_ref,
+        "consultant_id": consultant_id,
+        "consultant_name": sr.get("consultant_name", consultant_id),
+    })
+    await _audit_log(db, new_case_id, "CHECK_GENERATED",
+                     uploaded_by, user.get("id"), _get_ip(request), {
+        "stamp": f"Generated by: Hexa Check Engine | Ref: {mini_ref} | Generated: {now}",
+        "consultantCount": check_data.get("consultantCount", 1),
+        "flagCount": check_data.get("flagCount", 0),
+    })
+    await _audit_log(db, case_id, "RESUBMISSION_CASE_CREATED",
+                     uploaded_by, user.get("id"), _get_ip(request), {
+        "new_case_id": new_case_id,
+        "new_reference": mini_ref,
+        "consultant_id": consultant_id,
+        "consultant_name": sr.get("consultant_name", consultant_id),
+    })
+
     return HTMLResponse("", headers={"HX-Redirect": f"/cases/{new_case_id}"})
 
 
