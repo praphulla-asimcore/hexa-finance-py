@@ -1608,8 +1608,19 @@ def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None, d
     if selected_step is None:
         selected_step = _get_active_step(kase.get("status", ""))
     consultant_docs = []
+    sighting_map: dict = {}
+    sighting_progress: dict = {}
     if db is not None and kase.get("status") == "documents_pending_review":
         consultant_docs = _sighting_rows(db, str(kase.get("id")), kase)
+        try:
+            s_rows = db.from_("consultant_sighting").select("*").eq(
+                "case_id", str(kase.get("id"))).execute().data or []
+            sighting_map = {r["employee_id"]: r for r in s_rows}
+        except Exception:
+            sighting_map = {}
+        entities = (kase.get("parsed_data") or {}).get("entities", [])
+        total = sum(len(ent.get("employees", [])) for ent in entities)
+        sighting_progress = _sighting_progress(db, str(kase.get("id")), total)
     declaration_signed = any(l.get("event_type") == "FE_DECLARATION_SIGNED" for l in (logs or []))
     excluded_consultants = []
     if db is not None and kase.get("status") in _EXCL_PANEL_STATUSES:
@@ -1626,6 +1637,8 @@ def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None, d
         "declaration_signed": declaration_signed,
         "declaration_text": _FE_DECLARATION_TEXT,
         "excluded_consultants": excluded_consultants,
+        "sighting_map": sighting_map,
+        "sighting_progress": sighting_progress,
     }
 
 
@@ -2067,6 +2080,139 @@ async def complete_sighting(case_id: str, request: Request):
     })
 
     return await _refresh_detail(case_id, db, request, user, _get_active_step("uploaded"))
+
+
+# ─── Step 2 (redesigned): per-consultant click-to-sight ──────────────────────
+
+def _sighting_progress(db, case_id: str, total_employees: int) -> dict:
+    rows = db.from_("consultant_sighting").select("status").eq("case_id", case_id).execute().data or []
+    sighted = sum(1 for r in rows if r["status"] == "sighted")
+    missing = sum(1 for r in rows if r["status"] == "missing")
+    marked = sighted + missing
+    return {"sighted": sighted, "missing": missing, "marked": marked,
+            "total": total_employees, "complete": marked >= total_employees and total_employees > 0}
+
+
+async def _handle_sighting_upsert(
+    case_id: str, status: str, request: Request,
+) -> HTMLResponse | None:
+    """Shared logic for sight-consultant and mark-missing endpoints.
+    Returns an error HTMLResponse on failure, None on success (caller continues)."""
+    return None  # placeholder — real work inline in each endpoint
+
+
+@router.post("/cases/{case_id}/sight-consultant")
+async def sight_consultant(case_id: str, request: Request,
+                           consultant_id: str = Form(...)):
+    user = get_current_user(request)
+    db = get_db()
+    resp = db.from_("payroll_cases").select("*").eq("id", case_id).single().execute()
+    kase = resp.data
+    if not kase:
+        return HTMLResponse('<div class="error-msg">Case not found.</div>')
+    if kase.get("status") != "documents_pending_review":
+        return HTMLResponse(
+            f'<div class="error-msg">Sighting only allowed when status is '
+            f'documents_pending_review. Current: {kase["status"]}</div>')
+
+    entities = (kase.get("parsed_data") or {}).get("entities", [])
+    emp_record = None
+    emp_entity = ""
+    for ent in entities:
+        for emp in ent.get("employees", []):
+            if str(emp.get("employeeId", "")).strip() == str(consultant_id).strip():
+                emp_record = emp
+                emp_entity = ent.get("sheetName", "")
+                break
+        if emp_record:
+            break
+    if not emp_record:
+        return HTMLResponse(f'<div class="error-msg">Consultant {consultant_id} not found in case.</div>')
+
+    now = _now()
+    by = user.get("name") or user.get("email") or "unknown"
+    db.from_("consultant_sighting").upsert({
+        "case_id": case_id,
+        "employee_id": str(consultant_id).strip(),
+        "consultant_name": emp_record.get("name", str(consultant_id)),
+        "entity": emp_entity[:20],
+        "status": "sighted",
+        "sighted_by": by,
+        "sighted_at": now,
+    }, on_conflict="case_id,employee_id").execute()
+
+    total_employees = sum(len(ent.get("employees", [])) for ent in entities)
+    progress = _sighting_progress(db, case_id, total_employees)
+    if progress["complete"]:
+        check_data = _build_check_data(entities, case_id=str(case_id), db=db)
+        db.from_("payroll_cases").update({
+            "status": "uploaded",
+            "check_data": check_data,
+            "check_generated_at": now,
+        }).eq("id", case_id).execute()
+        await _audit_log(db, case_id, "SIGHTING_COMPLETE", by, user.get("id"), _get_ip(request), {
+            "sighted": progress["sighted"], "missing": progress["missing"],
+            "total": progress["total"],
+        })
+
+    return await _refresh_detail(case_id, db, request, user, 2)
+
+
+@router.post("/cases/{case_id}/mark-missing")
+async def mark_missing(case_id: str, request: Request,
+                       consultant_id: str = Form(...)):
+    user = get_current_user(request)
+    db = get_db()
+    resp = db.from_("payroll_cases").select("*").eq("id", case_id).single().execute()
+    kase = resp.data
+    if not kase:
+        return HTMLResponse('<div class="error-msg">Case not found.</div>')
+    if kase.get("status") != "documents_pending_review":
+        return HTMLResponse(
+            f'<div class="error-msg">Sighting only allowed when status is '
+            f'documents_pending_review. Current: {kase["status"]}</div>')
+
+    entities = (kase.get("parsed_data") or {}).get("entities", [])
+    emp_record = None
+    emp_entity = ""
+    for ent in entities:
+        for emp in ent.get("employees", []):
+            if str(emp.get("employeeId", "")).strip() == str(consultant_id).strip():
+                emp_record = emp
+                emp_entity = ent.get("sheetName", "")
+                break
+        if emp_record:
+            break
+    if not emp_record:
+        return HTMLResponse(f'<div class="error-msg">Consultant {consultant_id} not found in case.</div>')
+
+    now = _now()
+    by = user.get("name") or user.get("email") or "unknown"
+    db.from_("consultant_sighting").upsert({
+        "case_id": case_id,
+        "employee_id": str(consultant_id).strip(),
+        "consultant_name": emp_record.get("name", str(consultant_id)),
+        "entity": emp_entity[:20],
+        "status": "missing",
+        "sighted_by": by,
+        "sighted_at": now,
+    }, on_conflict="case_id,employee_id").execute()
+
+    total_employees = sum(len(ent.get("employees", [])) for ent in entities)
+    progress = _sighting_progress(db, case_id, total_employees)
+    if progress["complete"]:
+        check_data = _build_check_data(entities, case_id=str(case_id), db=db)
+        db.from_("payroll_cases").update({
+            "status": "uploaded",
+            "check_data": check_data,
+            "check_generated_at": now,
+        }).eq("id", case_id).execute()
+        await _audit_log(db, case_id, "SIGHTING_COMPLETE", by, user.get("id"), _get_ip(request), {
+            "sighted": progress["sighted"], "missing": progress["missing"],
+            "total": progress["total"],
+        })
+
+    return await _refresh_detail(case_id, db, request, user, 2)
 
 
 # ─── Step 2 (ingested): per-document FE sighting toggle ──────────────────────
