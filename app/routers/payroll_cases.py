@@ -1449,6 +1449,8 @@ async def _auto_book_payment(kase: dict, db) -> dict:
         excluded_ids.add(str(fl.get("employeeId", "")))
     for fl in (check.get("idConflicts") or []):
         excluded_ids.add(str(fl.get("csiEmployeeId", "")))
+    for fl in (check.get("excludedMissing") or []):
+        excluded_ids.add(str(fl.get("employeeId", "")))
 
     payment_rows = []  # list of (amount, description, reference, vendor_name)
     entities = (kase.get("parsed_data") or {}).get("entities", [])
