@@ -6,6 +6,7 @@ import httpx
 import calendar
 import logging
 import re as _re
+import psycopg
 from datetime import datetime, timezone, date
 from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse, HTMLResponse, Response, RedirectResponse
@@ -2157,15 +2158,21 @@ async def sight_consultant(case_id: str, request: Request,
 
     now = _now()
     by = user.get("name") or user.get("email") or "unknown"
-    db.from_("consultant_sighting").upsert({
-        "case_id": case_id,
-        "employee_id": str(consultant_id).strip(),
+    _eid = str(consultant_id).strip()
+    _sighting_row = {
         "consultant_name": emp_record.get("name", str(consultant_id)),
         "entity": emp_entity[:20],
         "status": "sighted",
         "sighted_by": by,
         "sighted_at": now,
-    }, on_conflict="case_id,employee_id").execute()
+    }
+    try:
+        db.from_("consultant_sighting").insert(
+            {"case_id": case_id, "employee_id": _eid, **_sighting_row}
+        ).execute()
+    except psycopg.errors.UniqueViolation:
+        db.from_("consultant_sighting").update(_sighting_row).eq(
+            "case_id", case_id).eq("employee_id", _eid).execute()
 
     total_employees = sum(len(ent.get("employees", [])) for ent in entities)
     progress = _sighting_progress(db, case_id, total_employees)
@@ -2214,15 +2221,21 @@ async def mark_missing(case_id: str, request: Request,
 
     now = _now()
     by = user.get("name") or user.get("email") or "unknown"
-    db.from_("consultant_sighting").upsert({
-        "case_id": case_id,
-        "employee_id": str(consultant_id).strip(),
+    _eid = str(consultant_id).strip()
+    _sighting_row = {
         "consultant_name": emp_record.get("name", str(consultant_id)),
         "entity": emp_entity[:20],
         "status": "missing",
         "sighted_by": by,
         "sighted_at": now,
-    }, on_conflict="case_id,employee_id").execute()
+    }
+    try:
+        db.from_("consultant_sighting").insert(
+            {"case_id": case_id, "employee_id": _eid, **_sighting_row}
+        ).execute()
+    except psycopg.errors.UniqueViolation:
+        db.from_("consultant_sighting").update(_sighting_row).eq(
+            "case_id", case_id).eq("employee_id", _eid).execute()
 
     total_employees = sum(len(ent.get("employees", [])) for ent in entities)
     progress = _sighting_progress(db, case_id, total_employees)
