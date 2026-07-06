@@ -57,10 +57,12 @@
         <td style="font-size:11px;color:var(--text-muted)">{{ o.updated_at[:10] if o.updated_at else '—' }} · {{ o.updated_by or '—' }}</td>
         <td style="white-space:nowrap">
           <button class="btn btn-secondary btn-sm" onclick="cpToggle('edit-{{ o.employee_id }}')">Edit</button>
+          {% if user.role == 'admin' %}
           <form method="post" action="/admin/bank-overrides/{{ o.employee_id }}/delete" style="display:inline"
                 onsubmit="return confirm('Remove the override for {{ o.consultant_name }} ({{ o.employee_id }})? Matching will fall back to Airtable.')">
             <button type="submit" class="btn btn-danger btn-sm">Delete</button>
           </form>
+          {% endif %}
         </td>
       </tr>
       <tr id="edit-{{ o.employee_id }}" style="display:none">

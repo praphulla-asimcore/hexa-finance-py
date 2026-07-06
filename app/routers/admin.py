@@ -136,10 +136,16 @@ def _override_form_to_row(form, updated_by: str) -> dict:
     }
 
 
+# Add/edit is open to the roles that actually do run-preparation work
+# (preparer/arranger), not just admin — deletion stays admin-only since
+# removing an override is rarer and more consequential.
+_BANK_OVERRIDE_EDIT_ROLES = {"admin", "preparer", "arranger"}
+
+
 @router.get("/admin/bank-overrides")
 async def bank_overrides(request: Request):
     user = get_current_user(request)
-    if user.get("role") != "admin":
+    if user.get("role") not in _BANK_OVERRIDE_EDIT_ROLES:
         return RedirectResponse("/", status_code=302)
     db = get_db()
     overrides = []
@@ -155,7 +161,7 @@ async def bank_overrides(request: Request):
 @router.post("/admin/bank-overrides/new")
 async def bank_overrides_new(request: Request):
     user = get_current_user(request)
-    if user.get("role") != "admin":
+    if user.get("role") not in _BANK_OVERRIDE_EDIT_ROLES:
         return RedirectResponse("/", status_code=302)
     db = get_db()
     if db:
@@ -172,7 +178,7 @@ async def bank_overrides_new(request: Request):
 @router.post("/admin/bank-overrides/{employee_id}/edit")
 async def bank_overrides_edit(employee_id: str, request: Request):
     user = get_current_user(request)
-    if user.get("role") != "admin":
+    if user.get("role") not in _BANK_OVERRIDE_EDIT_ROLES:
         return RedirectResponse("/", status_code=302)
     db = get_db()
     if db:
