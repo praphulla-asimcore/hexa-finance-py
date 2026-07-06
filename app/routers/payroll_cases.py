@@ -785,42 +785,49 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None,
 
 # ─── Journal date from period cycle ─────────────────────────────────────────
 
+def _parse_period(period_str: str) -> tuple[int, int, str]:
+    """Parse a payroll_cases.period value into (year, month, cycle).
+
+    Two formats are in use, from two different upload paths:
+      - Manual upload (Step 1 form, period_ym + period_cycle):  '202506-25th',
+        '202506-EOM', '202506-7th', '202506-15th'.
+      - HexaFlow / APEX auto-ingest (period_month, validated as YYYY-MM):
+        '2026-06' — carries no cycle, always treated as EOM.
+
+    Raises ValueError on anything else, rather than silently falling back to
+    today's date — a wrong period must fail loudly, since a silent fallback
+    previously caused accruals to post on today's date instead of the actual
+    payroll period (e.g. a HexaFlow '2026-06' case posted on 2026-07-31)."""
+    s = (period_str or "").strip()
+    m = _re.match(r"^(\d{4})-(\d{2})$", s)          # HexaFlow: YYYY-MM, no cycle
+    if m:
+        return int(m.group(1)), int(m.group(2)), "EOM"
+    m = _re.match(r"^(\d{4})(\d{2})-(25th|EOM|7th|15th)$", s)   # manual upload
+    if m:
+        return int(m.group(1)), int(m.group(2)), m.group(3)
+    raise ValueError(f"Unrecognised period format: {period_str!r}")
+
+
 def _compute_journal_date(period_str: str) -> str:
     """
     period_str: e.g. '202506-25th' | '202506-EOM' | '202506-7th' | '202506-15th'
-    Returns ISO date string for Zoho.
+    (manual upload) or '2026-06' (HexaFlow auto-ingest). Returns ISO date
+    string for Zoho — the journal date always lands on the period month
+    (wages belong to that month even when paid on the 7th/15th of the next).
     """
-    parts = period_str.split("-", 1)
-    yyyymm = parts[0]
-    cycle  = parts[1] if len(parts) > 1 else "EOM"
-    try:
-        yr, mo = int(yyyymm[:4]), int(yyyymm[4:6])
-    except (ValueError, IndexError):
-        yr, mo = datetime.now().year, datetime.now().month
-
+    yr, mo, cycle = _parse_period(period_str)
     if cycle == "25th":
         return f"{yr:04d}-{mo:02d}-25"
-    elif cycle == "EOM":
-        last = calendar.monthrange(yr, mo)[1]
-        return f"{yr:04d}-{mo:02d}-{last:02d}"
-    elif cycle in ("7th", "15th"):
-        # Paid on the 7th/15th of the FOLLOWING month, but the wages belong to
-        # this period month — so the accrual posts at the end of the period
-        # month (e.g. May period → 31 May), not the prior month.
-        last = calendar.monthrange(yr, mo)[1]
-        return f"{yr:04d}-{mo:02d}-{last:02d}"
-    else:
-        last = calendar.monthrange(yr, mo)[1]
-        return f"{yr:04d}-{mo:02d}-{last:02d}"
+    last = calendar.monthrange(yr, mo)[1]
+    return f"{yr:04d}-{mo:02d}-{last:02d}"
 
 
 def _period_mmm_yy(period_str: str) -> str:
-    yyyymm = period_str[:6]
     try:
-        dt = datetime(int(yyyymm[:4]), int(yyyymm[4:6]), 1)
-        return dt.strftime("%b'%y")   # e.g. Jun'25
-    except Exception:
-        return yyyymm
+        yr, mo, _cycle = _parse_period(period_str)
+        return datetime(yr, mo, 1).strftime("%b'%y")   # e.g. Jun'26
+    except ValueError:
+        return period_str
 
 
 # ─── Account ID maps (hardcoded from Chart_of_Accounts.csv) ─────────────────
@@ -1024,9 +1031,13 @@ async def _auto_book_accruals_payroll(kase: dict, db) -> dict:
 
     exp_map      = maps["expense_map"]
     payable_id   = maps["net_pay"]
+    try:
+        _yr, _mo, _cycle = _parse_period(kase.get("period", ""))
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
     journal_date = _compute_journal_date(kase.get("period", ""))
     mmm_yy       = _period_mmm_yy(kase.get("period", ""))
-    yyyymm       = (kase.get("period", "").split("-", 1)[0] or "")[:6]
+    yyyymm       = f"{_yr:04d}{_mo:02d}"
     entity_code  = kase.get("entity", "HSSB")
 
     entities = (kase.get("parsed_data") or {}).get("entities", [])
@@ -1248,6 +1259,10 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
     if not org_id:
         return {"success": False, "error": f"No Zoho org ID for entity {kase.get('entity')}"}
 
+    try:
+        _parse_period(kase.get("period", ""))
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
     journal_date = _compute_journal_date(kase.get("period", ""))
     mmm_yy       = _period_mmm_yy(kase.get("period", ""))
     entity_code  = kase.get("entity", "HSSB")
