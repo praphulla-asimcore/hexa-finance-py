@@ -29,6 +29,7 @@ from app.config import APEX_INGEST_API_KEY, DATABASE_URL
 from app.services.db import get_db
 from app.routers.payroll_cases import _audit_log, _get_ip, _now, _sha256
 from app.services.statutory_rates import is_local_national
+from app.services.hexaflow_finance_profiles import pull_finance_profiles
 
 router = APIRouter()
 logger = logging.getLogger("hexa.ingest")
@@ -329,6 +330,17 @@ async def apex_ingest(request: Request):
         {"run_ref": run_ref, "consultant_count": consultant_count,
          "document_count": document_count, "generated_by": generated_by},
     )
+
+    # ── Step 9b: HexaFlow Consultant Finance Profile pull (Pack 5) ───────────
+    # Best-effort, decoupled from the case just committed above: a pull failure
+    # (bad config, HexaFlow down, timeout) must never undo or fail this ingest.
+    # Only triggered for HexaFlow-originated runs (hexaflow_csi_run_id present);
+    # older CSI-Generator-only payloads have no run_id to pull against.
+    if hexaflow_csi_run_id:
+        try:
+            await pull_finance_profiles(db, str(case_id), hexaflow_csi_run_id)
+        except Exception:
+            logger.exception("finance profile pull crashed for case_id=%s", case_id)
 
     # ── Step 10 ──────────────────────────────────────────────────────────────
     return _json(201, {

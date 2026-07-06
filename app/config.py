@@ -37,6 +37,14 @@ CRON_SECRET: str = os.getenv("CRON_SECRET", "")
 # The secret is sent as the X-Apex-Webhook-Secret header only — never logged/stored.
 HEXAFLOW_EVENTS_URL: str = os.getenv("HEXAFLOW_EVENTS_URL", "")
 HEXAFLOW_EVENTS_SECRET: str = os.getenv("HEXAFLOW_EVENTS_SECRET", "")
+# HexaFlow Consultant Finance Profile pull (Pack 5): after a successful CSI
+# ingest, APEX pulls the unmasked bank/statutory/ID/salary profile for that run
+# from HexaFlow. HEXAFLOW_FINANCE_KEY_SECRET is a credential — read at request
+# time only, never logged, never given a non-empty default here. Empty secret ⇒
+# the pull is disabled (treated the same as HEXAFLOW_EVENTS being unconfigured).
+HEXAFLOW_FINANCE_BASE_URL: str = os.getenv("HEXAFLOW_FINANCE_BASE_URL", "https://hexaflow.hexabusiness.com")
+HEXAFLOW_FINANCE_KEY_ID: str = os.getenv("HEXAFLOW_FINANCE_KEY_ID", "fk_finance_full_ro")
+HEXAFLOW_FINANCE_KEY_SECRET: str = os.getenv("HEXAFLOW_FINANCE_KEY_SECRET", "")
 
 IS_PROD: bool = os.getenv("VERCEL_ENV") == "production"
 

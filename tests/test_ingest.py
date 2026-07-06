@@ -325,6 +325,50 @@ def test_totals_missing_is_safe(client, state):
     assert state.last_parsed["totals"] is None
 
 
+# ── HexaFlow Consultant Finance Profile pull (Pack 5) trigger wiring ──────────
+
+def test_finance_profile_pull_triggered_for_hexaflow_run(client, state, monkeypatch):
+    """A HexaFlow-originated run (hexaflow_csi_run_id present) must trigger the
+    pull, with the freshly-created case id and the extracted run_id."""
+    calls = []
+
+    async def fake_pull(db, case_id, run_id):
+        calls.append((case_id, run_id))
+        return {"status": "succeeded"}
+
+    monkeypatch.setattr(ingest, "pull_finance_profiles", fake_pull)
+    r = client.post("/api/apex/ingest", json=make_hexaflow_payload(), headers=_hdr())
+    assert r.status_code == 201
+    assert len(calls) == 1
+    assert calls[0] == (r.json()["case_id"], HEXAFLOW_RUN_ID)
+
+
+def test_finance_profile_pull_not_triggered_without_run_id(client, monkeypatch):
+    """A plain CSI-Generator payload (no hexaflow_csi_run_id) must not trigger it."""
+    calls = []
+
+    async def fake_pull(db, case_id, run_id):
+        calls.append((case_id, run_id))
+        return {"status": "succeeded"}
+
+    monkeypatch.setattr(ingest, "pull_finance_profiles", fake_pull)
+    r = client.post("/api/apex/ingest", json=make_payload(), headers=_hdr())
+    assert r.status_code == 201
+    assert calls == []
+
+
+def test_finance_profile_pull_crash_does_not_fail_ingest(client, monkeypatch):
+    """The pull is best-effort: even if it raises outright, the ingest response
+    must still be the normal 201 (the case was already committed)."""
+    async def crashing_pull(db, case_id, run_id):
+        raise RuntimeError("HexaFlow is unreachable")
+
+    monkeypatch.setattr(ingest, "pull_finance_profiles", crashing_pull)
+    r = client.post("/api/apex/ingest", json=make_hexaflow_payload(), headers=_hdr())
+    assert r.status_code == 201
+    assert r.json()["status"] == "documents_pending_review"
+
+
 def test_no_secret_fields_persisted(client, state):
     """A stray secret-looking field in the body must never reach parsed_data —
     ingest only persists whitelisted fields (top-, consultant-, totals-level)."""
