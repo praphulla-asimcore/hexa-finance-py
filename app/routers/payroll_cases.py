@@ -198,11 +198,11 @@ async def _create_or_update_statutory(kase: dict, db, triggered_by: str) -> None
         generate_hrdf_file, generate_mtd_file,
     )
 
-    wage_month = (kase.get("period") or "")[:6]
-    if len(wage_month) != 6:
+    try:
+        yr, mo, _cycle = _parse_period(kase.get("period", ""))
+    except ValueError:
         return
-
-    yr, mo = int(wage_month[:4]), int(wage_month[4:6])
+    wage_month = f"{yr:04d}{mo:02d}"
     contribution_month = f"{yr+1}01" if mo == 12 else f"{yr:04d}{mo+1:02d}"
     due_date           = f"{contribution_month[:4]}-{contribution_month[4:6]}-15"
 
