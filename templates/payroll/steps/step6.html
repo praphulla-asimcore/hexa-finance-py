@@ -6,6 +6,7 @@
 {% set is_pending = kase.status == 'payment_approval_sent' %}
 {% set can_confirm = kase.status in ['payment_approval_sent','bank_uploaded'] %}
 {% set cert = kase.payment_approval_cert or {} %}
+{% set pa = (kase.check_data or {}).get('paymentApproval') %}
 
 <div class="pf-panel-body">
   <div class="pf-panel-header">
@@ -13,6 +14,26 @@
     <h2 class="pf-panel-title">Payment Approval (Director)</h2>
     <p class="pf-panel-sub">Director approval via email link or in-app confirmation.</p>
   </div>
+
+  {% if pa %}
+  <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;margin-bottom:4px">
+      <span style="color:#059669">Payment for Approval</span>
+      <span style="color:#059669">{{ pa.payableCount }} consultant(s) — {{ fmt_rm(pa.payableTotal) }}</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700">
+      <span style="color:#dc2626">Not Approved for Payment</span>
+      <span style="color:#dc2626">{{ pa.notApprovedCount }} consultant(s)</span>
+    </div>
+    {% if pa.notApprovedBreakdown %}
+    <ul style="margin:8px 0 0;padding-left:18px;font-size:11px;color:#888">
+      {% for k, v in pa.notApprovedBreakdown.items() %}
+      {% if v %}<li>{{ {'missingDocs':'Missing documents (not yet sighted)','noFavouriteCode':'No Favourite Beneficiary Code on file','docGate':'Failed a document gate','idConflict':'Employee ID conflict','noBankAccount':'No bank account on file'}.get(k, k) }}: <strong>{{ v }}</strong></li>{% endif %}
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+  {% endif %}
 
   <div class="pf-approver-chain">
     <div class="pf-approver-box">

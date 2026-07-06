@@ -201,23 +201,72 @@ def email_check_approval(to: str, name: str, role: str, kase: dict, approve_url:
     """))
 
 
+_NOT_APPROVED_LABELS = {
+    "missingDocs":     "Missing documents (not yet sighted)",
+    "noFavouriteCode": "No Favourite Beneficiary Code on file",
+    "docGate":         "Failed a document gate",
+    "idConflict":      "Employee ID conflict",
+    "noBankAccount":   "No bank account on file",
+}
+
+
+def _payment_approval_breakdown_html(check: dict) -> str:
+    """Payable-vs-held-back breakdown for the PIR (Payment Approval) email —
+    older check_data (generated before this field existed) has no
+    'paymentApproval' key, so this renders nothing rather than a false total."""
+    pa = check.get("paymentApproval")
+    if not pa:
+        return ""
+    reasons = pa.get("notApprovedBreakdown") or {}
+    reason_lines = "".join(
+        f'<li style="margin-bottom:2px">{_NOT_APPROVED_LABELS.get(k, k)}: <strong>{v}</strong></li>'
+        for k, v in reasons.items() if v
+    )
+    return f"""
+        <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:16px 18px;margin-bottom:20px">
+          <table style="width:100%;border-collapse:collapse;font-size:14px">
+            <tr>
+              <td style="padding:4px 0;color:#059669;font-weight:700">Payment for Approval</td>
+              <td style="padding:4px 0;text-align:right;font-weight:700;color:#059669">
+                {pa.get('payableCount', 0)} consultant(s) — {_fmt_rm(pa.get('payableTotal'))}
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:4px 0;color:#dc2626;font-weight:700">Not Approved for Payment</td>
+              <td style="padding:4px 0;text-align:right;font-weight:700;color:#dc2626">
+                {pa.get('notApprovedCount', 0)} consultant(s)
+              </td>
+            </tr>
+          </table>
+          {f'<ul style="margin:10px 0 0;padding-left:18px;font-size:12px;color:#666">{reason_lines}</ul>' if reason_lines else ''}
+        </div>
+    """
+
+
 def email_payment_approval(kase: dict, approve_url: str, reject_url: str, director: dict) -> None:
     check = kase.get("check_data") or {}
+    pa = check.get("paymentApproval")
     label = "CSI Payroll" if kase.get("type") == "CSI" else "Internal Payroll"
-    _send(director["email"], f"[Hexa Finance] Payment Approval Required | {kase['reference']} | {_fmt_rm(check.get('ctcTotal'))}", _wrap(f"""
+    # Prefer the actual payable count/total (only the consultants in this bank
+    # file) over check.consultantCount/ctcTotal, which cover everyone accrued
+    # this cycle — including those still pending document sighting.
+    release_total = _fmt_rm(pa["payableTotal"]) if pa else _fmt_rm(check.get('ctcTotal'))
+    release_count = pa["payableCount"] if pa else check.get('consultantCount', '—')
+    _send(director["email"], f"[Hexa Finance] Payment Approval Required | {kase['reference']} | {release_total}", _wrap(f"""
         <h2 style="font-size:18px;font-weight:700;color:#111;margin:0 0 8px">Payment Approval Required</h2>
         <p style="color:#555;font-size:14px;line-height:1.6;margin:0 0 20px">
           Dear {director['name']},<br/><br/>
           The payroll run for <b>{kase.get('entity_name') or kase.get('entity','')}</b> ({kase.get('period','')}) has been checked, approved, and uploaded to the bank portal (Ref: <b>{kase.get('bank_portal_ref') or '—'}</b>).<br/>
-          Your approval is required to release <b>{_fmt_rm(check.get('ctcTotal'))}</b> in salary payments to {check.get('consultantCount','—')} consultants.
+          Your approval is required to release <b>{release_total}</b> in salary payments to {release_count} consultants.
         </p>
+        {_payment_approval_breakdown_html(check)}
         <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:20px">
           {_row('Reference', f'<span style="color:#6366f1;font-weight:700">{kase["reference"]}</span>')}
           {_row('Entity', kase.get('entity_name') or kase.get('entity',''))}
           {_row('Period', kase.get('period',''))}
-          {_row('Consultants', str(check.get('consultantCount','—')))}
+          {_row('Consultants Accrued', str(check.get('consultantCount','—')))}
           {_row('Gross Payroll', _fmt_rm(check.get('grossPayrollTotal')))}
-          {_row('Total CTC', f'<strong style="font-size:15px;color:#111">{_fmt_rm(check.get("ctcTotal"))}</strong>')}
+          {_row('Total CTC (accrued)', f'<strong style="font-size:15px;color:#111">{_fmt_rm(check.get("ctcTotal"))}</strong>')}
           {_row('Bank Portal Ref', kase.get('bank_portal_ref') or '—')}
           {_row('Checked by', kase.get('check_reviewer_name') or '—')}
           {_row('Approved by', kase.get('check_final_approver_name') or '—')}

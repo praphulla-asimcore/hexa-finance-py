@@ -474,6 +474,27 @@ def fetch_local_bank_overrides(db) -> list[dict]:
     ]
 
 
+def _dedupe_consultants(records: list[dict]) -> list[dict]:
+    """Collapse duplicate employee IDs, keeping the FIRST occurrence.
+
+    Used to combine consultant_bank_overrides with Airtable: overrides are
+    prepended so they win, but match_consultant treats more than one hit for
+    the same ID as an unresolved conflict (by design, for safety) — without
+    this dedup, a consultant present in BOTH the override table and Airtable
+    would resolve to None (ambiguous) instead of the override actually taking
+    priority as intended."""
+    seen: set[str] = set()
+    out = []
+    for r in records:
+        key = (r.get("employeeNumber") or r.get("employeeId") or "").strip()
+        if key:
+            if key in seen:
+                continue
+            seen.add(key)
+        out.append(r)
+    return out
+
+
 def _norm_name(s: str) -> str:
     """Lowercase and collapse non-alphanumerics to single spaces, for comparing a
     CSI nickname/short name against an Airtable full legal name."""
@@ -640,11 +661,12 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
         airtable_list = await fetch_airtable_consultants()
     except Exception:
         pass
-    # Local overrides prepended — they take priority over Airtable for the same
-    # employee_id. match_consultant sees them as ordinary consultant records.
+    # Local overrides prepended and deduped — they take priority over Airtable
+    # for the same employee_id. match_consultant sees them as ordinary
+    # consultant records.
     local_overrides = fetch_local_bank_overrides(db)
     if local_overrides:
-        airtable_list = local_overrides + airtable_list
+        airtable_list = _dedupe_consultants(local_overrides + airtable_list)
 
     notify_emails = BANK_NOTIFY_EMAILS
 
@@ -780,6 +802,27 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
     existing_check["excludedDocGate"] = excluded_doc_gate
     existing_check["excludedMissing"] = excluded_missing
 
+    # ── Payment-approval breakdown: how many of the consultants in this run are
+    #    actually being paid via this bank file ("Payment for Approval") vs held
+    #    back ("Not Approved for Payment"), and why. check_data.consultantCount
+    #    covers everyone accrued this cycle (sighted + missing-docs); this counts
+    #    only rows that made it into the bank file (non-blank account number). ──
+    no_account_rows = [b for b in beneficiaries if not b["accountNumber"]]
+    payable_rows = [b for b in beneficiaries if b["accountNumber"]]
+    not_approved_breakdown = {
+        "missingDocs":     len(excluded_missing),
+        "noFavouriteCode": len(excluded_no_fav),
+        "docGate":         len(excluded_doc_gate),
+        "idConflict":      len(id_conflicts),
+        "noBankAccount":   len(no_account_rows),
+    }
+    existing_check["paymentApproval"] = {
+        "payableCount":         len(payable_rows),
+        "payableTotal":         round(sum(float(b["amount"] or 0) for b in payable_rows), 2),
+        "notApprovedCount":     sum(not_approved_breakdown.values()),
+        "notApprovedBreakdown": not_approved_breakdown,
+    }
+
     # ── Independent cross-check: re-read the generated .xlsm and reconcile it
     #    against the CSI (identity + amount) and the consultant DB (account),
     #    so a wrong/dropped/extra payee is caught BEFORE the maker uploads. ──
@@ -885,6 +928,15 @@ async def generate_and_store_bank_files_payroll(kase: dict, db, triggered_by: st
     missing = [{"name": b["name"], "employeeId": b["employeeId"]} for b in beneficiaries if not b["matched"]]
     existing_check = dict(kase.get("check_data") or {})
     existing_check["missingBankAccounts"] = missing
+
+    no_account_rows = [b for b in beneficiaries if not b["accountNumber"]]
+    payable_rows = [b for b in beneficiaries if b["accountNumber"]]
+    existing_check["paymentApproval"] = {
+        "payableCount":         len(payable_rows),
+        "payableTotal":         round(sum(float(b["amount"] or 0) for b in payable_rows), 2),
+        "notApprovedCount":     len(no_account_rows),
+        "notApprovedBreakdown": {"noBankAccount": len(no_account_rows)},
+    }
 
     # Cross-check the .xlsm against the payroll source. Here the bank account is
     # the CSI's own ``bankAccount`` column, so it doubles as the account source.
