@@ -12,3 +12,4 @@ dist/
 .vercel
 start_local.sh
 *.xlsx
+.env*.local

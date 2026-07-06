@@ -11,9 +11,12 @@ Steps before running:
   4. Paste your Client ID, Client Secret, and the grant code below when prompted.
 """
 
-import urllib.request
-import urllib.parse
 import json
+import ssl
+import urllib.parse
+import urllib.request
+
+import certifi
 
 
 def get_tokens(client_id: str, client_secret: str, code: str, domain: str = "com") -> dict:
@@ -31,7 +34,8 @@ def get_tokens(client_id: str, client_secret: str, code: str, domain: str = "com
         method="POST",
     )
 
-    with urllib.request.urlopen(req) as resp:
+    ctx = ssl.create_default_context(cafile=certifi.where())
+    with urllib.request.urlopen(req, context=ctx) as resp:
         return json.loads(resp.read())
 
 
