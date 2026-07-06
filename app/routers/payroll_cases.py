@@ -1627,29 +1627,48 @@ def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None, d
     declaration_signed = any(l.get("event_type") == "FE_DECLARATION_SIGNED" for l in (logs or []))
     excluded_consultants = []
     sighting_missing_consultants: list[dict] = []
+    sighting_orphaned_consultants: list[dict] = []
     if db is not None and kase.get("status") in _EXCL_PANEL_STATUSES:
-        # New flow: read from consultant_sighting status='missing', excluding already-resubmitted
+        # New flow: read from consultant_sighting, excluding consultants whose
+        # resubmission mini-case still exists (already being handled elsewhere).
+        # A consultant whose mini-case was since DELETED is not "handled" —
+        # surface them separately (sighting_orphaned_consultants) with an
+        # Undo Sighting control rather than silently hiding them.
         try:
-            s_missing = db.from_("consultant_sighting").select("*").eq(
-                "case_id", str(kase.get("id"))).eq("status", "missing").execute().data or []
+            s_rows = db.from_("consultant_sighting").select("*").eq(
+                "case_id", str(kase.get("id"))).execute().data or []
+            s_missing_map = {r["employee_id"]: r for r in s_rows if r["status"] == "missing"}
+            s_sighted_map = {r["employee_id"]: r for r in s_rows if r["status"] == "sighted"}
+
             resub_ids: set[str] = set()
+            seen_orphan: set[str] = set()
             try:
                 rlogs = db.from_("payroll_audit_log").select("metadata").eq(
                     "case_id", str(kase.get("id"))).eq(
-                    "event_type", "CONSULTANT_RESUBMITTED").execute().data or []
+                    "event_type", "RESUBMISSION_CASE_CREATED").execute().data or []
                 for rl in rlogs:
-                    cid = (rl.get("metadata") or {}).get("consultant_id", "")
-                    if cid:
-                        resub_ids.add(str(cid))
+                    md = rl.get("metadata") or {}
+                    cid = str(md.get("consultant_id", ""))
+                    ncid = md.get("new_case_id", "")
+                    if not cid or not ncid:
+                        continue
+                    mini_exists = bool(
+                        db.from_("payroll_cases").select("id").eq("id", ncid).execute().data)
+                    if mini_exists:
+                        resub_ids.add(cid)
+                    elif cid in s_sighted_map and cid not in seen_orphan:
+                        seen_orphan.add(cid)
+                        sighting_orphaned_consultants.append(s_sighted_map[cid])
             except Exception:
                 pass
             sighting_missing_consultants = [
-                r for r in s_missing if r["employee_id"] not in resub_ids
+                r for eid, r in s_missing_map.items() if eid not in resub_ids
             ]
         except Exception:
             sighting_missing_consultants = []
+            sighting_orphaned_consultants = []
         # Old flow fallback: audit-log based exclusions (cases without sighting table)
-        if not sighting_missing_consultants:
+        if not sighting_missing_consultants and not sighting_orphaned_consultants:
             excluded_consultants = _excluded_consultants(db, str(kase.get("id")), kase)
     return {
         "kase": kase,
@@ -1664,6 +1683,7 @@ def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None, d
         "declaration_text": _FE_DECLARATION_TEXT,
         "excluded_consultants": excluded_consultants,
         "sighting_missing_consultants": sighting_missing_consultants,
+        "sighting_orphaned_consultants": sighting_orphaned_consultants,
         "sighting_map": sighting_map,
         "sighting_progress": sighting_progress,
     }
@@ -2794,6 +2814,62 @@ async def resight_consultant(case_id: str, request: Request,
     })
 
     return HTMLResponse("", headers={"HX-Redirect": f"/cases/{new_case_id}"})
+
+
+@router.post("/cases/{case_id}/undo-sighting")
+async def undo_sighting(case_id: str, request: Request,
+                        consultant_id: str = Form(...)):
+    """Revert a consultant from 'sighted' back to 'missing' so they can go
+    through Mark-as-Sighted again — for when their resubmission mini-case
+    (created by resight_consultant) no longer exists, e.g. it was deleted
+    before a bank file was ever generated for it. Refuses to run while an
+    existing mini-case is still live, since un-sighting underneath an
+    in-flight payment run would create an inconsistent state."""
+    user = get_current_user(request)
+    db = get_db()
+    kase = db.from_("payroll_cases").select("*").eq("id", case_id).single().execute().data
+    if not kase:
+        return HTMLResponse('<div class="error-msg">Case not found.</div>')
+    if kase.get("status") not in _EXCL_PANEL_STATUSES:
+        return HTMLResponse(
+            f'<div class="error-msg">Undo sighting requires case status in closed statuses. '
+            f'Current: {kase.get("status")}</div>')
+
+    consultant_id = (consultant_id or "").strip()
+    sr = db.from_("consultant_sighting").select("*").eq("case_id", case_id).eq(
+        "employee_id", consultant_id).execute().data
+    if not sr:
+        return HTMLResponse(f'<div class="error-msg">Consultant {consultant_id} not found in sighting table.</div>')
+    sr = sr[0]
+    if sr.get("status") != "sighted":
+        return HTMLResponse('<div class="error-msg">Consultant is not marked sighted — nothing to undo.</div>')
+
+    rlogs = db.from_("payroll_audit_log").select("metadata").eq(
+        "case_id", case_id).eq("event_type", "RESUBMISSION_CASE_CREATED").execute().data or []
+    for rl in rlogs:
+        md = rl.get("metadata") or {}
+        if str(md.get("consultant_id", "")) != consultant_id:
+            continue
+        ncid = md.get("new_case_id", "")
+        if ncid and db.from_("payroll_cases").select("id").eq("id", ncid).execute().data:
+            return HTMLResponse(
+                f'<div class="error-msg">Cannot undo — resubmission case {md.get("new_reference", ncid)} '
+                f'still exists for this consultant. Delete that case first if it should not proceed.</div>')
+
+    now = _now()
+    by = user.get("name") or user.get("email") or "unknown"
+    db.from_("consultant_sighting").update({
+        "status": "missing", "sighted_by": by, "sighted_at": now,
+    }).eq("case_id", case_id).eq("employee_id", consultant_id).execute()
+
+    await _audit_log(db, case_id, "CONSULTANT_SIGHTING_UNDONE", by, user.get("id"), _get_ip(request), {
+        "consultant_id": consultant_id,
+        "consultant_name": sr.get("consultant_name", consultant_id),
+        "note": "Sighting undone — reverted to missing so Mark as Sighted can be redone "
+                "(prior resubmission case no longer exists)",
+    })
+
+    return await _refresh_detail(case_id, db, request, user, _get_active_step(kase.get("status", "")))
 
 
 # ─── Step 2 (ingested): FE declaration (PIN-signed) ──────────────────────────
