@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="cp-page">
+  <div class="cp-head">
+    <div>
+      <h1 class="cp-title">Consultants Missing a Favourite Beneficiary Code</h1>
+      <div class="cp-sub">
+        {{ rows|length }} consultant(s) resolved to an APEX employee ID with no Favourite Beneficiary
+        Code on file yet. Register each as a Favourite Beneficiary in Maybank CMS, then enter the
+        code below — it's saved straight into Consultant Bank Overrides.
+      </div>
+    </div>
+    <a href="/admin/bank-overrides" class="btn btn-secondary btn-sm">Bank Overrides →</a>
+  </div>
+
+  <table class="admin-table cp-table">
+    <thead><tr>
+      <th>Employee ID</th><th>Name</th><th>Entity</th><th>Bank</th><th>Account No.</th>
+      <th>Favourite Beneficiary Code</th><th></th>
+    </tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td><strong>{{ r.apex_employee_id }}</strong></td>
+        <td style="text-align:left">{{ r.consultant_name }}</td>
+        <td>{{ r.entity }}</td>
+        <td>{{ r.bank_name or '—' }}</td>
+        <td>{{ r.bank_account_number or '—' }}</td>
+        <td colspan="2">
+          <form method="post" action="/admin/missing-fav-codes/{{ r.apex_employee_id }}/set" class="mfc-inline">
+            <input class="input" name="favourite_beneficiary_code" placeholder="e.g. HS261" required>
+            <button type="submit" class="btn btn-primary btn-sm">Save</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+      {% if not rows %}
+      <tr><td colspan="7" style="color:var(--text-muted);padding:18px">Nothing outstanding — every resolved consultant has a Favourite Beneficiary Code.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+<style>
+.cp-page { padding: 24px 28px; max-width: 1200px; }
+.cp-head { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:18px; }
+.cp-title { font-size:20px; font-weight:800; color:var(--text-primary); margin:0; }
+.cp-sub { font-size:12px; color:var(--text-muted); margin-top:4px; max-width:640px; }
+.cp-table th, .cp-table td { text-align:center; }
+.cp-table th:nth-child(2), .cp-table td:nth-child(2) { text-align:left; }
+.mfc-inline { display:flex; gap:8px; justify-content:center; align-items:center; }
+.mfc-inline .input { max-width:140px; }
+</style>
+{% endblock %}

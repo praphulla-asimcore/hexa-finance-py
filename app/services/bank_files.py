@@ -504,13 +504,48 @@ def fetch_hexaflow_directory(db) -> list[dict]:
     ]
 
 
+def fetch_consultant_master(db) -> list[dict]:
+    """Read consultant_master -- the Talenox-HR-export-sourced standing
+    consultant master (app/services/consultant_master_import.py) that is
+    replacing Airtable as a bank-detail source -- and shape it like an
+    Airtable record so match_consultant() sees it transparently.
+
+    employeeId/employeeNumber is the resolved apex_employee_id (HEX-xxxx) when
+    known, else the raw Talenox-native id (harmless: it simply won't be hit by
+    any CSI/payroll row, which always carries a HEX-xxxx id). Never carries a
+    Favourite Beneficiary Code -- that field only ever lives in
+    consultant_bank_overrides."""
+    try:
+        rows = (db.from_("consultant_master")
+                  .select("*").execute().data or [])
+    except Exception:
+        return []
+    return [
+        {
+            "employeeNumber":            r.get("apex_employee_id") or r["employee_id"],
+            "employeeId":                r.get("apex_employee_id") or r["employee_id"],
+            "name":                      r.get("consultant_name") or "",
+            "bankName":                  r.get("bank_name") or "",
+            "accountNo":                 r.get("bank_account_number") or "",
+            "bankCode":                  r.get("bank_code") or "",
+            "idNumber":                  r.get("ic_number") or "",
+            "idType":                    r.get("ic_type") or "",
+            "favouriteBeneficiaryCode":  "",
+        }
+        for r in rows
+    ]
+
+
 def build_consultant_list(db, airtable_list: list[dict]) -> list[dict]:
     """Merge every bank-detail source into one list, in precedence order
     (highest first): manual overrides, the HexaFlow-sourced standing
-    directory, then Airtable. ``_dedupe_consultants`` keeps the FIRST
-    occurrence of a given employee_id, so prepending in this order makes the
-    earlier source win a conflict."""
+    directory, the Talenox-sourced consultant master, then Airtable.
+    ``_dedupe_consultants`` keeps the FIRST occurrence of a given employee_id,
+    so prepending in this order makes the earlier source win a conflict."""
     merged = airtable_list
+    consultant_master = fetch_consultant_master(db)
+    if consultant_master:
+        merged = _dedupe_consultants(consultant_master + merged)
     hexaflow_directory = fetch_hexaflow_directory(db)
     if hexaflow_directory:
         merged = _dedupe_consultants(hexaflow_directory + merged)

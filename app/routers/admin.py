@@ -8,6 +8,7 @@ from app.config import TEMPLATES_DIR, ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_R
 from app.deps import get_current_user
 from app.services.db import get_db
 from app.services.bank_files import MY_BANK_CODES, bank_name_to_code
+from app.services.consultant_master_import import fetch_missing_fav_code_rows, set_fav_code_for_consultant
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -197,3 +198,31 @@ async def bank_overrides_delete(employee_id: str, request: Request):
     if db:
         db.from_("consultant_bank_overrides").delete().eq("employee_id", employee_id).execute()
     return RedirectResponse("/admin/bank-overrides", status_code=303)
+
+
+@router.get("/admin/missing-fav-codes")
+async def missing_fav_codes(request: Request):
+    """Standing list of every consultant_master consultant resolved to an APEX
+    id that doesn't have a Favourite Beneficiary Code yet -- the definitive
+    "still needs Maybank CMS registration" list, always current (unlike a
+    one-off CSV export)."""
+    user = get_current_user(request)
+    if user.get("role") not in _BANK_OVERRIDE_EDIT_ROLES:
+        return RedirectResponse("/", status_code=302)
+    db = get_db()
+    rows = fetch_missing_fav_code_rows(db) if db else []
+    return templates.TemplateResponse(request, "admin/missing_fav_codes.html", {
+        "user": user, "section": "admin", "rows": rows,
+    })
+
+
+@router.post("/admin/missing-fav-codes/{apex_employee_id}/set")
+async def missing_fav_codes_set(apex_employee_id: str, request: Request):
+    user = get_current_user(request)
+    if user.get("role") not in _BANK_OVERRIDE_EDIT_ROLES:
+        return RedirectResponse("/", status_code=302)
+    form = await request.form()
+    fav_code = (form.get("favourite_beneficiary_code") or "").strip()
+    if fav_code:
+        set_fav_code_for_consultant(apex_employee_id, fav_code, user.get("name") or user.get("email", ""))
+    return RedirectResponse("/admin/missing-fav-codes", status_code=303)

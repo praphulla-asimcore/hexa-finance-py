@@ -3,13 +3,16 @@ into bank-file generation (app/services/bank_files.py).
 
 SAFETY-CRITICAL: this data decides which bank account gets paid. Precedence
 must be consultant_bank_overrides (manual) > consultant_directory (HexaFlow)
-> Airtable, and it must apply uniformly regardless of whether the case being
-paid was itself ingested via HexaFlow or manually uploaded -- the merge only
-looks at employee_id, never at the case's own origin.
+> consultant_master (Talenox export) > Airtable, and it must apply uniformly
+regardless of whether the case being paid was itself ingested via HexaFlow or
+manually uploaded -- the merge only looks at employee_id, never at the case's
+own origin.
 
 Run: python -m pytest tests/test_consultant_directory.py
 """
-from app.services.bank_files import fetch_hexaflow_directory, build_consultant_list, match_consultant
+from app.services.bank_files import (
+    fetch_hexaflow_directory, fetch_consultant_master, build_consultant_list, match_consultant,
+)
 
 
 class _FakeResult:
@@ -29,16 +32,28 @@ class _FakeTable:
 
 
 class FakeDB:
-    def __init__(self, directory=None, overrides=None):
+    def __init__(self, directory=None, overrides=None, master=None):
         self._directory = directory or []
         self._overrides = overrides or []
+        self._master = master or []
 
     def from_(self, table):
         if table == "consultant_directory":
             return _FakeTable(self._directory)
         if table == "consultant_bank_overrides":
             return _FakeTable(self._overrides)
+        if table == "consultant_master":
+            return _FakeTable(self._master)
         return _FakeTable([])
+
+
+def master_row(entity="HSSB", employee_id="HC-01", apex_employee_id="E1",
+                name="Ahmad Bin Test", account="7778889990"):
+    return {
+        "entity": entity, "employee_id": employee_id, "apex_employee_id": apex_employee_id,
+        "consultant_name": name, "bank_name": "Public Bank", "bank_code": "PBBEMYKL",
+        "bank_account_number": account, "ic_number": "900101-14-5566", "ic_type": "NRIC",
+    }
 
 
 def directory_row(employee_id="E1", name="Ahmad Bin Test", bank_name="Maybank",
@@ -146,3 +161,57 @@ def test_hexaflow_directory_backs_a_manually_uploaded_consultant():
     matched = match_consultant(manual_csi_row, merged)
     assert matched is not None
     assert matched["accountNo"] == "4445556667"
+
+
+# ── consultant_master (Talenox export, replacing Airtable) ──────────────────
+
+def test_fetch_consultant_master_shapes_like_airtable_and_uses_apex_id():
+    db = FakeDB(master=[master_row()])
+    rows = fetch_consultant_master(db)
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["employeeId"] == "E1"          # apex_employee_id, not the raw HC-01
+    assert r["accountNo"] == "7778889990"
+    assert r["favouriteBeneficiaryCode"] == ""   # never originates here
+
+
+def test_fetch_consultant_master_falls_back_to_native_id_when_unresolved():
+    db = FakeDB(master=[master_row(apex_employee_id=None, employee_id="HC-77")])
+    rows = fetch_consultant_master(db)
+    assert rows[0]["employeeId"] == "HC-77"
+
+
+def test_consultant_master_wins_over_airtable_but_loses_to_hexaflow():
+    airtable_list = [{
+        "employeeNumber": "E1", "employeeId": "E1", "name": "Ahmad Bin Test",
+        "bankName": "CIMB", "accountNo": "1110002220", "idNumber": "", "idType": "",
+        "favouriteBeneficiaryCode": "F1",
+    }]
+    db = FakeDB(master=[master_row(account="7778889990")])
+    merged = build_consultant_list(db, airtable_list)
+    matched = match_consultant({"employeeId": "E1", "name": "Ahmad Bin Test"}, merged)
+    assert matched["accountNo"] == "7778889990"   # consultant_master, not Airtable
+
+    db2 = FakeDB(
+        master=[master_row(account="7778889990")],
+        directory=[directory_row(account="1112223334")],
+    )
+    merged2 = build_consultant_list(db2, airtable_list)
+    matched2 = match_consultant({"employeeId": "E1", "name": "Ahmad Bin Test"}, merged2)
+    assert matched2["accountNo"] == "1112223334"   # HexaFlow beats consultant_master
+
+
+def test_full_precedence_chain_with_all_four_sources():
+    airtable_list = [{
+        "employeeNumber": "E1", "employeeId": "E1", "name": "Ahmad Bin Test",
+        "bankName": "CIMB", "accountNo": "1110002220", "idNumber": "", "idType": "",
+        "favouriteBeneficiaryCode": "F1",
+    }]
+    db = FakeDB(
+        master=[master_row(account="7778889990")],
+        directory=[directory_row(account="1112223334")],
+        overrides=[override_row(account="9998887776")],
+    )
+    merged = build_consultant_list(db, airtable_list)
+    matched = match_consultant({"employeeId": "E1", "name": "Ahmad Bin Test"}, merged)
+    assert matched["accountNo"] == "9998887776"   # override still wins over everything
