@@ -474,6 +474,52 @@ def fetch_local_bank_overrides(db) -> list[dict]:
     ]
 
 
+def fetch_hexaflow_directory(db) -> list[dict]:
+    """Read consultant_directory -- the standing, cross-run consultant master
+    kept current by app/services/hexaflow_finance_profiles.py's finance-profile
+    pull -- and shape it like an Airtable record so match_consultant() sees it
+    transparently. Backs EVERY case, HexaFlow-ingested or manually uploaded,
+    since it's keyed by employee_id alone, not tied to any one run.
+
+    Never carries a Favourite Beneficiary Code: HexaFlow doesn't originate
+    that (it's a Maybank CMS artifact assigned only after manual registration)."""
+    try:
+        rows = (db.from_("consultant_directory")
+                  .select("*").execute().data or [])
+    except Exception:
+        return []
+    return [
+        {
+            "employeeNumber":            r["employee_id"],
+            "employeeId":                r["employee_id"],
+            "name":                      r.get("consultant_name") or "",
+            "bankName":                  r.get("bank_name") or "",
+            "accountNo":                 r.get("bank_account_number") or "",
+            "bankCode":                  r.get("bank_code") or "",
+            "idNumber":                  r.get("id_number") or "",
+            "idType":                    r.get("id_type") or "",
+            "favouriteBeneficiaryCode":  "",
+        }
+        for r in rows
+    ]
+
+
+def build_consultant_list(db, airtable_list: list[dict]) -> list[dict]:
+    """Merge every bank-detail source into one list, in precedence order
+    (highest first): manual overrides, the HexaFlow-sourced standing
+    directory, then Airtable. ``_dedupe_consultants`` keeps the FIRST
+    occurrence of a given employee_id, so prepending in this order makes the
+    earlier source win a conflict."""
+    merged = airtable_list
+    hexaflow_directory = fetch_hexaflow_directory(db)
+    if hexaflow_directory:
+        merged = _dedupe_consultants(hexaflow_directory + merged)
+    local_overrides = fetch_local_bank_overrides(db)
+    if local_overrides:
+        merged = _dedupe_consultants(local_overrides + merged)
+    return merged
+
+
 def _dedupe_consultants(records: list[dict]) -> list[dict]:
     """Collapse duplicate employee IDs, keeping the FIRST occurrence.
 
@@ -661,12 +707,11 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
         airtable_list = await fetch_airtable_consultants()
     except Exception:
         pass
-    # Local overrides prepended and deduped — they take priority over Airtable
-    # for the same employee_id. match_consultant sees them as ordinary
-    # consultant records.
-    local_overrides = fetch_local_bank_overrides(db)
-    if local_overrides:
-        airtable_list = _dedupe_consultants(local_overrides + airtable_list)
+    # Merge in the HexaFlow-sourced standing directory and manual overrides —
+    # precedence (highest first): consultant_bank_overrides > consultant_directory
+    # (HexaFlow) > Airtable. match_consultant sees the result as one ordinary
+    # consultant list.
+    airtable_list = build_consultant_list(db, airtable_list)
 
     notify_emails = BANK_NOTIFY_EMAILS
 

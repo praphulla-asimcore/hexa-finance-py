@@ -25,9 +25,10 @@ PII_ACCOUNT = "1234567890-super-secret-acct"
 PII_TIN = "TIN-98765-do-not-log"
 
 
-def full_profile(employee_id="E1"):
+def full_profile(employee_id="E1", name="Ahmad Bin Test"):
     return {
         "employee_id": employee_id,
+        "name": name,
         "id": {"id_type": "NRIC", "id_number": "900101-14-5566"},
         "bank": {"bank_name": "Maybank", "bank_account_number": PII_ACCOUNT, "bank_code": "MBB"},
         "statutory": {"epf_number": "EPF-1", "socso_number": "SOC-1",
@@ -105,6 +106,8 @@ class FakeCursor:
         s = str(sql)
         if "INSERT INTO consultant_finance_profiles" in s:
             self.state["upserts"].append(params)
+        elif "INSERT INTO consultant_directory" in s:
+            self.state["directory_upserts"].append(params)
         elif "UPDATE payroll_cases" in s and "finance_profile_count" in s:
             self.state["succeeded_update"] = params
         elif "UPDATE payroll_cases" in s:
@@ -127,7 +130,7 @@ class FakeConn:
 
 
 def _install_db_fakes(monkeypatch):
-    state = {"upserts": [], "status_updates": [], "succeeded_update": None}
+    state = {"upserts": [], "directory_upserts": [], "status_updates": [], "succeeded_update": None}
     monkeypatch.setattr(hx.psycopg, "connect", lambda *a, **k: FakeConn(state))
     monkeypatch.setattr(hx, "DATABASE_URL", "postgresql://test")
     return state
@@ -197,6 +200,23 @@ def test_success_stores_profiles_and_marks_succeeded(monkeypatch):
     sent = [r for r in db.audit if r["event_type"] == "FINANCE_PROFILE_PULL_SUCCEEDED"][0]
     assert sent["metadata"]["profile_count"] == 2
     assert sent["metadata"]["run_id"] == RUN_ID
+
+
+def test_success_also_upserts_standing_directory(monkeypatch):
+    """Every successful pull upserts the cross-run consultant_directory (keyed
+    by employee_id, not case_id) alongside the per-run audit trail -- this is
+    what makes the data usable for OTHER cases later, ingested or manual."""
+    _install_script(monkeypatch, [FakeResponse(200, {"profiles": [full_profile("E1", name="Ahmad Bin Test")]})])
+    db_state = _install_db_fakes(monkeypatch)
+    db = FakeDB()
+
+    _run(hx.pull_finance_profiles(db, CASE_ID, RUN_ID))
+
+    assert len(db_state["directory_upserts"]) == 1
+    params = db_state["directory_upserts"][0]
+    assert params[0] == "E1"                 # employee_id
+    assert params[1] == "Ahmad Bin Test"      # consultant_name
+    assert params[-1] == RUN_ID              # hexaflow_run_id (last param)
 
 
 def test_request_uses_expected_url_headers_and_params(monkeypatch):

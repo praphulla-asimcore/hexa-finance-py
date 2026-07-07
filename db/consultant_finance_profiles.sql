@@ -15,6 +15,7 @@ create table if not exists consultant_finance_profiles (
     case_id               uuid not null references payroll_cases (id),
     hexaflow_run_id       varchar(100) not null,
     employee_id           varchar(50)  not null,
+    consultant_name       varchar(200),
     id_type               varchar(50),
     id_number             text,
     bank_name             text,

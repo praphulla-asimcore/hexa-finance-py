@@ -25,11 +25,20 @@ Design notes
 * PII (bank/statutory/ID/salary values) and the key secret are never logged or
   put in audit metadata — only counts, status codes, and error types.
 * One case == one run_ref (duplicate run_ref is rejected at ingest), so the
-  roster stored here is inherently tied to the run it was pulled for and is
-  never overwritten by a different/later run's roster.
+  roster in ``consultant_finance_profiles`` is inherently tied to the run it
+  was pulled for and is never overwritten by a different/later run's roster —
+  it is an audit trail, not a live directory.
+* Every successful pull ALSO upserts ``consultant_directory``, a separate,
+  standing, employee_id-keyed table that IS meant to be current — latest pull
+  wins across runs. ``app/services/bank_files.py`` merges it into the same
+  consultant list Airtable and ``consultant_bank_overrides`` feed, so it backs
+  bank-file generation for every case (HexaFlow-ingested AND manually
+  uploaded), not just the run it came from. It never carries a Favourite
+  Beneficiary Code — HexaFlow doesn't originate that (a Maybank CMS artifact,
+  assigned only after manual registration).
 * Does not touch payment, invoice, or document-workflow state — only writes
-  ``consultant_finance_profiles`` rows and the ``finance_profile_*`` marker
-  columns on ``payroll_cases``.
+  ``consultant_finance_profiles``/``consultant_directory`` rows and the
+  ``finance_profile_*`` marker columns on ``payroll_cases``.
 """
 import asyncio
 import logging
@@ -136,6 +145,7 @@ def _extract_record(profile: dict) -> dict:
     stat_blk = profile.get("statutory") or {}
     return {
         "employee_id": str(profile.get("employee_id") or "").strip(),
+        "consultant_name": str(profile.get("name") or profile.get("consultant_name") or "").strip(),
         "id_type": id_blk.get("id_type"),
         "id_number": id_blk.get("id_number"),
         "bank_name": bank_blk.get("bank_name"),
@@ -170,9 +180,10 @@ def compute_missing_counts(records: list[dict]) -> dict:
 # ── storage ──────────────────────────────────────────────────────────────────
 
 def _store_and_mark_succeeded(case_id: str, run_id: str, records: list[dict], missing: dict) -> None:
-    """One transaction: upsert every profile row + flip the case marker to
-    succeeded. Upsert (not plain insert) so a retried pull for the same run is
-    idempotent instead of violating the unique constraint."""
+    """One transaction: upsert every profile row (both the per-run audit trail
+    and the standing cross-run directory) + flip the case marker to succeeded.
+    Upsert (not plain insert) so a retried pull for the same run is idempotent
+    instead of violating either table's unique constraint."""
     with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
         conn.prepare_threshold = None
         with conn.cursor() as cur:
@@ -180,13 +191,14 @@ def _store_and_mark_succeeded(case_id: str, run_id: str, records: list[dict], mi
                 cur.execute(
                     """
                     INSERT INTO consultant_finance_profiles
-                        (case_id, hexaflow_run_id, employee_id, id_type, id_number,
+                        (case_id, hexaflow_run_id, employee_id, consultant_name, id_type, id_number,
                          bank_name, bank_account_number, bank_code,
                          epf_number, socso_number, eis_number, tin_number,
                          salary_data, pulled_at)
-                    VALUES (%s,%s,%s,%s,%s, %s,%s,%s, %s,%s,%s,%s, %s, now())
+                    VALUES (%s,%s,%s,%s,%s,%s, %s,%s,%s, %s,%s,%s,%s, %s, now())
                     ON CONFLICT (case_id, employee_id) DO UPDATE SET
                         hexaflow_run_id     = EXCLUDED.hexaflow_run_id,
+                        consultant_name     = EXCLUDED.consultant_name,
                         id_type             = EXCLUDED.id_type,
                         id_number           = EXCLUDED.id_number,
                         bank_name           = EXCLUDED.bank_name,
@@ -199,10 +211,42 @@ def _store_and_mark_succeeded(case_id: str, run_id: str, records: list[dict], mi
                         salary_data         = EXCLUDED.salary_data,
                         pulled_at           = now()
                     """,
-                    [case_id, run_id, r["employee_id"], r["id_type"], r["id_number"],
+                    [case_id, run_id, r["employee_id"], r["consultant_name"], r["id_type"], r["id_number"],
                      r["bank_name"], r["bank_account_number"], r["bank_code"],
                      r["epf_number"], r["socso_number"], r["eis_number"], r["tin_number"],
                      Jsonb(r["salary_data"]) if r["salary_data"] is not None else None],
+                )
+                # Standing directory: latest pull wins across ALL runs, keyed by
+                # employee_id only (no case_id) -- this is what bank_files.py
+                # merges in for every case, ingested or manually uploaded.
+                cur.execute(
+                    """
+                    INSERT INTO consultant_directory
+                        (employee_id, consultant_name, id_type, id_number,
+                         bank_name, bank_account_number, bank_code,
+                         epf_number, socso_number, eis_number, tin_number,
+                         salary_data, source, hexaflow_run_id, updated_at)
+                    VALUES (%s,%s,%s,%s, %s,%s,%s, %s,%s,%s,%s, %s, 'HEXAFLOW', %s, now())
+                    ON CONFLICT (employee_id) DO UPDATE SET
+                        consultant_name     = EXCLUDED.consultant_name,
+                        id_type             = EXCLUDED.id_type,
+                        id_number           = EXCLUDED.id_number,
+                        bank_name           = EXCLUDED.bank_name,
+                        bank_account_number = EXCLUDED.bank_account_number,
+                        bank_code           = EXCLUDED.bank_code,
+                        epf_number          = EXCLUDED.epf_number,
+                        socso_number        = EXCLUDED.socso_number,
+                        eis_number          = EXCLUDED.eis_number,
+                        tin_number          = EXCLUDED.tin_number,
+                        salary_data         = EXCLUDED.salary_data,
+                        source              = 'HEXAFLOW',
+                        hexaflow_run_id     = EXCLUDED.hexaflow_run_id,
+                        updated_at          = now()
+                    """,
+                    [r["employee_id"], r["consultant_name"], r["id_type"], r["id_number"],
+                     r["bank_name"], r["bank_account_number"], r["bank_code"],
+                     r["epf_number"], r["socso_number"], r["eis_number"], r["tin_number"],
+                     Jsonb(r["salary_data"]) if r["salary_data"] is not None else None, run_id],
                 )
             cur.execute(
                 """
