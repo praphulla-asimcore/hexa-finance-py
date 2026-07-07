@@ -83,6 +83,15 @@ def parse_workbook(path: str) -> list[dict]:
     each data row is validated by its employee_id cell being non-blank and
     not one of those header artifacts -- robust to a sheet having a slightly
     different row count.
+
+    consultant_name prefers identification_full_name over first_name+last_name:
+    the split is inconsistent across sheets for the same person (e.g. one
+    sheet has first_name="Yu Onn"/last_name="Chai", another has them swapped),
+    while identification_full_name is consistently "Chai Yu Onn" everywhere
+    and matches CSI's own name order -- using the split caused false
+    id_conflict flags in bank_files.py for people whose split happened to
+    come out reversed relative to CSI (a real incident: HEX-0086/0091/0124
+    on CSI-HSSB-202607-7th-006).
     """
     from app.services.bank_files import bank_name_to_code
 
@@ -114,9 +123,9 @@ def parse_workbook(path: str) -> list[dict]:
             rows.append({
                 "entity": sheet_name,
                 "employee_id": eid,
-                "consultant_name": " ".join(
+                "consultant_name": _strip(get("identification_full_name")) or " ".join(
                     p for p in [_strip(get("first_name")), _strip(get("last_name"))] if p
-                ) or _strip(get("identification_full_name")),
+                ),
                 "ic_number": ic_number,
                 "ic_type": ic_type,
                 "nationality": _strip(get("nationality")),
