@@ -47,6 +47,7 @@ MY_BANK_CODES = {
     "bank muamalat": "BMMBMYKL",
     "hsbc": "HBMBMYKL", "hsbc bank": "HBMBMYKL",
     "ocbc": "OCBCMYKL",
+    "uob": "UOVBMYKL", "united overseas bank": "UOVBMYKL",
     "standard chartered": "SCBLMYKL",
     "affin": "PHBMMYKL", "affin bank": "PHBMMYKL",
     "alliance bank": "MFBBMYKL",
