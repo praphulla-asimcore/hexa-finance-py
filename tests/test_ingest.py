@@ -7,6 +7,7 @@ the first run's reference on the second call. Run: python -m pytest tests/test_i
 """
 import hashlib
 
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
@@ -24,12 +25,34 @@ API_KEY = "test-key"
 
 # ── fakes ────────────────────────────────────────────────────────────────────
 class FakeDBState:
-    """Shared across the fake PgClient and the fake psycopg cursor for one test,
-    so an INSERTed payroll_cases reference is visible to the next dup-check."""
+    """Shared across the fake PgClient and the fake psycopg cursor for one test.
+
+    Models a tiny in-memory `payroll_cases` table (rows carry reference,
+    case_key, ingest_payload_sha256) so the payload-aware pre-write lookups and
+    the raw-psycopg INSERT see a consistent view — and so the case_key unique
+    index can be simulated at INSERT time.
+    """
     def __init__(self):
-        self.references: set = set()
+        self.cases: list = []        # each: dict with id/reference/case_key/ingest_payload_sha256/...
         self.last_parsed = None      # parsed_data dict from the last payroll_cases INSERT
         self.last_status = None      # status from the last payroll_cases INSERT
+        # Optional hook fired at the START of a payroll_cases INSERT, before the
+        # unique-index check — used to simulate a concurrent writer committing
+        # between the pre-write lookup and our own INSERT (TOCTOU race).
+        self.on_insert_case = None
+
+    # convenience lookups (mirror the pre-write SELECTs)
+    def by_reference(self, ref):
+        return [c for c in self.cases if c.get("reference") == ref]
+
+    def by_case_key(self, ck):
+        return [c for c in self.cases if ck is not None and c.get("case_key") == ck]
+
+    def seed_case(self, **row):
+        """Insert a pre-existing case directly (e.g. a legacy NULL-hash row)."""
+        row.setdefault("id", f"seed-{len(self.cases)+1:04d}")
+        self.cases.append(row)
+        return row
 
 
 class _FakeResult:
@@ -48,11 +71,13 @@ class _FakeQuery:
     def limit(self, n): return self
 
     def execute(self):
-        # Only the duplicate-run_ref check needs real behaviour.
+        # The payload-aware pre-write lookups query payroll_cases by reference
+        # or case_key; everything else (audit-log inserts) is a no-op.
         if self._op == "select" and self.table == "payroll_cases":
-            ref = self._eq.get("reference")
-            if ref is not None and ref in self.state.references:
-                return _FakeResult([{"id": "existing"}])
+            if "reference" in self._eq:
+                return _FakeResult(list(self.state.by_reference(self._eq["reference"])))
+            if "case_key" in self._eq:
+                return _FakeResult(list(self.state.by_case_key(self._eq["case_key"])))
             return _FakeResult([])
         return _FakeResult([])      # inserts (audit log) / everything else
 
@@ -91,12 +116,35 @@ class FakeCursor:
             self._doc_n += 1
             self._fetch = {"id": f"doc-{self._doc_n}"}
         elif "INSERT INTO payroll_cases" in s:
-            if params:
-                self.state.references.add(params[0])     # run_ref → reference
-                self.state.last_status = params[6]       # status
-                pd = params[7]                            # parsed_data (Jsonb)
-                self.state.last_parsed = getattr(pd, "obj", pd)
-            self._fetch = {"id": "case-0001"}
+            # payroll_cases INSERT column order (see ingest.apex_ingest):
+            #  0 reference 1 type 2 entity 3 entity_name 4 period 5 seq_no
+            #  6 status 7 parsed_data 8 uploaded_by_name 9 uploaded_by_email
+            #  10 uploaded_at 11 case_key 12 ingest_payload_sha256
+            # Fire the race hook first (a concurrent writer may commit here).
+            if self.state.on_insert_case:
+                self.state.on_insert_case(self.state)
+            case_key = params[11] if params else None
+            # Simulate the partial unique index on case_key.
+            if case_key is not None and self.state.by_case_key(case_key):
+                raise psycopg.errors.UniqueViolation(
+                    f"duplicate key value violates unique constraint "
+                    f"payroll_cases_case_key_unique ({case_key})")
+            case_id = f"case-{len(self.state.cases)+1:04d}"
+            pd = params[7] if params else None
+            row = {
+                "id": case_id,
+                "reference": params[0] if params else None,
+                "entity": params[2] if params else None,
+                "period": params[4] if params else None,
+                "status": params[6] if params else None,
+                "case_key": case_key,
+                "ingest_payload_sha256": params[12] if params else None,
+                "parsed_data": getattr(pd, "obj", pd),
+            }
+            self.state.cases.append(row)
+            self.state.last_status = row["status"]
+            self.state.last_parsed = row["parsed_data"]
+            self._fetch = {"id": case_id}
         else:
             self._fetch = None                           # UPDATE …
 
@@ -176,13 +224,20 @@ def test_hash_mismatch_returns_400_tampered(client):
     assert r.json()["error_code"] == "DOCUMENT_TAMPERED"
 
 
-def test_duplicate_run_ref_second_call_returns_409(client):
+def test_duplicate_run_ref_identical_payload_returns_200_duplicate(client, state):
+    # Phase 1A contract change: an identical retry of the same run_ref is now an
+    # idempotent 200 duplicate (was 409 DUPLICATE_RUN_REF), with no second case.
     payload = make_payload("RUN-DUP")
     first = client.post("/api/apex/ingest", json=payload, headers=_hdr())
     assert first.status_code == 201
     second = client.post("/api/apex/ingest", json=payload, headers=_hdr())
-    assert second.status_code == 409
-    assert second.json()["error_code"] == "DUPLICATE_RUN_REF"
+    assert second.status_code == 200
+    body = second.json()
+    assert body["status"] == "duplicate"
+    assert body["case_id"] == first.json()["case_id"]     # same case, no new row
+    assert body["run_ref"] == "RUN-DUP"
+    assert body["case_key"] == first.json()["case_key"]
+    assert len(state.cases) == 1                           # no additional row
 
 
 def test_missing_required_field_returns_422(client):
@@ -295,12 +350,12 @@ def test_hexaflow_invalid_period_month_rejected(client):
     assert any("period_month" in e for e in r.json()["errors"])
 
 
-def test_hexaflow_duplicate_run_ref_returns_409(client):
+def test_hexaflow_duplicate_run_ref_identical_returns_200_duplicate(client):
     payload = make_hexaflow_payload(run_ref="HEXA-CSI:dup")
     assert client.post("/api/apex/ingest", json=payload, headers=_hdr()).status_code == 201
     second = client.post("/api/apex/ingest", json=payload, headers=_hdr())
-    assert second.status_code == 409
-    assert second.json()["error_code"] == "DUPLICATE_RUN_REF"
+    assert second.status_code == 200
+    assert second.json()["status"] == "duplicate"
 
 
 def test_totals_whitelisted(client, state):
