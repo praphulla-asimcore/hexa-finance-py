@@ -164,15 +164,33 @@
       <p style="margin:0 0 10px;font-size:13px;color:#92400e">
         <strong>Exceptions detected.</strong> You may proceed to Step 3 (approve with exceptions acknowledged), or return this run to the Arranger to fix the consultant data.
       </p>
-      <button class="btn btn-secondary"
+      <button type="button" id="return-to-arranger-trigger" class="btn btn-secondary"
           style="border-color:#f59e0b;color:#92400e"
-          hx-post="/cases/{{ kase.id }}/return-to-preparer"
-          hx-target="#case-detail-inner"
-          hx-swap="innerHTML"
-          hx-confirm="Return this run to the Arranger? The Arranger will be notified to fix the consultant data in the database. The Preparer will be notified to wait.">
-        <span class="spinner htmx-indicator"></span>
+          onclick="document.getElementById('return-to-arranger-trigger').style.display='none';
+                   document.getElementById('return-to-arranger-confirm').style.display='flex';">
         Return to Arranger
       </button>
+      <div id="return-to-arranger-confirm" style="display:none;flex-direction:column;gap:8px;margin-top:8px">
+        <p style="margin:0;font-size:12px;color:#92400e">
+          Return this run to the Arranger? The Arranger will be notified to fix the consultant data in the database. The Preparer will be notified to wait.
+        </p>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-secondary"
+              style="border-color:#f59e0b;color:#92400e"
+              hx-post="/cases/{{ kase.id }}/return-to-preparer"
+              hx-target="#case-detail-inner"
+              hx-swap="innerHTML"
+              hx-indicator=".spinner">
+            <span class="spinner htmx-indicator"></span>
+            Yes, Return to Arranger
+          </button>
+          <button type="button" class="btn btn-secondary"
+              onclick="document.getElementById('return-to-arranger-confirm').style.display='none';
+                       document.getElementById('return-to-arranger-trigger').style.display='inline-flex';">
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
     {% endif %}
 
