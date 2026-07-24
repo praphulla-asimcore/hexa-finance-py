@@ -538,11 +538,23 @@ def fetch_consultant_master(db) -> list[dict]:
 
 
 def build_consultant_list(db, airtable_list: list[dict]) -> list[dict]:
-    """Merge every bank-detail source into one list, in precedence order
-    (highest first): manual overrides, the HexaFlow-sourced standing
-    directory, the Talenox-sourced consultant master, then Airtable.
+    """Merge bank-detail sources into one list, in precedence order (highest
+    first): manual overrides, the HexaFlow-sourced standing directory, the
+    Talenox-sourced consultant master, then ``airtable_list`` if given.
     ``_dedupe_consultants`` keeps the FIRST occurrence of a given employee_id,
-    so prepending in this order makes the earlier source win a conflict."""
+    so prepending in this order makes the earlier source win a conflict.
+
+    Real bank-matching callers now pass ``airtable_list=[]``: Airtable is
+    deprecated (the business team stopped maintaining it) and a single stale
+    row can carry an Employee Number and Employee ID that disagree with each
+    other — one field matching one person, the other matching someone
+    unrelated. Since match_consultant checks both fields independently, that
+    one row can pollute ``id_hits`` for two different people at once, making
+    an otherwise-unique consultant_master match look ambiguous and get
+    silently refused. Airtable can only make this safety-critical match
+    worse, never better, once consultant_master exists — the ``airtable_list``
+    parameter is kept only for tests and any future reference lookup that
+    still wants it."""
     merged = airtable_list
     consultant_master = fetch_consultant_master(db)
     if consultant_master:
@@ -745,16 +757,14 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
     value_date = f"{dy}{mo}{yr}"
     mmyy = f"{mo}{yr[2:]}"
 
-    airtable_list: list[dict] = []
-    try:
-        airtable_list = await fetch_airtable_consultants()
-    except Exception:
-        pass
-    # Merge in the HexaFlow-sourced standing directory and manual overrides —
-    # precedence (highest first): consultant_bank_overrides > consultant_directory
-    # (HexaFlow) > Airtable. match_consultant sees the result as one ordinary
-    # consultant list.
-    airtable_list = build_consultant_list(db, airtable_list)
+    # consultant_master / consultant_directory (HexaFlow) / consultant_bank_overrides
+    # only — Airtable is deliberately excluded here. It's deprecated (the
+    # business team stopped maintaining it) and can carry stale/duplicate
+    # Employee IDs that collide with a clean consultant_master record, making
+    # match_consultant's ID lookup ambiguous and silently dropping someone
+    # who actually has valid bank data on file — i.e. it can only make this
+    # safety-critical match worse, never better, once consultant_master exists.
+    airtable_list = build_consultant_list(db, [])
 
     notify_emails = BANK_NOTIFY_EMAILS
 
