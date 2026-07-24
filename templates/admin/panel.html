@@ -112,6 +112,16 @@
       </div>
 
       {% if user.role in ['admin', 'preparer', 'arranger'] %}
+      {# ── Consultants ── #}
+      <div class="modal-section">
+        <div class="modal-section-title">Consultants</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">
+          Add or edit a consultant's identity, bank details, and statutory numbers directly —
+          same table the Talenox export imports into, no re-upload needed for a single fix.
+        </div>
+        <a href="/admin/consultants" class="btn btn-primary btn-sm">Manage Consultants →</a>
+      </div>
+
       {# ── Consultant Bank Overrides ── #}
       <div class="modal-section">
         <div class="modal-section-title">Consultant Bank Overrides</div>

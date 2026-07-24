@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+
+{% macro consultant_form(action, c, submit_label, form_id, lock_keys, fav_code) %}
+<form method="post" action="{{ action }}" id="{{ form_id }}" class="cm-form">
+  <div class="cm-section">
+    <div class="cm-section-title">Identity</div>
+    <div class="cm-grid">
+      <div><label class="label">Entity <span class="req">*</span></label>
+        {% if lock_keys %}
+        <input class="input" value="{{ c.entity }}" disabled>
+        <input type="hidden" name="entity" value="{{ c.entity }}">
+        {% else %}
+        <select class="input" name="entity" required>
+          <option value="">—</option>
+          {% for e in entities %}
+          <option value="{{ e }}" {% if c and c.entity == e %}selected{% endif %}>{{ e }}</option>
+          {% endfor %}
+        </select>
+        {% endif %}
+      </div>
+      <div><label class="label">Employee ID (Talenox) <span class="req">*</span></label>
+        <input class="input" name="employee_id" required placeholder="HEX-0000 / HC-24 / 358"
+               value="{{ c.employee_id if c else '' }}" {% if lock_keys %}readonly{% endif %}></div>
+      <div><label class="label">APEX Employee ID</label>
+        <input class="input" name="apex_employee_id" placeholder="HEX-0000 (blank if not onboarded yet)"
+               value="{{ (c.apex_employee_id or '') if c else '' }}"></div>
+      <div><label class="label">Full Legal Name <span class="req">*</span></label>
+        <input class="input" name="consultant_name" required value="{{ c.consultant_name if c else '' }}"></div>
+      <div><label class="label">IC / Passport Number</label>
+        <input class="input" name="ic_number" value="{{ (c.ic_number or '') if c else '' }}"></div>
+      <div><label class="label">IC Type</label>
+        <select class="input" name="ic_type">
+          <option value="">—</option>
+          <option value="NRIC" {% if c and c.ic_type == 'NRIC' %}selected{% endif %}>NRIC</option>
+          <option value="Passport" {% if c and c.ic_type == 'Passport' %}selected{% endif %}>Passport</option>
+        </select></div>
+      <div><label class="label">Nationality</label>
+        <input class="input" name="nationality" value="{{ (c.nationality or '') if c else '' }}"></div>
+    </div>
+  </div>
+
+  <div class="cm-section">
+    <div class="cm-section-title">Bank Details</div>
+    <div class="cm-grid">
+      <div><label class="label">Bank Name</label>
+        <select class="input" name="bank_name">
+          <option value="">—</option>
+          {% for b in bank_names %}
+          <option value="{{ b }}" {% if c and c.bank_name and c.bank_name|lower == b|lower %}selected{% endif %}>{{ b }}</option>
+          {% endfor %}
+        </select></div>
+      <div><label class="label">Bank Account Name</label>
+        <input class="input" name="bank_account_name" value="{{ (c.bank_account_name or '') if c else '' }}"></div>
+      <div><label class="label">Bank Account Number</label>
+        <input class="input" name="bank_account_number" value="{{ (c.bank_account_number or '') if c else '' }}"></div>
+      <div><label class="label">Favourite Beneficiary Code</label>
+        <input class="input" name="favourite_beneficiary_code" placeholder="Maybank CMS code (needs an APEX id above)"
+               value="{{ fav_code or '' }}"></div>
+    </div>
+  </div>
+
+  <div class="cm-section">
+    <div class="cm-section-title">Statutory</div>
+    <div class="cm-grid">
+      <div><label class="label">EPF Number</label>
+        <input class="input" name="epf_number" value="{{ (c.epf_number or '') if c else '' }}"></div>
+      <div><label class="label">TIN / PCB Number</label>
+        <input class="input" name="tin_number" value="{{ (c.tin_number or '') if c else '' }}"></div>
+      <div><label class="label">Resign Date</label>
+        <input class="input" type="date" name="resign_date" value="{{ (c.resign_date or '') if c else '' }}"></div>
+    </div>
+  </div>
+
+  <button type="submit" class="btn btn-primary btn-sm">{{ submit_label }}</button>
+</form>
+{% endmacro %}
+
+{% block content %}
+<div class="cp-page">
+  <div class="cp-head">
+    <div>
+      <h1 class="cp-title">Consultants</h1>
+      <div class="cp-sub">
+        {{ total }} consultant(s) in consultant_master (from the Talenox export). Adding or editing here writes
+        directly to that same table — identical to a 1-row re-import — plus an optional Favourite Beneficiary
+        Code, which is stored separately in the override layer.
+      </div>
+    </div>
+    <button class="btn btn-primary" onclick="cpToggle('add-form')">+ Add Consultant</button>
+  </div>
+
+  <form method="get" action="/admin/consultants" style="margin-bottom:14px;display:flex;gap:8px">
+    <input class="input" type="text" name="q" value="{{ q }}" placeholder="Search by name, Employee ID, or APEX ID…" style="max-width:320px">
+    <button type="submit" class="btn btn-secondary btn-sm">Search</button>
+    {% if q %}<a href="/admin/consultants" class="btn btn-secondary btn-sm">Clear</a>{% endif %}
+  </form>
+  {% if not q %}
+  <div style="font-size:12px;color:var(--text-muted);margin:-6px 0 14px">
+    Showing the 30 most recently added/updated. Search above to find anyone else.
+  </div>
+  {% endif %}
+
+  <div id="add-form" class="cp-addbox" style="display:none">
+    {{ consultant_form('/admin/consultants/new', none, 'Save Consultant', 'addform', false, none) }}
+  </div>
+
+  <table class="admin-table cp-table">
+    <thead><tr>
+      <th>Entity</th><th>Employee ID</th><th>APEX ID</th><th>Name</th>
+      <th>Bank</th><th>Account No.</th><th>Fav. Code</th><th>Updated</th><th>Actions</th>
+    </tr></thead>
+    <tbody>
+      {% for c in consultants %}
+      {% set row_id = (c.entity ~ '-' ~ c.employee_id)|replace(' ', '_') %}
+      <tr>
+        <td>{{ c.entity }}</td>
+        <td><strong>{{ c.employee_id }}</strong></td>
+        <td>{{ c.apex_employee_id or '—' }}</td>
+        <td style="text-align:left">{{ c.consultant_name }}</td>
+        <td>{{ c.bank_name or '—' }}</td>
+        <td>{{ c.bank_account_number or '—' }}</td>
+        <td>{{ fav_by_apex_id.get(c.apex_employee_id) or '—' }}</td>
+        <td style="font-size:11px;color:var(--text-muted)">{{ c.imported_at[:10] if c.imported_at else '—' }}</td>
+        <td style="white-space:nowrap">
+          <button class="btn btn-secondary btn-sm" onclick="cpToggle('edit-{{ row_id }}')">Edit</button>
+          {% if user.role == 'admin' %}
+          <form method="post" action="/admin/consultants/{{ c.entity }}/{{ c.employee_id }}/delete" style="display:inline"
+                onsubmit="return confirm('Remove {{ c.consultant_name }} ({{ c.entity }}/{{ c.employee_id }}) from consultant_master?')">
+            <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      <tr id="edit-{{ row_id }}" style="display:none">
+        <td colspan="9" class="cp-editcell">
+          {{ consultant_form('/admin/consultants/' ~ c.entity ~ '/' ~ c.employee_id ~ '/edit', c, 'Save Changes',
+                              'edit-form-' ~ row_id, true, fav_by_apex_id.get(c.apex_employee_id)) }}
+        </td>
+      </tr>
+      {% endfor %}
+      {% if not consultants %}
+      <tr><td colspan="9" style="color:var(--text-muted);padding:18px">
+        {% if q %}No consultants match "{{ q }}".{% else %}No consultants yet. Add one above.{% endif %}
+      </td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+<style>
+.cp-page { padding: 24px 28px; max-width: 1200px; }
+.cp-head { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:18px; }
+.cp-title { font-size:20px; font-weight:800; color:var(--text-primary); margin:0; }
+.cp-sub { font-size:12px; color:var(--text-muted); margin-top:4px; max-width:640px; }
+.cp-addbox, .cp-editcell { background:var(--surface,#fff); border:1px solid var(--border); border-radius:10px; padding:14px; }
+.cp-addbox { margin-bottom:16px; }
+.cp-table th, .cp-table td { text-align:center; }
+.cp-table th:nth-child(4), .cp-table td:nth-child(4) { text-align:left; }
+.cm-section { margin-bottom:14px; }
+.cm-section-title { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:var(--text-muted); margin-bottom:8px; }
+.cm-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+</style>
+<script>
+function cpToggle(id){ var e=document.getElementById(id); e.style.display=(e.style.display==='none'?'':'none'); }
+</script>
+{% endblock %}

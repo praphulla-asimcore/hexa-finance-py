@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime, timezone
 
 import psycopg
@@ -8,7 +9,10 @@ from app.config import TEMPLATES_DIR, ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_R
 from app.deps import get_current_user
 from app.services.db import get_db
 from app.services.bank_files import MY_BANK_CODES, bank_name_to_code
-from app.services.consultant_master_import import fetch_missing_fav_code_rows, set_fav_code_for_consultant
+from app.services.consultant_master_import import (
+    fetch_missing_fav_code_rows, set_fav_code_for_consultant,
+    upsert_consultant_master, _parse_date,
+)
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -226,3 +230,116 @@ async def missing_fav_codes_set(apex_employee_id: str, request: Request):
     if fav_code:
         set_fav_code_for_consultant(apex_employee_id, fav_code, user.get("name") or user.get("email", ""))
     return RedirectResponse("/admin/missing-fav-codes", status_code=303)
+
+
+# ─── Manual consultant_master entry (add someone the Talenox export doesn't
+#     have, or fix one row, without a full re-import) ─────────────────────────
+
+CONSULTANT_ENTITIES = ("HSSB", "HCSSB", "HEDU", "DATACRATS")
+_HEX_ID_RE = re.compile(r"^HEX-\d+$", re.IGNORECASE)
+
+
+def _consultant_form_to_row(form) -> dict:
+    bank_name = (form.get("bank_name") or "").strip()
+    apex_id = (form.get("apex_employee_id") or "").strip().upper() or None
+    if apex_id and not _HEX_ID_RE.match(apex_id):
+        # Never store a malformed APEX id -- match_consultant requires an
+        # exact HEX-xxxx match, so a typo here would just silently never match.
+        apex_id = None
+    return {
+        "entity":               (form.get("entity") or "").strip().upper(),
+        "employee_id":          (form.get("employee_id") or "").strip(),
+        "apex_employee_id":     apex_id,
+        "consultant_name":      (form.get("consultant_name") or "").strip(),
+        "ic_number":            (form.get("ic_number") or "").strip(),
+        "ic_type":              (form.get("ic_type") or "").strip(),
+        "nationality":          (form.get("nationality") or "").strip(),
+        "bank_name":            bank_name,
+        "bank_code":            bank_name_to_code(bank_name),
+        "bank_account_name":    (form.get("bank_account_name") or "").strip(),
+        "bank_account_number":  (form.get("bank_account_number") or "").strip().replace(" ", ""),
+        "epf_number":           (form.get("epf_number") or "").strip(),
+        "tin_number":           (form.get("tin_number") or "").strip(),
+        "resign_date":          _parse_date(form.get("resign_date")),
+    }
+
+
+def _save_consultant(form, updated_by: str) -> None:
+    row = _consultant_form_to_row(form)
+    if not (row["entity"] and row["employee_id"] and row["consultant_name"]):
+        return
+    upsert_consultant_master([row])
+    fav_code = (form.get("favourite_beneficiary_code") or "").strip()
+    if fav_code and row["apex_employee_id"]:
+        set_fav_code_for_consultant(row["apex_employee_id"], fav_code, updated_by)
+
+
+@router.get("/admin/consultants")
+async def consultants_list(request: Request, q: str = ""):
+    """Manual view onto consultant_master -- the same table the bulk Talenox
+    import writes to, so an add/edit here behaves exactly like a 1-row import.
+    Defaults to the 30 most-recently-touched rows; search (name/employee id/
+    APEX id) to find anyone else, since the table can hold 300+ rows."""
+    user = get_current_user(request)
+    if user.get("role") not in _BANK_OVERRIDE_EDIT_ROLES:
+        return RedirectResponse("/", status_code=302)
+    db = get_db()
+    rows, total = [], 0
+    fav_by_apex_id: dict = {}
+    if db:
+        all_rows = db.from_("consultant_master").select("*").execute().data or []
+        total = len(all_rows)
+        if q.strip():
+            ql = q.strip().lower()
+            rows = [r for r in all_rows if
+                    ql in (r.get("consultant_name") or "").lower()
+                    or ql in (r.get("employee_id") or "").lower()
+                    or ql in (r.get("apex_employee_id") or "").lower()]
+            rows.sort(key=lambda r: (r.get("consultant_name") or "").lower())
+        else:
+            rows = sorted(all_rows, key=lambda r: r.get("imported_at") or "", reverse=True)[:30]
+        overrides = db.from_("consultant_bank_overrides").select(
+            "employee_id,favourite_beneficiary_code").execute().data or []
+        fav_by_apex_id = {
+            o["employee_id"]: o.get("favourite_beneficiary_code")
+            for o in overrides if o.get("favourite_beneficiary_code")
+        }
+    return templates.TemplateResponse(request, "admin/consultants.html", {
+        "user": user, "section": "admin", "consultants": rows, "q": q, "total": total,
+        "entities": CONSULTANT_ENTITIES,
+        "bank_names": sorted({n.title() for n in MY_BANK_CODES}),
+        "fav_by_apex_id": fav_by_apex_id,
+    })
+
+
+@router.post("/admin/consultants/new")
+async def consultants_new(request: Request):
+    user = get_current_user(request)
+    if user.get("role") not in _BANK_OVERRIDE_EDIT_ROLES:
+        return RedirectResponse("/", status_code=302)
+    if get_db():
+        _save_consultant(await request.form(), user.get("name") or user.get("email", ""))
+    return RedirectResponse("/admin/consultants", status_code=303)
+
+
+@router.post("/admin/consultants/{entity}/{employee_id}/edit")
+async def consultants_edit(entity: str, employee_id: str, request: Request):
+    user = get_current_user(request)
+    if user.get("role") not in _BANK_OVERRIDE_EDIT_ROLES:
+        return RedirectResponse("/", status_code=302)
+    if get_db():
+        form = dict(await request.form())
+        form["entity"], form["employee_id"] = entity, employee_id  # path is authoritative
+        _save_consultant(form, user.get("name") or user.get("email", ""))
+    return RedirectResponse("/admin/consultants", status_code=303)
+
+
+@router.post("/admin/consultants/{entity}/{employee_id}/delete")
+async def consultants_delete(entity: str, employee_id: str, request: Request):
+    user = get_current_user(request)
+    if user.get("role") != "admin":
+        return RedirectResponse("/", status_code=302)
+    db = get_db()
+    if db:
+        db.from_("consultant_master").delete().eq("entity", entity).eq("employee_id", employee_id).execute()
+    return RedirectResponse("/admin/consultants", status_code=303)
