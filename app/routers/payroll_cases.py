@@ -24,7 +24,8 @@ from app.services.zoho import (
 )
 from app.services.bank_files import (
     generate_and_store_bank_files, generate_and_store_bank_files_payroll,
-    fetch_airtable_consultants, match_consultant, id_conflict, DOC_GATE_CODES,
+    fetch_airtable_consultants, build_consultant_list, match_consultant,
+    id_conflict, DOC_GATE_CODES,
 )
 from app.services.pdf import build_check_report_pdf, build_audit_package_pdf
 from app.services.email import (
@@ -210,9 +211,11 @@ async def _create_or_update_statutory(kase: dict, db, triggered_by: str) -> None
     entity_name = kase.get("entity_name", "")
     case_id     = kase["id"]
 
-    # Fetch Airtable for statutory reference numbers (EPF No, SOCSO No, TIN)
+    # Fetch Airtable for statutory reference numbers (EPF No, SOCSO No, TIN),
+    # merged with consultant_master / overrides so consultants sourced there
+    # (not yet in Airtable) are still resolved.
     try:
-        airtable_list = await fetch_airtable_consultants()
+        airtable_list = build_consultant_list(db, await fetch_airtable_consultants())
     except Exception:
         airtable_list = []
 
@@ -1866,10 +1869,12 @@ async def _upload_case_inner(
         return _upload_err("No valid data found in file. Check column headers.")
 
     # Fetch Airtable consultant list for statutory enrichment + bank-detail
-    # checks (both flows; non-blocking).
+    # checks (both flows; non-blocking), merged with consultant_master /
+    # overrides so the check engine sees the same consultant universe as the
+    # bank-file generator (build_consultant_list).
     airtable_list = None
     try:
-        airtable_list = await fetch_airtable_consultants()
+        airtable_list = build_consultant_list(db, await fetch_airtable_consultants())
     except Exception:
         pass  # proceed without Airtable if fetch fails
 
@@ -2024,10 +2029,12 @@ async def gen_check(case_id: str, request: Request):
     # Airtable powers the id-conflict / consultant-match flags for CSI; fetch it
     # here so a manually-uploaded case produces the same flags it would have when
     # the check was generated inline at upload time. Non-blocking on failure.
+    # Merged with consultant_master / overrides (build_consultant_list) so the
+    # check engine sees the same consultant universe as the bank-file generator.
     airtable_list = None
     if case_type != "PAYROLL":
         try:
-            airtable_list = await fetch_airtable_consultants()
+            airtable_list = build_consultant_list(db, await fetch_airtable_consultants())
         except Exception:
             pass
 
@@ -3020,7 +3027,7 @@ async def reupload_case(
 
     airtable_list = None
     try:
-        airtable_list = await fetch_airtable_consultants()
+        airtable_list = build_consultant_list(db, await fetch_airtable_consultants())
     except Exception:
         pass
 

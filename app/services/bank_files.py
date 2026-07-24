@@ -614,9 +614,7 @@ def match_consultant(emp: dict, airtable_list: list[dict]):
         ]
         if len(id_hits) == 1:
             cand = _norm_name(id_hits[0]["name"])
-            if emp_name and cand and (
-                emp_name == cand or emp_name in cand or cand in emp_name
-            ):
+            if _names_agree(emp_name, cand):
                 return id_hits[0]
             return None   # ID points at a different name → conflict, refuse
         if len(id_hits) > 1:
@@ -633,9 +631,18 @@ def match_consultant(emp: dict, airtable_list: list[dict]):
 
 def _names_agree(a: str, b: str) -> bool:
     """True when two already-normalised names corroborate the same person — equal,
-    or one a whole-string substring of the other (CSI nickname vs full legal name).
-    Both must be non-empty; unrelated names never agree."""
-    return bool(a) and bool(b) and (a == b or a in b or b in a)
+    or one name's words are a subset of the other's (CSI nickname/short name vs
+    full legal name, including a legitimate inserted middle name, e.g. "stephen
+    buxton" vs "stephen james buxton"). Word-set based rather than character
+    substring so an unrelated name can't accidentally collide via a partial-word
+    match (e.g. "lim" inside "delima"). Both must be non-empty; unrelated names
+    never agree."""
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    words_a, words_b = set(a.split()), set(b.split())
+    return words_a.issubset(words_b) or words_b.issubset(words_a)
 
 
 def id_conflict(emp: dict, airtable_list: list[dict]):
