@@ -30,6 +30,10 @@ from app.services.db import get_db
 from app.routers.payroll_cases import _audit_log, _get_ip, _now, _sha256
 from app.services.statutory_rates import is_local_national
 from app.services.hexaflow_finance_profiles import pull_finance_profiles
+from app.services.ingest_identity import (
+    CanonicalCycleError, canonical_cycle, build_case_key,
+    canonical_ingest_payload, compute_ingest_sha256,
+)
 
 router = APIRouter()
 logger = logging.getLogger("hexa.ingest")
@@ -119,6 +123,64 @@ def _validate(body: dict) -> list[str]:
     return errors
 
 
+# ─── idempotency / conflict resolution ─────────────────────────────────────────
+
+def _resolve_existing(db, *, run_ref, case_key, payload_hash, entity, period_month, cycle):
+    """Decide the payload-aware ingest outcome against already-stored cases.
+
+    Returns a JSONResponse to short-circuit with (no write performed), or None to
+    proceed with creation. Used BOTH before writing (fast path) and again after a
+    case_key unique-index collision (the concurrent-writer path), so the two paths
+    always return the identical contract.
+
+    Precedence: an existing row for the SAME run_ref is resolved first (idempotent
+    duplicate / conflict / legacy fail-closed); only then is a different run_ref
+    landing on the same case_key reported as CASE_ALREADY_EXISTS.
+    """
+    by_ref = (db.from_("payroll_cases")
+                .select("id, ingest_payload_sha256, case_key")
+                .eq("reference", run_ref).limit(1).execute())
+    if by_ref.data:
+        row = by_ref.data[0]
+        stored = row.get("ingest_payload_sha256")
+        existing_id = str(row.get("id"))
+        existing_key = row.get("case_key") or case_key
+        if not stored:
+            # Legacy row with no verifiable stored hash: never assume duplicate.
+            return _json(409, {
+                "error_code": "UNVERIFIED_EXISTING_RUN_REF",
+                "message": "An existing case shares this run_ref but has no "
+                           "verifiable stored payload hash; refusing to assume a "
+                           "duplicate.",
+                "run_ref": run_ref, "case_id": existing_id})
+        if stored == payload_hash:
+            # Identical canonical payload: idempotent no-op.
+            return _json(200, {
+                "status": "duplicate", "case_id": existing_id,
+                "case_key": existing_key, "run_ref": run_ref})
+        # Same run_ref, different canonical payload: hard conflict.
+        return _json(409, {
+            "error_code": "RUN_REF_CONFLICT",
+            "message": "This run_ref already exists with a different payload.",
+            "run_ref": run_ref, "case_id": existing_id})
+
+    by_key = (db.from_("payroll_cases")
+                .select("id, reference")
+                .eq("case_key", case_key).limit(1).execute())
+    if by_key.data:
+        row = by_key.data[0]
+        # Only safe identifying fields needed for reconciliation.
+        return _json(409, {
+            "error_code": "CASE_ALREADY_EXISTS",
+            "message": "A case already exists for this entity, period and cycle.",
+            "case_key": case_key,
+            "existing_case_id": str(row.get("id")),
+            "existing_run_ref": row.get("reference"),
+            "entity": entity, "period_month": period_month, "cycle": cycle})
+
+    return None
+
+
 # ─── endpoint ──────────────────────────────────────────────────────────────────
 
 @router.post("/api/apex/ingest")
@@ -165,14 +227,29 @@ async def apex_ingest(request: Request):
         if isinstance(_raw_totals, dict) else None
     )
 
+    # ── Step 1b: canonical identity (case_key) + payload hash ────────────────
+    # Both are pure functions of the validated payload. An unrecognised cycle is
+    # a validation failure (fail loud, never silently mis-key a case).
+    try:
+        cycle = canonical_cycle(cycle_code)
+        case_key = build_case_key(entity=entity, period_month=period_month, cycle_code=cycle_code)
+    except CanonicalCycleError as e:
+        return _json(422, {"error_code": "VALIDATION_ERROR",
+                           "message": "Missing or invalid fields", "errors": [str(e)]})
+    payload_hash = compute_ingest_sha256(canonical_ingest_payload(
+        entity=entity, period_month=period_month, cycle_code=cycle_code,
+        consultants=consultants, totals=totals))
+
     db = get_db()
     if not db:
         return _json(503, {"error_code": "DB_UNAVAILABLE", "message": "Database not configured"})
 
-    # ── Step 2: reject duplicate run_ref (mapped to payroll_cases.reference) ──
-    dup = db.from_("payroll_cases").select("id").eq("reference", run_ref).limit(1).execute()
-    if dup.data:
-        return _json(409, {"error_code": "DUPLICATE_RUN_REF", "message": "Duplicate run_ref"})
+    # ── Step 2: payload-aware idempotency / conflict (no write on any hit) ────
+    resolved = _resolve_existing(
+        db, run_ref=run_ref, case_key=case_key, payload_hash=payload_hash,
+        entity=entity, period_month=period_month, cycle=cycle)
+    if resolved is not None:
+        return resolved
 
     # ── Step 3: re-download every document and verify its SHA-256 ────────────
     # Keep the verified bytes in memory so step 5 doesn't download twice.
@@ -303,12 +380,14 @@ async def apex_ingest(request: Request):
                     """
                     INSERT INTO payroll_cases
                         (reference, type, entity, entity_name, period, seq_no, status,
-                         parsed_data, uploaded_by_name, uploaded_by_email, uploaded_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                         parsed_data, uploaded_by_name, uploaded_by_email, uploaded_at,
+                         case_key, ingest_payload_sha256)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     RETURNING id
                     """,
                     [run_ref, "CSI", entity, entity, period_month, seq_no, _CASE_STATUS,
-                     Jsonb(parsed), generated_by, generated_by, _now()],
+                     Jsonb(parsed), generated_by, generated_by, _now(),
+                     case_key, payload_hash],
                 )
                 case_id = cur.fetchone()["id"]
 
@@ -319,6 +398,20 @@ async def apex_ingest(request: Request):
                         [case_id, inserted_doc_ids],
                     )
             # normal exit ⇒ commit; any exception above ⇒ rollback, nothing stored
+    except psycopg.errors.UniqueViolation:
+        # A concurrent writer won the case_key (or run_ref) between our pre-write
+        # check and this INSERT. The whole transaction rolled back (no partial
+        # write); re-resolve against the now-committed row for the SAME contract.
+        logger.info("APEX ingest lost a concurrent race on case_key %s (run_ref %s)",
+                    case_key, run_ref)
+        resolved = _resolve_existing(
+            db, run_ref=run_ref, case_key=case_key, payload_hash=payload_hash,
+            entity=entity, period_month=period_month, cycle=cycle)
+        if resolved is not None:
+            return resolved
+        return _json(409, {"error_code": "CASE_ALREADY_EXISTS",
+                           "message": "A case already exists for this entity, period and cycle.",
+                           "case_key": case_key})
     except Exception as e:
         logger.exception("APEX ingest transaction failed for run_ref %s", run_ref)
         return _json(500, {"error_code": "INGEST_FAILED",
@@ -346,6 +439,7 @@ async def apex_ingest(request: Request):
     return _json(201, {
         "case_id": str(case_id),
         "run_ref": run_ref,
+        "case_key": case_key,
         "status": _CASE_STATUS,
         "consultant_count": consultant_count,
         "document_count": document_count,
