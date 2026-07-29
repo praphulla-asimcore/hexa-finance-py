@@ -3936,6 +3936,9 @@ async def delete_case(case_id: str, request: Request):
 
     db.from_("payroll_approval_tokens").delete().eq("case_id", case_id).execute()
     db.from_("payroll_audit_log").delete().eq("case_id", case_id).execute()
+    db.from_("consultant_sighting").delete().eq("case_id", case_id).execute()
+    db.from_("consultant_documents").delete().eq("case_id", case_id).execute()
+    db.from_("consultant_finance_profiles").delete().eq("case_id", case_id).execute()
     db.from_("payroll_cases").delete().eq("id", case_id).execute()
 
     case_type = kase.get("type", "CSI")
