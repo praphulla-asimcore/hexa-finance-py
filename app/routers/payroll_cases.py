@@ -3285,32 +3285,44 @@ async def email_approve(token: str, action: str = "approve"):
     now = _now()
 
     if action == "reject":
-        db.from_("payroll_approval_tokens").update({"status": "rejected", "action_at": now}).eq("id", tok["id"]).execute()
-        db.from_("payroll_cases").update({
-            "status": "check_rejected", "check_rejected_at": now,
-            "check_rejection_reason": f"Rejected by {tok['approver_name']} at {now}",
-        }).eq("id", kase["id"]).execute()
+        try:
+            db.from_("payroll_approval_tokens").update({"status": "rejected", "action_at": now}).eq("id", tok["id"]).execute()
+            db.from_("payroll_cases").update({
+                "status": "check_rejected", "check_rejected_at": now,
+                "check_rejection_reason": f"Rejected by {tok['approver_name']} at {now}",
+            }).eq("id", kase["id"]).execute()
+        except Exception:
+            logger.exception("Failed to record check rejection for case %s", kase["id"])
+            return HTMLResponse(_approval_page_html("Error", "#ef4444", "Something went wrong recording this rejection. Please try again or contact support."))
         await _audit_log(db, kase["id"], "CHECK_REJECTED", tok["approver_name"], None, None, {"role": tok["approver_role"], "stamp": f"Rejected by: {tok['approver_name']} | Date-Time: {now}"})
         return HTMLResponse(_approval_page_html("Rejected", "#ef4444", f"Check file for {kase['reference']} has been rejected."))
 
     # Approve
-    db.from_("payroll_approval_tokens").update({"status": "approved", "action_at": now}).eq("id", tok["id"]).execute()
+    try:
+        db.from_("payroll_approval_tokens").update({"status": "approved", "action_at": now}).eq("id", tok["id"]).execute()
+    except Exception:
+        logger.exception("Failed to record approval for case %s", kase["id"])
+        return HTMLResponse(_approval_page_html("Error", "#ef4444", "Something went wrong recording this approval. Please try again or contact support."))
     await _audit_log(db, kase["id"], f"CHECK_{tok['approver_role'].upper()}_APPROVED", tok["approver_name"], None, None, {"stamp": f"Approved by: {tok['approver_name']} | Role: {tok['approver_role']} | Date-Time: {now}"})
 
     if tok["approver_role"] == "reviewer":
-        db.from_("payroll_cases").update({
-            "status": "check_reviewer_approved",
-            "check_reviewer_name": tok["approver_name"],
-            "check_reviewer_approved_at": now,
-        }).eq("id", kase["id"]).execute()
+        try:
+            db.from_("payroll_cases").update({
+                "status": "check_reviewer_approved",
+                "check_reviewer_name": tok["approver_name"],
+                "check_reviewer_approved_at": now,
+            }).eq("id", kase["id"]).execute()
 
-        next_token = secrets.token_hex(32)
-        db.from_("payroll_approval_tokens").insert({
-            "case_id": kase["id"], "step": 3,
-            "approver_email": APPROVERS["final"]["email"],
-            "approver_name": APPROVERS["final"]["name"],
-            "approver_role": "final", "token": next_token, "status": "pending",
-        }).execute()
+            next_token = secrets.token_hex(32)
+            db.from_("payroll_approval_tokens").insert({
+                "case_id": kase["id"], "step": 3,
+                "approver_email": APPROVERS["final"]["email"],
+                "approver_name": APPROVERS["final"]["name"],
+                "approver_role": "final", "token": next_token, "status": "pending",
+            }).execute()
+        except Exception:
+            logger.exception("Failed to advance case %s to final approval after reviewer sign-off", kase["id"])
+            return HTMLResponse(_approval_page_html("Error", "#ef4444", "Your approval was recorded, but something went wrong notifying the final approver. Please contact support."))
 
         base_url = f"{APP_URL}/api/payroll-cases/approve/{next_token}"
         try:
@@ -3338,12 +3350,16 @@ async def email_approve(token: str, action: str = "approve"):
         "stamp": f"Approved by: {tok['approver_name']} | Reviewed by: {kase.get('check_reviewer_name')} | Date-Time: {now}",
     }
 
-    db.from_("payroll_cases").update({
-        "status": "check_approved",
-        "check_final_approver_name": tok["approver_name"],
-        "check_approved_at": now,
-        "check_approval_cert": cert,
-    }).eq("id", kase["id"]).execute()
+    try:
+        db.from_("payroll_cases").update({
+            "status": "check_approved",
+            "check_final_approver_name": tok["approver_name"],
+            "check_approved_at": now,
+            "check_approval_cert": cert,
+        }).eq("id", kase["id"]).execute()
+    except Exception:
+        logger.exception("Failed to record final approval for case %s", kase["id"])
+        return HTMLResponse(_approval_page_html("Error", "#ef4444", "Something went wrong recording this approval. Please try again or contact support."))
 
     await _audit_log(db, kase["id"], "CHECK_FULLY_APPROVED", tok["approver_name"], None, None, {"cert": cert})
 
@@ -3602,11 +3618,15 @@ async def director_approve(token: str, action: str = "approve"):
     check = kase.get("check_data") or {}
 
     if action == "reject":
-        db.from_("payroll_approval_tokens").update({"status": "rejected", "action_at": now}).eq("id", tok["id"]).execute()
-        db.from_("payroll_cases").update({
-            "status": "payment_rejected", "payment_rejected_at": now,
-            "payment_rejection_reason": f"Rejected by {tok['approver_name']} at {now}",
-        }).eq("id", kase["id"]).execute()
+        try:
+            db.from_("payroll_approval_tokens").update({"status": "rejected", "action_at": now}).eq("id", tok["id"]).execute()
+            db.from_("payroll_cases").update({
+                "status": "payment_rejected", "payment_rejected_at": now,
+                "payment_rejection_reason": f"Rejected by {tok['approver_name']} at {now}",
+            }).eq("id", kase["id"]).execute()
+        except Exception:
+            logger.exception("Failed to record payment rejection for case %s", kase["id"])
+            return HTMLResponse(_approval_page_html("Error", "#ef4444", "Something went wrong recording this rejection. Please try again or contact support."))
         await _audit_log(db, kase["id"], "PAYMENT_REJECTED", tok["approver_name"], None, None, {"stamp": f"Rejected by: {tok['approver_name']} | Date-Time: {now}"})
         return HTMLResponse(_approval_page_html("Payment Rejected", "#ef4444", f"Payment for {kase['reference']} has been rejected."))
 
@@ -3621,14 +3641,18 @@ async def director_approve(token: str, action: str = "approve"):
         "stamp": f"Payment Approved by: {tok['approver_name']} | Amount: {_fmt_rm(check.get('ctcTotal'))} | Ref: {kase['reference']} | Date-Time: {now}",
     }
 
-    db.from_("payroll_approval_tokens").update({"status": "approved", "action_at": now}).eq("id", tok["id"]).execute()
-    db.from_("payroll_cases").update({
-        "status":                "payment_approved",
-        "payment_approved_by":   tok["approver_name"],
-        "payment_approved_at":   now,
-        "payment_approval_cert": cert,
-        "payment_date":          now[:10],  # director email approval — use approval date as payment date
-    }).eq("id", kase["id"]).execute()
+    try:
+        db.from_("payroll_approval_tokens").update({"status": "approved", "action_at": now}).eq("id", tok["id"]).execute()
+        db.from_("payroll_cases").update({
+            "status":                "payment_approved",
+            "payment_approved_by":   tok["approver_name"],
+            "payment_approved_at":   now,
+            "payment_approval_cert": cert,
+            "payment_date":          now[:10],  # director email approval — use approval date as payment date
+        }).eq("id", kase["id"]).execute()
+    except Exception:
+        logger.exception("Failed to record payment approval for case %s", kase["id"])
+        return HTMLResponse(_approval_page_html("Error", "#ef4444", "Something went wrong recording this approval. Please try again or contact support."))
 
     await _audit_log(db, kase["id"], "PAYMENT_APPROVED", tok["approver_name"], None, None, {"cert": cert})
 
