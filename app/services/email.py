@@ -166,9 +166,10 @@ def email_check_approval(to: str, name: str, role: str, kase: dict, approve_url:
           {_row('Total CTC (Hexa)', f'<strong style="font-size:15px;color:#111">{_fmt_rm(check.get("ctcTotal"))}</strong>')}
           {_row('Total Revenue (Billing)', _fmt_rm(check.get('totalRevenue') or check.get('totalBilling'))) if (check.get('totalRevenue') or check.get('totalBilling')) else ''}
           {_row('Total Mgmt Fee', _fmt_rm(check.get('totalMgmtFee'))) if check.get('totalMgmtFee') else ''}
-          {_row('Total GP (Billing − CTC)', f'<strong style="color:#22c55e">{_fmt_rm(check.get("totalGP"))}</strong>') if check.get('totalGP') is not None else ''}
+          {_row('Total CTC (Client)', _fmt_rm(check.get('totalCtcClient'))) if check.get('totalCtcClient') is not None else ''}
+          {_row('Total GP (Billing − CTC Client)', f'<strong style="color:#22c55e">{_fmt_rm(check.get("totalGP"))}</strong>') if check.get('totalGP') is not None else ''}
           {_row('GP Margin (Mgmt Fee / Billing)', f'<strong style="color:#22c55e">{check.get("gpMarginPct")}%</strong>') if check.get('gpMarginPct') is not None else ''}
-          {_row('Mark Up (Mgmt Fee / CTC)', f'<strong style="color:#22c55e">{check.get("markupPct")}%</strong>') if check.get('markupPct') is not None else ''}
+          {_row('Mark Up (Mgmt Fee / CTC Client)', f'<strong style="color:#22c55e">{check.get("markupPct")}%</strong>') if check.get('markupPct') is not None else ''}
           {_row('Exceptions', f'<span style="color:{flag_color};font-weight:700">{check.get("flagCount",0)} flag(s)</span>')}
           {reviewer_line}
         </table>
@@ -267,6 +268,12 @@ def email_payment_approval(kase: dict, approve_url: str, reject_url: str, direct
           {_row('Consultants Accrued', str(check.get('consultantCount','—')))}
           {_row('Gross Payroll', _fmt_rm(check.get('grossPayrollTotal')))}
           {_row('Total CTC (accrued)', f'<strong style="font-size:15px;color:#111">{_fmt_rm(check.get("ctcTotal"))}</strong>')}
+          {_row('Total CTC (Client)', _fmt_rm(check.get('totalCtcClient'))) if check.get('totalCtcClient') is not None else ''}
+          {_row('Total Billing', _fmt_rm(check.get('totalRevenue') or check.get('totalBilling'))) if (check.get('totalRevenue') or check.get('totalBilling')) else ''}
+          {_row('Total Mgmt Fee', _fmt_rm(check.get('totalMgmtFee'))) if check.get('totalMgmtFee') else ''}
+          {_row('Total GP (Billing − CTC Client)', f'<strong style="color:#22c55e">{_fmt_rm(check.get("totalGP"))}</strong>') if check.get('totalGP') is not None else ''}
+          {_row('GP Margin (Mgmt Fee / Billing)', f'<strong style="color:#22c55e">{check.get("gpMarginPct")}%</strong>') if check.get('gpMarginPct') is not None else ''}
+          {_row('Mark Up (Mgmt Fee / CTC Client)', f'<strong style="color:#22c55e">{check.get("markupPct")}%</strong>') if check.get('markupPct') is not None else ''}
           {_row('Bank Portal Ref', kase.get('bank_portal_ref') or '—')}
           {_row('Checked by', kase.get('check_reviewer_name') or '—')}
           {_row('Approved by', kase.get('check_final_approver_name') or '—')}

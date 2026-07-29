@@ -601,7 +601,7 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None,
                       case_id: str | None = None, db=None) -> dict:
     flags = []
     consultants = gross = ctc = net = 0
-    total_billing = total_mgmt_fee = 0.0
+    total_billing = total_mgmt_fee = total_ctc_client = 0.0
     stat = {"epf": 0.0, "eis": 0.0, "socso": 0.0, "hrdf": 0.0, "mtd": 0.0}
     cats = {"Local": 0, "Foreign": 0, "Contractor": 0}
     seen_ids: set = set()
@@ -640,6 +640,7 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None,
             stat["socso"] += soc; stat["hrdf"] += hrd; stat["mtd"] += mtd
             total_billing  += float(emp.get("totalBilling", 0) or 0)
             total_mgmt_fee += float(emp.get("mgmtFee", 0) or 0)
+            total_ctc_client += ctc_client
 
             # ── Duplicate employee ID ─────────────────────────────────────────
             if emp_id:
@@ -762,13 +763,17 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None,
     if case_id and db is not None:
         flags.extend(_document_exception_flags(db, case_id))
 
-    # Revenue / profitability (Total Revenue = Total Billing):
-    #   GP        = Total Billing − CTC
+    # Revenue / profitability (Total Revenue = Total Billing). Uses CTC Client
+    # (the file's own "CTC Client" column, i.e. what the client is actually
+    # billed as cost) as the cost basis, NOT the recomputed CTC Hexa (`ctc`) —
+    # GP/margin measure Hexa's take against what the client is charged, not
+    # against Hexa's internal statutory-recomputed cost:
+    #   GP        = Total Billing − CTC Client
     #   GP Margin = Total Mgmt Fee / Total Billing
-    #   Mark Up   = Total Mgmt Fee / CTC
-    gp          = _round2(total_billing - ctc) if total_billing > 0 else None
+    #   Mark Up   = Total Mgmt Fee / CTC Client
+    gp          = _round2(total_billing - total_ctc_client) if total_billing > 0 else None
     gp_margin   = _round2((total_mgmt_fee / total_billing) * 100) if total_billing > 0 else None
-    markup      = _round2((total_mgmt_fee / ctc) * 100) if ctc > 0 else None
+    markup      = _round2((total_mgmt_fee / total_ctc_client) * 100) if total_ctc_client > 0 else None
     return {
         "consultantCount":   consultants, "entityCount": len(entities),
         "localCount":        cats.get("Local", 0),
@@ -778,6 +783,7 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None,
         "totalRevenue":      _round2(total_billing) if total_billing > 0 else None,
         "totalBilling":      _round2(total_billing) if total_billing > 0 else None,
         "totalMgmtFee":      _round2(total_mgmt_fee) if total_mgmt_fee > 0 else None,
+        "totalCtcClient":    _round2(total_ctc_client) if total_ctc_client > 0 else None,
         "totalGP":           gp,
         "gpMarginPct":       gp_margin,
         "markupPct":         markup,
