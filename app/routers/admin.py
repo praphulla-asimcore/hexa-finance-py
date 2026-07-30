@@ -124,7 +124,7 @@ async def client_profiles_deactivate(profile_id: str, request: Request):
 
 # ─── Consultant bank overrides (replaces Airtable now that business no longer
 #     maintains it — takes priority over Airtable for the same employee_id,
-#     see _dedupe_consultants in app/services/bank_files.py) ──────────────────
+#     see build_consultant_list in app/services/bank_files.py) ───────────────
 
 def _override_form_to_row(form, updated_by: str) -> dict:
     bank_name = (form.get("bank_name") or "").strip()

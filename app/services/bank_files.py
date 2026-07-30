@@ -537,12 +537,30 @@ def fetch_consultant_master(db) -> list[dict]:
     ]
 
 
+_CONSULTANT_MERGE_FIELDS = (
+    "employeeNumber", "employeeId", "name", "bankName", "accountNo", "bankCode",
+    "idNumber", "idType", "favouriteBeneficiaryCode",
+)
+
+
 def build_consultant_list(db, airtable_list: list[dict]) -> list[dict]:
-    """Merge bank-detail sources into one list, in precedence order (highest
-    first): manual overrides, the HexaFlow-sourced standing directory, the
-    Talenox-sourced consultant master, then ``airtable_list`` if given.
-    ``_dedupe_consultants`` keeps the FIRST occurrence of a given employee_id,
-    so prepending in this order makes the earlier source win a conflict.
+    """Merge bank-detail sources into one record per employee_id, in
+    precedence order (highest first): manual overrides, the HexaFlow-sourced
+    standing directory, the Talenox-sourced consultant master, then
+    ``airtable_list`` if given.
+
+    This is a FIELD-LEVEL merge, not a whole-record one: each field takes the
+    first non-blank value found across the sources in precedence order,
+    rather than one source's entire record shadowing another's. This matters
+    because some sources are only ever partially populated by design —
+    consultant_bank_overrides has no ID-number column at all (it can only
+    ever carry bank fields / a Favourite Beneficiary Code), and
+    consultant_directory's id_number/id_type depend on a HexaFlow pull that
+    doesn't always return them. Under a whole-record merge, a consultant
+    present in either of those sources — even just to patch one field — would
+    have their entire identity shadowed, blanking out a perfectly good
+    ic_number that exists in consultant_master. Field-level merge lets each
+    source contribute only what it actually knows.
 
     Real bank-matching callers now pass ``airtable_list=[]``: Airtable is
     deprecated (the business team stopped maintaining it) and a single stale
@@ -555,38 +573,27 @@ def build_consultant_list(db, airtable_list: list[dict]) -> list[dict]:
     worse, never better, once consultant_master exists — the ``airtable_list``
     parameter is kept only for tests and any future reference lookup that
     still wants it."""
-    merged = airtable_list
-    consultant_master = fetch_consultant_master(db)
-    if consultant_master:
-        merged = _dedupe_consultants(consultant_master + merged)
-    hexaflow_directory = fetch_hexaflow_directory(db)
-    if hexaflow_directory:
-        merged = _dedupe_consultants(hexaflow_directory + merged)
-    local_overrides = fetch_local_bank_overrides(db)
-    if local_overrides:
-        merged = _dedupe_consultants(local_overrides + merged)
-    return merged
-
-
-def _dedupe_consultants(records: list[dict]) -> list[dict]:
-    """Collapse duplicate employee IDs, keeping the FIRST occurrence.
-
-    Used to combine consultant_bank_overrides with Airtable: overrides are
-    prepended so they win, but match_consultant treats more than one hit for
-    the same ID as an unresolved conflict (by design, for safety) — without
-    this dedup, a consultant present in BOTH the override table and Airtable
-    would resolve to None (ambiguous) instead of the override actually taking
-    priority as intended."""
-    seen: set[str] = set()
-    out = []
-    for r in records:
-        key = (r.get("employeeNumber") or r.get("employeeId") or "").strip()
-        if key:
-            if key in seen:
+    sources = (
+        fetch_local_bank_overrides(db),
+        fetch_hexaflow_directory(db),
+        fetch_consultant_master(db),
+        airtable_list,
+    )
+    merged: dict[str, dict] = {}
+    order: list[str] = []
+    for records in sources:
+        for r in records:
+            key = (r.get("employeeNumber") or r.get("employeeId") or "").strip()
+            if not key:
                 continue
-            seen.add(key)
-        out.append(r)
-    return out
+            if key not in merged:
+                merged[key] = {f: "" for f in _CONSULTANT_MERGE_FIELDS}
+                order.append(key)
+            existing = merged[key]
+            for field in _CONSULTANT_MERGE_FIELDS:
+                if not existing.get(field) and r.get(field):
+                    existing[field] = r[field]
+    return [merged[k] for k in order]
 
 
 def _norm_name(s: str) -> str:
