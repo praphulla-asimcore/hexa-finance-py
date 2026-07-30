@@ -3278,6 +3278,10 @@ async def email_approve(token: str, action: str = "approve"):
     tok = (tok_resp.data or [None])[0]
     if not tok:
         return HTMLResponse(_approval_page_html("Not Found", "#ef4444", "This approval link is invalid or expired."))
+    if tok.get("status") == "superseded":
+        return HTMLResponse(_approval_page_html("Link No Longer Valid", "#6366f1",
+            "The bank file for this case was corrected and regenerated after this approval request was sent. "
+            "Please check the case for a fresh approval request."))
     if tok.get("status") != "pending":
         return HTMLResponse(_approval_page_html(f"Already {tok['status']}", "#6366f1", "This approval was already recorded."))
 
@@ -3441,16 +3445,37 @@ async def download_bank_txt(case_id: str, request: Request):
     )
 
 
+_BANK_FILE_REGEN_STATUSES = (
+    "check_approved", "bank_file_generated", "bank_uploaded", "payment_approval_sent",
+)
+
+
 @router.post("/cases/{case_id}/gen-bank-file")
 async def gen_bank_file(case_id: str, request: Request):
+    """Also doubles as the "regenerate after a late data correction" action:
+    consultant bank/ID data is sometimes fixed AFTER Step 4 already ran (e.g.
+    a consultant_bank_overrides edit), and that fix needs to land in the
+    actual bank file before it goes to the bank. Allowed up through
+    payment_approval_sent — once payment_approved/zoho_posted, Zoho has
+    already booked the payment and the file must not silently change under
+    it. generate_and_store_bank_files() always resets status back to
+    bank_file_generated, which correctly forces Steps 5-6 (bank upload log,
+    payment approval) to be redone against the corrected file — so any
+    still-pending director-approval token from before this regeneration is
+    now stale and must not be honourable; it's explicitly invalidated below,
+    otherwise clicking that old email link would fast-track the case to
+    payment_approved (and trigger Zoho posting) without anyone having
+    re-confirmed the corrected file."""
     user = get_current_user(request)
     db = get_db()
     resp = db.from_("payroll_cases").select("*").eq("id", case_id).single().execute()
     kase = resp.data
     if not kase:
         return HTMLResponse('<div class="error-msg">Case not found.</div>')
-    if kase.get("status") not in ("check_approved", "bank_file_generated"):
-        return HTMLResponse(f'<div class="error-msg">Bank file requires check approval. Status: {kase["status"]}</div>')
+    prior_status = kase.get("status")
+    if prior_status not in _BANK_FILE_REGEN_STATUSES:
+        return HTMLResponse(f'<div class="error-msg">Bank file requires check approval, and can no longer be '
+                            f'regenerated once payment is approved. Status: {prior_status}</div>')
 
     try:
         triggered_by = user.get("name") or user.get("email", "")
@@ -3460,6 +3485,21 @@ async def gen_bank_file(case_id: str, request: Request):
             await generate_and_store_bank_files(kase, db, triggered_by)
     except Exception as e:
         return HTMLResponse(f'<div class="error-msg">Bank file error: {str(e)}</div>')
+
+    if prior_status in ("bank_uploaded", "payment_approval_sent"):
+        try:
+            stale = db.from_("payroll_approval_tokens").select("id").eq(
+                "case_id", case_id).eq("status", "pending").execute().data or []
+            for tok in stale:
+                db.from_("payroll_approval_tokens").update(
+                    {"status": "superseded", "action_at": _now()}
+                ).eq("id", tok["id"]).execute()
+            if stale:
+                await _audit_log(db, case_id, "BANK_FILE_REGENERATED_TOKENS_SUPERSEDED",
+                                  triggered_by, user.get("id"), _get_ip(request),
+                                  {"priorStatus": prior_status, "supersededTokenCount": len(stale)})
+        except Exception:
+            logger.exception("Failed to supersede stale approval tokens after bank-file regen for case %s", case_id)
 
     return await _refresh_detail(case_id, db, request, user, 4)
 
@@ -3610,6 +3650,10 @@ async def director_approve(token: str, action: str = "approve"):
     tok = (tok_resp.data or [None])[0]
     if not tok:
         return HTMLResponse(_approval_page_html("Not Found", "#ef4444", "This link is invalid or expired."))
+    if tok.get("status") == "superseded":
+        return HTMLResponse(_approval_page_html("Link No Longer Valid", "#6366f1",
+            "The bank file for this case was corrected and regenerated after this approval request was sent. "
+            "Please check the case for a fresh approval request."))
     if tok.get("status") != "pending":
         return HTMLResponse(_approval_page_html(f"Already {tok['status']}", "#6366f1", "This approval was already recorded."))
 
