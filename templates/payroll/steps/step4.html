@@ -1,6 +1,7 @@
 {% macro fmt_date(d) %}{% if d %}{{ d[:16].replace('T',' ') }}{% else %}—{% endif %}{% endmacro %}
 
 {% set has_files = kase.status in ['bank_file_generated','bank_uploaded','payment_approval_sent','payment_approved','payment_rejected','zoho_posted'] %}
+{% set can_regen = kase.status in ['check_approved','bank_file_generated','bank_uploaded','payment_approval_sent'] %}
 
 <div class="pf-panel-body">
   <div class="pf-panel-header">
@@ -155,7 +156,20 @@
     <a href="/cases/{{ kase.id }}/bank-file-xlsx" class="btn btn-secondary">⬇ RCGEN2 Macro Workbook (.xlsm)</a>
     {% endif %}
     {% endif %}
+    {% if can_regen %}
+    <button class="btn btn-secondary" hx-post="/cases/{{ kase.id }}/gen-bank-file"
+            hx-target="#case-detail-inner" hx-swap="innerHTML"
+            title="Re-run bank file generation against current consultant data — e.g. after correcting a bank detail or document-sighting status">
+      <span class="spinner htmx-indicator"></span> ↻ Regenerate Bank File
+    </button>
+    {% endif %}
   </div>
+  {% if kase.status in ['bank_uploaded','payment_approval_sent'] %}
+  <div style="font-size:11px;color:#92400e;margin-top:6px">
+    Regenerating now will reset this case back to Step 4 and require Steps 5-6 to be redone against the corrected file;
+    any already-sent director-approval email will stop working.
+  </div>
+  {% endif %}
   {% if bank_txt and bank_txt.data %}
   <div style="font-size:12px;color:#64748b;margin-top:8px">
     The <strong>.txt</strong> is generated directly by the system (run #{{ bank_txt.runNumber }}) — upload it to Maybank CMS with File Format <strong>MY COMBINE PIPE V6</strong>. No Excel/macro needed. The .xlsm remains available as a fallback.

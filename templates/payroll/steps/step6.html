@@ -32,6 +32,19 @@
       {% endfor %}
     </ul>
     {% endif %}
+    {% if pa.notApprovedBreakdown and pa.notApprovedBreakdown.get('missingDocs') %}
+    <div style="margin-top:10px;padding-top:10px;border-top:1px solid #e5e7eb">
+      <button class="btn btn-secondary btn-sm" hx-post="/cases/{{ kase.id }}/create-batch-case"
+              hx-target="#case-detail-inner" hx-swap="innerHTML">
+        <span class="spinner htmx-indicator"></span> Create Batch Case for Missing Documents
+      </button>
+      <div style="font-size:11px;color:#888;margin-top:4px">
+        Splits the {{ pa.notApprovedBreakdown.missingDocs }} consultant(s) with missing documents into a new
+        case, so their documents can be sighted and they can be paid separately once ready — repeat this on the
+        new case if any of them are still missing when it's checked.
+      </div>
+    </div>
+    {% endif %}
   </div>
   {% endif %}
 

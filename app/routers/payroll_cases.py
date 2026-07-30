@@ -3504,6 +3504,119 @@ async def gen_bank_file(case_id: str, request: Request):
     return await _refresh_detail(case_id, db, request, user, 4)
 
 
+# ─── Split off a batch case for consultants with missing documents ───────────
+
+@router.post("/cases/{case_id}/create-batch-case")
+async def create_batch_case(case_id: str, request: Request):
+    """Consultants marked 'missing' in consultant_sighting stay permanently
+    excluded from THIS case's bank file (generate_and_store_bank_files only
+    ever reads that status, never clears it) -- there is no in-app way to pay
+    them once their documents actually arrive, short of a full new upload.
+
+    This spins off a fresh case containing just the still-missing consultants,
+    starting at documents_pending_review so their documents can be sighted
+    from scratch (Step 2 works normally, since it only needs parsed_data +
+    consultant_sighting, not the original's HexaFlow/document-gate plumbing).
+    From there it runs the ordinary Step 3-6 pipeline on its own.
+
+    skip_accrual=True is mandatory: the ORIGINAL case's accrual (booked at
+    Step 3 send-check-approval) already covers every consultant in its
+    parsed_data, including these -- their wages are not conditioned on
+    document sighting, only their PAYMENT is. A second accrual here would
+    double-book the wage in Zoho; only the payment leg is missing.
+
+    Callable again on the new batch case itself if some of ITS consultants
+    are still missing when it's checked -- the same mechanism splits off a
+    further batch, so this can be repeated until everyone is paid."""
+    user = get_current_user(request)
+    db = get_db()
+    resp = db.from_("payroll_cases").select("*").eq("id", case_id).single().execute()
+    kase = resp.data
+    if not kase:
+        return HTMLResponse('<div class="error-msg">Case not found.</div>')
+
+    sighting_rows = db.from_("consultant_sighting").select(
+        "employee_id,consultant_name,status").eq("case_id", case_id).eq(
+        "status", "missing").execute().data or []
+    if not sighting_rows:
+        return HTMLResponse('<div class="error-msg">No consultants are currently marked missing on this case.</div>')
+
+    # Don't re-batch someone already split off into an earlier batch case.
+    prior = db.from_("payroll_audit_log").select("metadata").eq(
+        "case_id", case_id).eq("event_type", "BATCH_CASE_CREATED").execute().data or []
+    already_batched: set[str] = set()
+    for row in prior:
+        already_batched.update((row.get("metadata") or {}).get("employeeIds", []))
+
+    candidates = [r for r in sighting_rows if r["employee_id"] not in already_batched]
+    if not candidates:
+        return HTMLResponse('<div class="error-msg">Every missing-document consultant here has already '
+                            'been split into a batch case — check its status instead.</div>')
+    candidate_ids = {r["employee_id"] for r in candidates}
+
+    entities = (kase.get("parsed_data") or {}).get("entities", [])
+    batch_entities = []
+    for ent in entities:
+        emps = [e for e in ent.get("employees", []) if str(e.get("employeeId", "")).strip() in candidate_ids]
+        if emps:
+            batch_entities.append({**ent, "employees": emps})
+    if not batch_entities:
+        return HTMLResponse('<div class="error-msg">Could not find these consultants in the case data.</div>')
+
+    triggered_by = user.get("name") or user.get("email", "")
+    now = _now()
+    batch_num = len(prior) + 1
+    batch_ref = f"{kase['reference']}-BATCH-{batch_num}"
+
+    try:
+        insert_resp = db.from_("payroll_cases").insert({
+            "reference":         batch_ref,
+            "type":              kase.get("type", "CSI"),
+            "entity":            kase.get("entity", ""),
+            "entity_name":       kase.get("entity_name", ""),
+            "period":            kase.get("period", ""),
+            "seq_no":            1,
+            "status":            "documents_pending_review",
+            "parsed_data": {
+                "entities":          batch_entities,
+                "source":            "BATCH_RESUBMISSION",
+                "resubmission_of":   case_id,
+                "original_run_ref":  kase.get("reference"),
+                "skip_accrual":      True,
+                "generated_by":      triggered_by,
+                "generated_at":      now,
+            },
+            "uploaded_by_name":  triggered_by,
+            "uploaded_by_email": user.get("email", ""),
+            "uploaded_at":       now,
+            "upload_ip":         _get_ip(request),
+        }).select().execute()
+    except Exception as e:
+        return HTMLResponse(f'<div class="error-msg">Failed to create batch case: {e}</div>')
+
+    batch_kase = (insert_resp.data or [None])[0]
+    if not batch_kase:
+        return HTMLResponse('<div class="error-msg">Batch case insert returned no data.</div>')
+    new_case_id = str(batch_kase["id"])
+
+    await _audit_log(db, new_case_id, "CASE_CREATED_FROM_BATCH", triggered_by,
+                     user.get("id"), _get_ip(request), {
+        "original_case_id":   case_id,
+        "original_reference": kase.get("reference"),
+        "employeeIds":        sorted(candidate_ids),
+        "consultantCount":    len(candidate_ids),
+    })
+    await _audit_log(db, case_id, "BATCH_CASE_CREATED", triggered_by,
+                     user.get("id"), _get_ip(request), {
+        "new_case_id":   new_case_id,
+        "new_reference": batch_ref,
+        "employeeIds":   sorted(candidate_ids),
+        "consultantCount": len(candidate_ids),
+    })
+
+    return HTMLResponse("", headers={"HX-Redirect": f"/cases/{new_case_id}"})
+
+
 # ─── Step 5a: Log bank upload ─────────────────────────────────────────────────
 
 @router.post("/cases/{case_id}/log-bank-upload")
