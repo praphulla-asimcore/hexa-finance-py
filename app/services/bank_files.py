@@ -52,7 +52,7 @@ MY_BANK_CODES = {
     "affin": "PHBMMYKL", "affin bank": "PHBMMYKL",
     "alliance bank": "MFBBMYKL",
     "bank rakyat": "BKRMMYKL",
-    "bsn": "BSNAMYK1",
+    "bsn": "BSNAMYK1", "bank simpanan nasional": "BSNAMYK1",
 }
 
 
