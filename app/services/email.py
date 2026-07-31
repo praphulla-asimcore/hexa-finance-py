@@ -3,6 +3,7 @@ import logging
 import resend as resend_sdk
 from app.config import RESEND_API_KEY, EMAIL_FROM, APP_URL
 from app.services.bank_files import DOC_GATE_CODES
+from app.services.currency import fmt_currency
 
 logger = logging.getLogger("hexa.email")
 
@@ -23,9 +24,8 @@ def _row(k: str, v: str) -> str:
 
 
 def _fmt_rm(n) -> str:
-    if n is None:
-        return "—"
-    return f"RM {float(n):,.2f}"
+    """MYR-only fallback for call sites with no case/currency context."""
+    return fmt_currency(n, "MYR")
 
 
 def _send(to: str | list, subject: str, html: str) -> None:
@@ -65,6 +65,10 @@ def send_invite(to: str, name: str, invite_url: str, role: str = "") -> None:
 
 def email_check_approval(to: str, name: str, role: str, kase: dict, approve_url: str, reject_url: str) -> None:
     check = kase.get("check_data") or {}
+    # Shadows the module-level MYR-only _fmt_rm for this function (and its
+    # nested closures below, via normal closure lookup) with one resolved to
+    # this case's own currency.
+    _fmt_rm = lambda n: fmt_currency(n, check.get("currency", "MYR"))
     entities = (kase.get("parsed_data") or {}).get("entities", [])
     label = "CSI Payroll" if kase.get("type") == "CSI" else "Internal Payroll"
 
@@ -218,6 +222,7 @@ def _payment_approval_breakdown_html(check: dict) -> str:
     pa = check.get("paymentApproval")
     if not pa:
         return ""
+    _fmt_rm = lambda n: fmt_currency(n, check.get("currency", "MYR"))
     reasons = pa.get("notApprovedBreakdown") or {}
     reason_lines = "".join(
         f'<li style="margin-bottom:2px">{_NOT_APPROVED_LABELS.get(k, k)}: <strong>{v}</strong></li>'
@@ -246,6 +251,7 @@ def _payment_approval_breakdown_html(check: dict) -> str:
 
 def email_payment_approval(kase: dict, approve_url: str, reject_url: str, director: dict) -> None:
     check = kase.get("check_data") or {}
+    _fmt_rm = lambda n: fmt_currency(n, check.get("currency", "MYR"))
     pa = check.get("paymentApproval")
     label = "CSI Payroll" if kase.get("type") == "CSI" else "Internal Payroll"
     # Prefer the actual payable count/total (only the consultants in this bank
@@ -329,6 +335,7 @@ def email_arranger_exceptions(to_list: list, kase: dict) -> None:
     if not to_list:
         return
     check = kase.get("check_data") or {}
+    _fmt_rm = lambda n: fmt_currency(n, check.get("currency", "MYR"))
     flags = check.get("flags") or []
     flag_rows = "".join(
         f'<tr style="background:{"#fff" if i % 2 == 0 else "#fef2f2"}">'

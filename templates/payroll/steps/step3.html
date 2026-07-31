@@ -1,5 +1,5 @@
 {% macro fmt_date(d) %}{% if d %}{{ d[:16].replace('T',' ') }}{% else %}—{% endif %}{% endmacro %}
-{% macro fmt_rm(n) %}{% if n is not none %}RM {{ "{:,.2f}".format(n|float) }}{% else %}—{% endif %}{% endmacro %}
+{% macro fmt_rm(n) %}{% if n is not none %}{{ currency_prefix|default('RM') }} {{ "{:,.2f}".format(n|float) }}{% else %}—{% endif %}{% endmacro %}
 
 {% set can_send = kase.status == 'check_generated' %}
 {% set is_approved = kase.status in ['check_approved','bank_file_generated','bank_uploaded','payment_approval_sent','payment_approved','payment_rejected','zoho_posted'] %}

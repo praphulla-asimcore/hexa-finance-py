@@ -43,7 +43,7 @@
     <div class="pf-entity-row">
       <span class="pf-entity-name">{{ e.sheetName }}</span>
       <span>{{ e.employees|length }} employees</span>
-      {% if e.totalCTC %}<span>RM {{ "{:,.2f}".format(e.totalCTC|float) }}</span>{% endif %}
+      {% if e.totalCTC %}<span>{{ currency_prefix|default('RM') }} {{ "{:,.2f}".format(e.totalCTC|float) }}</span>{% endif %}
       {% if e.missingColumns %}<span class="badge badge-warning">missing cols</span>{% endif %}
     </div>
     {% endfor %}

@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
-from app.config import TEMPLATES_DIR
+from app.config import TEMPLATES_DIR, get_entity_currency
 from app.deps import get_current_user, try_get_user
 from app.services.db import get_db
+from app.services.currency import currency_prefix
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -23,7 +24,7 @@ async def dashboard(request: Request):
     db = get_db()
 
     stats = {"byEntity": [], "byModule": [], "recentMonths": [], "excByMonth": [],
-             "totalPosts": 0, "totalAmount": 0.0}
+             "totalPosts": 0, "totalAmount": 0.0, "totalCurrencyTiles": []}
     posts = []
     recent_cases = []
 
@@ -33,10 +34,12 @@ async def dashboard(request: Request):
             p_resp = db.from_("payroll_cases").select(
                 "id,reference,type,entity,entity_name,period,status,uploaded_by_name,uploaded_at,check_data,zoho_posted_at"
             ).order("created_at", desc=True).limit(10).execute()
-            recent_cases = p_resp.data or []
+            recent_cases = [{**c, "currencyPrefix": currency_prefix(get_entity_currency(c.get("entity", "")))}
+                            for c in (p_resp.data or [])]
 
             j_resp = db.from_("journal_posts").select("*").order("posted_at", desc=True).limit(20).execute()
-            posts = j_resp.data or []
+            posts = [{**p, "currencyPrefix": currency_prefix(get_entity_currency(p.get("entity", "")))}
+                    for p in (j_resp.data or [])]
 
             # ── Aggregate completed work straight from the source tables ──
             # We read the cases/submissions directly (not the journal_posts ledger,
@@ -66,19 +69,30 @@ async def dashboard(request: Request):
             by_module: dict = {}
             by_month: dict = {}
             exc_by_month: dict = {}
-            totals = {"amount": 0.0, "count": 0}
+            # "amount"/"total" stay a blended raw sum across currencies -- used
+            # ONLY as a rough visual proportion (bar width / chart height), never
+            # displayed as a number. Anything actually SHOWN to the user reads
+            # from byCurrency instead, since summing MYR+IDR+NPR as one figure
+            # is financially meaningless without FX conversion (a separate,
+            # not-yet-built gap).
+            totals = {"amount": 0.0, "count": 0, "byCurrency": {}}
 
             def _add(module: str, entity: str, ym: str, amount: float) -> None:
+                currency = get_entity_currency(entity)
                 totals["amount"] += amount
                 totals["count"] += 1
-                e = by_entity.setdefault(entity or "—", {"count": 0, "total": 0.0})
+                totals["byCurrency"][currency] = totals["byCurrency"].get(currency, 0.0) + amount
+                e = by_entity.setdefault(entity or "—", {"count": 0, "total": 0.0, "currency": currency})
                 e["count"] += 1; e["total"] += amount
-                m = by_module.setdefault(module, {"count": 0, "total": 0.0})
+                m = by_module.setdefault(module, {"count": 0, "total": 0.0, "byCurrency": {}})
                 m["count"] += 1; m["total"] += amount
+                m["byCurrency"][currency] = m["byCurrency"].get(currency, 0.0) + amount
                 if ym:
-                    mo = by_month.setdefault(ym, {"count": 0, "total": 0.0, "csi": 0.0, "payroll": 0.0, "statutory": 0.0})
+                    mo = by_month.setdefault(ym, {"count": 0, "total": 0.0, "byCurrency": {},
+                                                   "csi": 0.0, "payroll": 0.0, "statutory": 0.0})
                     mo["count"] += 1; mo["total"] += amount
                     mo[module] = mo.get(module, 0.0) + amount
+                    mo["byCurrency"][currency] = mo["byCurrency"].get(currency, 0.0) + amount
 
             for c in done_cases:
                 cd = c.get("check_data") or {}
@@ -96,13 +110,24 @@ async def dashboard(request: Request):
                 ym = _month_key(s.get("contribution_month"))
                 _add("statutory", s.get("entity"), ym, amount)
 
+            def _currency_tiles(by_currency: dict) -> list:
+                """[{currency, prefix, amount}], largest first, for rendering
+                one KPI line per currency instead of one blended total."""
+                return sorted(
+                    [{"currency": k, "prefix": currency_prefix(k), "amount": v}
+                     for k, v in by_currency.items() if v],
+                    key=lambda x: x["amount"], reverse=True,
+                )
+
             stats = {
                 "byEntity": sorted([{"entity": k, **v} for k, v in by_entity.items()], key=lambda x: x["total"], reverse=True),
-                "byModule": [{"module": k, **v} for k, v in by_module.items()],
-                "recentMonths": sorted([{"month": k, **v} for k, v in by_month.items()], key=lambda x: x["month"], reverse=True)[:12],
+                "byModule": [{"module": k, **v, "currencyTiles": _currency_tiles(v["byCurrency"])} for k, v in by_module.items()],
+                "recentMonths": sorted([{"month": k, **v, "currencyTiles": _currency_tiles(v["byCurrency"])}
+                                        for k, v in by_month.items()], key=lambda x: x["month"], reverse=True)[:12],
                 "excByMonth": sorted([{"month": k, **v} for k, v in exc_by_month.items()], key=lambda x: x["month"], reverse=True)[:12],
                 "totalPosts": totals["count"],
                 "totalAmount": totals["amount"],
+                "totalCurrencyTiles": _currency_tiles(totals["byCurrency"]),
             }
         except Exception:
             recent_cases = recent_cases or []

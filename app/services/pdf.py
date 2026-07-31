@@ -7,6 +7,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 )
+from app.services.currency import fmt_currency
 
 BRAND = colors.HexColor("#6366f1")
 MUTED = colors.HexColor("#64748b")
@@ -33,9 +34,8 @@ def _styles():
 
 
 def _fmt_rm(n) -> str:
-    if n is None:
-        return "—"
-    return f"RM {float(n):,.2f}"
+    """MYR-only fallback for call sites with no case/currency context."""
+    return fmt_currency(n, "MYR")
 
 
 def _kv_table(rows: list[tuple[str, str]]) -> Table:
@@ -59,6 +59,7 @@ def build_check_report_pdf(kase: dict) -> bytes:
     s = _styles()
     story = []
     check = kase.get("check_data") or {}
+    _fmt_rm = lambda n: fmt_currency(n, check.get("currency", "MYR"))
     entities = (kase.get("parsed_data") or {}).get("entities", [])
 
     # Header
@@ -198,6 +199,7 @@ def build_audit_package_pdf(kase: dict, logs: list[dict]) -> bytes:
     s = _styles()
     story = []
     check = kase.get("check_data") or {}
+    _fmt_rm = lambda n: fmt_currency(n, check.get("currency", "MYR"))
 
     story += [
         Paragraph("Hexamatics Finance", s["h1"]),

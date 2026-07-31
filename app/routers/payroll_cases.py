@@ -12,18 +12,19 @@ from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse, HTMLResponse, Response, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from app.config import TEMPLATES_DIR, APP_URL, APPROVERS, PAYROLL_REVIEWER, ORGS, STATUTORY_NOS, ARIA_WEBHOOK_URL
+from app.config import TEMPLATES_DIR, APP_URL, APPROVERS, PAYROLL_REVIEWER, ORGS, STATUTORY_NOS, ARIA_WEBHOOK_URL, get_entity_country, get_entity_currency
+from app.services.currency import fmt_currency, currency_prefix
 from app.deps import get_current_user
 from app.services.db import get_db
 from app.services.parser import parse_excel_buffer, parse_payroll_excel_buffer
-from app.services.statutory_enrich import enrich_entities_statutory
+from app.services.statutory import get_statutory_module
 from app.services.zoho import (
     post_journal_entry, create_expense, attach_journal_document, fetch_accounts,
     delete_journal_entry, delete_expense, fetch_contacts, create_contact,
     fetch_reporting_tags, fetch_tag_options, create_tag_option,
 )
 from app.services.bank_files import (
-    generate_and_store_bank_files, generate_and_store_bank_files_payroll,
+    generate_and_store_bank_files_payroll, get_bank_file_generator,
     fetch_airtable_consultants, build_consultant_list, match_consultant,
     id_conflict, DOC_GATE_CODES,
 )
@@ -55,10 +56,15 @@ def _round2(n) -> float:
     return round(float(n or 0), 2)
 
 
-def _fmt_rm(n) -> str:
-    if n is None:
-        return "—"
-    return f"RM {float(n):,.2f}"
+def _with_currency_prefix(cases: list[dict]) -> list[dict]:
+    """Tag each case row with its own entity's currency prefix, for list
+    views spanning multiple entities/currencies at once (a per-row prefix,
+    not a blended total, so it stays correct regardless of mix)."""
+    out = []
+    for c in cases:
+        cur = (c.get("check_data") or {}).get("currency") or get_entity_currency(c.get("entity", ""))
+        out.append({**c, "currencyPrefix": currency_prefix(cur)})
+    return out
 
 
 def _now() -> str:
@@ -194,10 +200,7 @@ def _get_arranger_emails(db) -> list:
 
 async def _create_or_update_statutory(kase: dict, db, triggered_by: str) -> None:
     """Called on CSI check_approved: create/update statutory submissions for EPF/SOCSO_EIS/HRDF/MTD."""
-    from app.services.statutory_files import (
-        generate_epf_file, generate_socso_eis_file,
-        generate_hrdf_file, generate_mtd_file,
-    )
+    from app.services.statutory_files import get_statutory_file_generators
 
     try:
         yr, mo, _cycle = _parse_period(kase.get("period", ""))
@@ -245,13 +248,20 @@ async def _create_or_update_statutory(kase: dict, db, triggered_by: str) -> None
                 "mtd":           float(emp.get("mtd") or 0),
             })
 
+    # Malaysia's 4 statutory bodies (EPF/SOCSO/EIS/HRDF/MTD) don't map 1:1 onto
+    # other countries' schemes (e.g. Indonesia's BPJS Kesehatan/Ketenagakerjaan
+    # + PPh21), so the employer-number kwargs stay MY-shaped here; other
+    # countries simply have no entries in get_statutory_file_generators() yet,
+    # so the loop below produces zero submissions for them rather than erroring.
+    available = get_statutory_file_generators(get_entity_country(entity))
     employer_nos = STATUTORY_NOS.get(entity, {})
-    generators = {
-        "EPF":       (generate_epf_file,       {"employer_epf_no":    employer_nos.get("epf", "")}),
-        "SOCSO_EIS": (generate_socso_eis_file,  {"employer_socso_no":  employer_nos.get("socso", "")}),
-        "HRDF":      (generate_hrdf_file,       {"employer_hrdf_code": employer_nos.get("hrdf", "")}),
-        "MTD":       (generate_mtd_file,        {"employer_mtd_no": employer_nos.get("mtd", "")}),
+    all_generators = {
+        "EPF":       (available.get("EPF"),       {"employer_epf_no":    employer_nos.get("epf", "")}),
+        "SOCSO_EIS": (available.get("SOCSO_EIS"), {"employer_socso_no":  employer_nos.get("socso", "")}),
+        "HRDF":      (available.get("HRDF"),      {"employer_hrdf_code": employer_nos.get("hrdf", "")}),
+        "MTD":       (available.get("MTD"),       {"employer_mtd_no":    employer_nos.get("mtd", "")}),
     }
+    generators = {k: (fn, kw) for k, (fn, kw) in all_generators.items() if fn}
 
     for stat_type, (gen_fn, gen_kwargs) in generators.items():
         try:
@@ -598,7 +608,7 @@ def _document_exception_flags(db, case_id: str) -> list[dict]:
 
 
 def _build_check_data(entities: list[dict], airtable_list: list | None = None,
-                      case_id: str | None = None, db=None) -> dict:
+                      case_id: str | None = None, db=None, currency: str = "MYR") -> dict:
     flags = []
     consultants = gross = ctc = net = 0
     total_billing = total_mgmt_fee = total_ctc_client = 0.0
@@ -775,6 +785,7 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None,
     gp_margin   = _round2((total_mgmt_fee / total_billing) * 100) if total_billing > 0 else None
     markup      = _round2((total_mgmt_fee / total_ctc_client) * 100) if total_ctc_client > 0 else None
     return {
+        "currency":          currency,
         "consultantCount":   consultants, "entityCount": len(entities),
         "localCount":        cats.get("Local", 0),
         "foreignCount":      cats.get("Foreign", 0),
@@ -981,6 +992,7 @@ def _build_check_data_payroll(entities: list[dict]) -> dict:
             flags.append({"code": "MISSING_COLUMNS", "entity": ent["sheetName"], "columns": ent["missingColumns"]})
 
     return {
+        "currency": "MYR",  # PAYROLL (internal employees) is Malaysia-only today
         "consultantCount": employees,
         "entityCount": len(entities),
         "localCount":      cats.get("Local", 0),
@@ -1226,7 +1238,7 @@ async def _auto_book_payment_payroll(kase: dict, db) -> dict:
                 "amount":                  amount,
                 "description":             description,
                 "reference_number":        reference,
-                "currency_code":           "MYR",
+                "currency_code":           get_entity_currency(kase.get("entity", "")),
                 "exchange_rate":           1,
                 "is_billable":             False,
             })
@@ -1533,7 +1545,7 @@ async def _auto_book_payment(kase: dict, db) -> dict:
                 "amount":                  amount,
                 "description":             description,
                 "reference_number":        reference,
-                "currency_code":           "MYR",
+                "currency_code":           get_entity_currency(kase.get("entity", "")),
                 "exchange_rate":           1,
                 "is_billable":             False,
             })
@@ -1695,6 +1707,7 @@ def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None, d
         # Old flow fallback: audit-log based exclusions (cases without sighting table)
         if not sighting_missing_consultants and not sighting_orphaned_consultants:
             excluded_consultants = _excluded_consultants(db, str(kase.get("id")), kase)
+    case_currency = (kase.get("check_data") or {}).get("currency") or get_entity_currency(kase.get("entity", ""))
     return {
         "kase": kase,
         "logs": logs,
@@ -1711,6 +1724,8 @@ def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None, d
         "sighting_orphaned_consultants": sighting_orphaned_consultants,
         "sighting_map": sighting_map,
         "sighting_progress": sighting_progress,
+        "currency": case_currency,
+        "currency_prefix": currency_prefix(case_currency),
     }
 
 
@@ -1782,7 +1797,7 @@ async def cases_page(request: Request):
             "id,reference,type,entity,entity_name,period,status,uploaded_by_name,uploaded_at,check_data,zoho_journal_ids,zoho_posted_at,check_approved_at,payment_approved_at"
         ).eq("type", case_type).order("created_at", desc=True).limit(100)
         resp = q.execute()
-        cases = resp.data or []
+        cases = _with_currency_prefix(resp.data or [])
 
     ctx = {"request": request, "user": user, "cases": cases, "module": module, "case_type": case_type, "section": module}
     if request.headers.get("HX-Request"):
@@ -1868,7 +1883,7 @@ async def _upload_case_inner(
         if type_up == "PAYROLL":
             parsed_entities = parse_payroll_excel_buffer(content)
         else:
-            parsed_entities = parse_excel_buffer(content)
+            parsed_entities = parse_excel_buffer(content, get_entity_country(entity_code))
     except Exception as e:
         return _upload_err(f"Parse error: {str(e)}")
 
@@ -1887,7 +1902,7 @@ async def _upload_case_inner(
 
     # Override EPF/EIS/SOCSO/HRDF from the statutory tables using Airtable
     # nationality / contract type / EPF scheme.
-    enrich_entities_statutory(parsed_entities, airtable_list)
+    get_statutory_module(get_entity_country(entity_code)).enrich(parsed_entities, airtable_list)
 
     try:
         # The check file is NOT generated here. CSI cases enter document sighting
@@ -2051,7 +2066,8 @@ async def gen_check(case_id: str, request: Request):
     check_data = (
         _build_check_data_payroll(entities)
         if case_type == "PAYROLL"
-        else _build_check_data(entities, airtable_list, case_id=case_id, db=db)
+        else _build_check_data(entities, airtable_list, case_id=case_id, db=db,
+                               currency=get_entity_currency(kase.get("entity", "")))
     )
     now = _now()
     db.from_("payroll_cases").update({
@@ -2135,7 +2151,8 @@ async def complete_sighting(case_id: str, request: Request):
         if filtered_employees:
             filtered_entities.append({**ent, "employees": filtered_employees})
 
-    check_data = _build_check_data(filtered_entities, case_id=str(case_id), db=db)
+    check_data = _build_check_data(filtered_entities, case_id=str(case_id), db=db,
+                                   currency=get_entity_currency(kase.get("entity", "")))
 
     now = _now()
     updated_parsed = {
@@ -2229,7 +2246,8 @@ async def sight_consultant(case_id: str, request: Request,
     total_employees = sum(len(ent.get("employees", [])) for ent in entities)
     progress = _sighting_progress(db, case_id, total_employees)
     if progress["complete"]:
-        check_data = _build_check_data(entities, case_id=str(case_id), db=db)
+        check_data = _build_check_data(entities, case_id=str(case_id), db=db,
+                                       currency=get_entity_currency(kase.get("entity", "")))
         db.from_("payroll_cases").update({
             "status": "uploaded",
             "check_data": check_data,
@@ -2292,7 +2310,8 @@ async def mark_missing(case_id: str, request: Request,
     total_employees = sum(len(ent.get("employees", [])) for ent in entities)
     progress = _sighting_progress(db, case_id, total_employees)
     if progress["complete"]:
-        check_data = _build_check_data(entities, case_id=str(case_id), db=db)
+        check_data = _build_check_data(entities, case_id=str(case_id), db=db,
+                                       currency=get_entity_currency(kase.get("entity", "")))
         db.from_("payroll_cases").update({
             "status": "uploaded",
             "check_data": check_data,
@@ -2659,7 +2678,8 @@ async def upload_excluded_document(
     mini_entities   = [{"sheetName": original_entity, "employees": [emp_dict],
                         "missingColumns": []}]
     # case_id=None, db=None → doc-gate checks skipped (already verified above)
-    check_data = _build_check_data(mini_entities, case_id=None, db=None)
+    check_data = _build_check_data(mini_entities, case_id=None, db=None,
+                                   currency=get_entity_currency(kase.get("entity", "")))
 
     mini_parsed = {
         "source":           "RESUBMISSION",
@@ -2775,7 +2795,8 @@ async def resight_consultant(case_id: str, request: Request,
     original_entity = kase.get("entity", "")
     mini_ref = f"{original_ref}-RESUB-{consultant_id}"
     mini_entities = [{"sheetName": original_entity, "employees": [emp_dict], "missingColumns": []}]
-    check_data = _build_check_data(mini_entities, case_id=None, db=None)
+    check_data = _build_check_data(mini_entities, case_id=None, db=None,
+                                   currency=get_entity_currency(kase.get("entity", "")))
     mini_parsed = {
         "source": "RESUBMISSION",
         "resubmission_of": case_id,
@@ -3028,7 +3049,7 @@ async def reupload_case(
         if kase.get("type") == "PAYROLL":
             parsed_entities = parse_payroll_excel_buffer(content)
         else:
-            parsed_entities = parse_excel_buffer(content)
+            parsed_entities = parse_excel_buffer(content, get_entity_country(kase.get("entity", "")))
     except Exception as e:
         return HTMLResponse(f'<div class="error-msg">Parse error: {str(e)}</div>')
 
@@ -3046,7 +3067,7 @@ async def reupload_case(
         at = await fetch_airtable_consultants()
     except Exception:
         at = []
-    enrich_entities_statutory(parsed_entities, at)
+    get_statutory_module(get_entity_country(kase.get("entity", ""))).enrich(parsed_entities, at)
 
     try:
         airtable_list = build_consultant_list(db, [])
@@ -3056,7 +3077,8 @@ async def reupload_case(
     check_data = (
         _build_check_data_payroll(parsed_entities)
         if kase.get("type") == "PAYROLL"
-        else _build_check_data(parsed_entities, airtable_list)
+        else _build_check_data(parsed_entities, airtable_list,
+                               currency=get_entity_currency(kase.get("entity", "")))
     )
 
     file_hash = _sha256(content)
@@ -3375,7 +3397,7 @@ async def email_approve(token: str, action: str = "approve"):
             result = await generate_and_store_bank_files_payroll(fresh_kase, db, tok["approver_name"])
             bank_msg = f"Payroll bank files auto-generated ({result['matched']}/{result['total']} employees with bank accounts). Log in to download and proceed to Step 5."
         else:
-            result = await generate_and_store_bank_files(fresh_kase, db, tok["approver_name"])
+            result = await get_bank_file_generator(get_entity_country(kase.get("entity", "")))(fresh_kase, db, tok["approver_name"])
             bank_msg = f"Bank upload files have been auto-generated ({result['matched']}/{result['total']} consultants matched from Airtable). Log in to download and proceed to Step 5."
         await _audit_log(db, kase["id"], "BANK_FILE_AUTO_GENERATED", tok["approver_name"], None, None, {
             "xlsxName": result["xlsxName"], "matched": result["matched"], "total": result["total"],
@@ -3482,7 +3504,7 @@ async def gen_bank_file(case_id: str, request: Request):
         if kase.get("type") == "PAYROLL":
             await generate_and_store_bank_files_payroll(kase, db, triggered_by)
         else:
-            await generate_and_store_bank_files(kase, db, triggered_by)
+            await get_bank_file_generator(get_entity_country(kase.get("entity", "")))(kase, db, triggered_by)
     except Exception as e:
         return HTMLResponse(f'<div class="error-msg">Bank file error: {str(e)}</div>')
 
@@ -3790,12 +3812,12 @@ async def director_approve(token: str, action: str = "approve"):
     cert = {
         "type": "PAYMENT_APPROVAL", "reference": kase["reference"],
         "approvedBy": tok["approver_name"],
-        "amount": _fmt_rm(check.get("ctcTotal")),
+        "amount": fmt_currency(check.get("ctcTotal"), check.get("currency", "MYR")),
         "consultantCount": check.get("consultantCount"),
         "bankPortalRef": kase.get("bank_portal_ref"),
         "entity": kase.get("entity_name") or kase.get("entity"), "period": kase.get("period"),
         "timestamp": now,
-        "stamp": f"Payment Approved by: {tok['approver_name']} | Amount: {_fmt_rm(check.get('ctcTotal'))} | Ref: {kase['reference']} | Date-Time: {now}",
+        "stamp": f"Payment Approved by: {tok['approver_name']} | Amount: {fmt_currency(check.get('ctcTotal'), check.get('currency', 'MYR'))} | Ref: {kase['reference']} | Date-Time: {now}",
     }
 
     try:
@@ -3833,13 +3855,13 @@ async def director_approve(token: str, action: str = "approve"):
         email_notify(
             kase.get("uploaded_by_email", ""), kase,
             "Payment Approved & Zoho Posted",
-            f"Payment for {kase['reference']} approved by {tok['approver_name']} ({_fmt_rm(check.get('ctcTotal'))})."
+            f"Payment for {kase['reference']} approved by {tok['approver_name']} ({fmt_currency(check.get('ctcTotal'), check.get('currency', 'MYR'))})."
             + (f" Zoho journal {pay_result.get('journal_id')} posted." if pay_result.get("success") else f" Zoho posting failed: {pay_result.get('error')}"),
         )
     except Exception:
         pass
 
-    return HTMLResponse(_approval_page_html("Payment Approved", "#22c55e", f"Payment for {kase['reference']} approved. Amount: {_fmt_rm(check.get('ctcTotal'))}."))
+    return HTMLResponse(_approval_page_html("Payment Approved", "#22c55e", f"Payment for {kase['reference']} approved. Amount: {fmt_currency(check.get('ctcTotal'), check.get('currency', 'MYR'))}."))
 
 
 # ─── Step 6c: In-app payment confirmation ────────────────────────────────────
@@ -3866,7 +3888,7 @@ async def confirm_payment(case_id: str, request: Request):
     cert = {
         "type": "PAYMENT_APPROVAL", "reference": kase["reference"],
         "approvedBy": user.get("name") or user.get("email"),
-        "amount": _fmt_rm(check.get("ctcTotal")),
+        "amount": fmt_currency(check.get("ctcTotal"), check.get("currency", "MYR")),
         "consultantCount": check.get("consultantCount"),
         "bankPortalRef": kase.get("bank_portal_ref"),
         "entity": kase.get("entity_name") or kase.get("entity"), "period": kase.get("period"),
@@ -3959,7 +3981,7 @@ async def post_zoho(case_id: str, request: Request):
                 "amount": amount,
                 "description": f"{kase['type']} Salary Payment – {emp['name']} ({emp['employeeId']}) – {kase['period']} – Ref: {kase['reference']} – Approved: {kase.get('payment_approved_by')}",
                 "reference_number": f"PMT-{kase['period']}-{kase['entity']}-{emp['employeeId']}-{str(kase['id'])[-8:]}",
-                "currency_code": "MYR", "exchange_rate": 1, "is_billable": False,
+                "currency_code": get_entity_currency(kase.get("entity", "")), "exchange_rate": 1, "is_billable": False,
             })
             results.append({"employeeId": emp["employeeId"], "name": emp["name"], "amount": amount, "journalId": expense.get("expense_id"), "success": True})
         except Exception as e:
@@ -4134,7 +4156,7 @@ async def delete_case(case_id: str, request: Request):
         "id,reference,type,entity,entity_name,period,status,uploaded_by_name,uploaded_at,check_data,zoho_journal_ids,zoho_posted_at,check_approved_at,payment_approved_at"
     ).eq("type", case_type).order("created_at", desc=True).limit(100)
     cases_resp = q.execute()
-    cases = cases_resp.data or []
+    cases = _with_currency_prefix(cases_resp.data or [])
 
     ctx = {"request": request, "user": user, "cases": cases, "module": module,
            "case_type": case_type, "section": module, "flash": flash}

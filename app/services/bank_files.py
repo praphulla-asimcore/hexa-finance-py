@@ -55,11 +55,23 @@ MY_BANK_CODES = {
     "bsn": "BSNAMYK1", "bank simpanan nasional": "BSNAMYK1",
 }
 
+# Country-keyed bank-code maps. Indonesia (BCA/Mandiri/BNI/BRI) and Nepal
+# banks are empty until a real bank list is provided -- bank_name_to_code
+# just returns "" for them (same as an unrecognised MY bank name today),
+# rather than raising, since a blank bank code is already a handled/flagged
+# case throughout the bank-file pipeline.
+BANK_CODES: dict = {
+    "MY": MY_BANK_CODES,
+    "ID": {},
+    "NP": {},
+}
 
-def bank_name_to_code(name: str) -> str:
+
+def bank_name_to_code(name: str, country: str = "MY") -> str:
     if not name:
         return ""
-    return MY_BANK_CODES.get(name.strip().lower(), "")
+    codes = BANK_CODES.get((country or "MY").upper(), MY_BANK_CODES)
+    return codes.get(name.strip().lower(), "")
 
 
 def _payment_mode(bank_code: str) -> str:
@@ -972,6 +984,43 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
         "missing": missing,
         "excludedNoFavourite": excluded_no_fav,
     }
+
+
+async def generate_and_store_bank_files_id(kase: dict, db, triggered_by: str) -> dict:
+    raise NotImplementedError(
+        "Indonesia (PTHIT) bank payment file generation is not yet "
+        "configured — no bank/format template has been entered for this "
+        "entity (Maybank's RCGEN2 format only applies to Malaysia)."
+    )
+
+
+async def generate_and_store_bank_files_np(kase: dict, db, triggered_by: str) -> dict:
+    raise NotImplementedError(
+        "Nepal (HNPL) bank payment file generation is not yet configured — "
+        "no bank/format template has been entered for this entity "
+        "(Maybank's RCGEN2 format only applies to Malaysia)."
+    )
+
+
+# CSI bank-file generator, selected by the case's entity → country (see
+# app.config.get_entity_country). Fail loud on an unrecognised/unconfigured
+# country -- generating a payment file against the wrong country's rules
+# would be a real-money mistake, not something to guess at.
+BANK_FILE_GENERATORS: dict = {
+    "MY": generate_and_store_bank_files,
+    "ID": generate_and_store_bank_files_id,
+    "NP": generate_and_store_bank_files_np,
+}
+
+
+def get_bank_file_generator(country: str):
+    fn = BANK_FILE_GENERATORS.get((country or "MY").upper())
+    if fn is None:
+        raise NotImplementedError(
+            f"No CSI bank-file generator configured for country {country!r}. "
+            f"Supported: {sorted(BANK_FILE_GENERATORS)}."
+        )
+    return fn
 
 
 async def generate_and_store_bank_files_payroll(kase: dict, db, triggered_by: str) -> dict:

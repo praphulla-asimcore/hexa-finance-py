@@ -4,9 +4,10 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from app.config import TEMPLATES_DIR, ORGS, STATUTORY_NOS
+from app.config import TEMPLATES_DIR, ORGS, STATUTORY_NOS, get_entity_currency
 from app.deps import get_current_user
 from app.services.db import get_db
+from app.services.currency import currency_prefix
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -51,7 +52,8 @@ async def statutory_list(request: Request):
             "id,entity,entity_name,statutory_type,wage_month,contribution_month,"
             "due_date,status,total_amount,total_ee_amount,total_er_amount,created_at"
         ).order("contribution_month", desc=True).order("entity").execute()
-        submissions = resp.data or []
+        submissions = [{**s, "currencyPrefix": currency_prefix(get_entity_currency(s.get("entity", "")))}
+                       for s in (resp.data or [])]
 
     ctx = _ctx(request, user, {"submissions": submissions})
     tmpl = "statutory/list.html" if request.headers.get("HX-Request") else "statutory/list_page.html"
@@ -67,7 +69,8 @@ async def statutory_detail(sub_id: str, request: Request):
     sub  = _fetch_sub(sub_id, db)
     if not sub:
         raise HTTPException(404, "Submission not found")
-    ctx  = _ctx(request, user, {"sub": sub, "type_label": TYPE_LABELS.get(sub["statutory_type"],"")})
+    ctx  = _ctx(request, user, {"sub": sub, "type_label": TYPE_LABELS.get(sub["statutory_type"],""),
+                                "currency_prefix": currency_prefix(get_entity_currency(sub.get("entity", "")))})
     tmpl = "statutory/detail.html" if request.headers.get("HX-Request") else "statutory/detail_page.html"
     return templates.TemplateResponse(request, tmpl, ctx)
 
@@ -81,7 +84,8 @@ def _fetch_sub(sub_id: str, db) -> dict | None:
 
 async def _refresh(sub_id: str, db, request: Request, user: dict):
     sub = _fetch_sub(sub_id, db) or {}
-    ctx = _ctx(request, user, {"sub": sub, "type_label": TYPE_LABELS.get(sub.get("statutory_type",""),"")})
+    ctx = _ctx(request, user, {"sub": sub, "type_label": TYPE_LABELS.get(sub.get("statutory_type",""),""),
+                               "currency_prefix": currency_prefix(get_entity_currency(sub.get("entity", "")))})
     return templates.TemplateResponse(request, "statutory/detail_inner.html", ctx)
 
 

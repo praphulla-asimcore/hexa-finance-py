@@ -1,4 +1,4 @@
-{% macro fmt_rm(n) %}{% if n is not none %}RM {{ "{:,.2f}".format(n|float) }}{% else %}—{% endif %}{% endmacro %}
+{% macro fmt_rm(n, prefix='RM') %}{% if n is not none %}{{ prefix }} {{ "{:,.2f}".format(n|float) }}{% else %}—{% endif %}{% endmacro %}
 {% macro fmt_date(d) %}{% if d %}{{ d[:10] }}{% else %}—{% endif %}{% endmacro %}
 
 <div class="pf-screen fade-in">
@@ -47,7 +47,7 @@
           <span class="pf-dot"></span>
           <span>Wage: {{ sub.wage_month[:4] }}-{{ sub.wage_month[4:] }}</span>
           <span class="pf-dot"></span>
-          <span>{{ fmt_rm(sub.total_amount) }}</span>
+          <span>{{ fmt_rm(sub.total_amount, sub.currencyPrefix|default('RM')) }}</span>
         </div>
         <div class="pf-case-by">
           Due {{ fmt_date(sub.due_date) }}

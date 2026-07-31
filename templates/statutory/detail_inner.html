@@ -1,4 +1,4 @@
-{% macro fmt_rm(n) %}{% if n is not none %}RM {{ "{:,.2f}".format(n|float) }}{% else %}—{% endif %}{% endmacro %}
+{% macro fmt_rm(n) %}{% if n is not none %}{{ currency_prefix|default('RM') }} {{ "{:,.2f}".format(n|float) }}{% else %}—{% endif %}{% endmacro %}
 {% macro fmt_date(d) %}{% if d %}{{ d[:16].replace('T',' ') }}{% else %}—{% endif %}{% endmacro %}
 
 <div id="stat-error" class="error-msg" style="display:none;margin-bottom:12px"></div>
@@ -183,23 +183,23 @@
         <td style="padding:6px 10px;border-bottom:1px solid var(--border);font-family:monospace;font-size:11px">{{ emp.idNumber or '—' }}</td>
         {% if sub.statutory_type == 'EPF' %}
         <td style="padding:6px 10px;border-bottom:1px solid var(--border);font-family:monospace;font-size:11px">{{ emp.epfNumber or '—' }}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">RM {{ "%.2f"|format(emp.epfEmployee|float) }}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">RM {{ "%.2f"|format(emp.epfEmployer|float) }}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right;font-weight:600">RM {{ "%.2f"|format((emp.epfEmployee|float)+(emp.epfEmployer|float)) }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">{{ currency_prefix|default('RM') }} {{ "%.2f"|format(emp.epfEmployee|float) }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">{{ currency_prefix|default('RM') }} {{ "%.2f"|format(emp.epfEmployer|float) }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right;font-weight:600">{{ currency_prefix|default('RM') }} {{ "%.2f"|format((emp.epfEmployee|float)+(emp.epfEmployer|float)) }}</td>
         {% elif sub.statutory_type == 'SOCSO_EIS' %}
         <td style="padding:6px 10px;border-bottom:1px solid var(--border);font-family:monospace;font-size:11px">{{ emp.socsoNumber or '—' }}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">RM {{ "%.2f"|format(emp.socsoEmployee|float) }}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">RM {{ "%.2f"|format(emp.socsoEmployer|float) }}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">RM {{ "%.2f"|format(emp.eisEmployee|float) }}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">RM {{ "%.2f"|format(emp.eisEmployer|float) }}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right;font-weight:600">RM {{ "%.2f"|format((emp.socsoEmployee|float)+(emp.socsoEmployer|float)+(emp.eisEmployee|float)+(emp.eisEmployer|float)) }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">{{ currency_prefix|default('RM') }} {{ "%.2f"|format(emp.socsoEmployee|float) }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">{{ currency_prefix|default('RM') }} {{ "%.2f"|format(emp.socsoEmployer|float) }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">{{ currency_prefix|default('RM') }} {{ "%.2f"|format(emp.eisEmployee|float) }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">{{ currency_prefix|default('RM') }} {{ "%.2f"|format(emp.eisEmployer|float) }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right;font-weight:600">{{ currency_prefix|default('RM') }} {{ "%.2f"|format((emp.socsoEmployee|float)+(emp.socsoEmployer|float)+(emp.eisEmployee|float)+(emp.eisEmployer|float)) }}</td>
         {% elif sub.statutory_type == 'HRDF' %}
-        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">RM {{ "%.2f"|format(emp.grossSalary|float) }}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right;font-weight:600">RM {{ "%.2f"|format(emp.hrdf|float) }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">{{ currency_prefix|default('RM') }} {{ "%.2f"|format(emp.grossSalary|float) }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right;font-weight:600">{{ currency_prefix|default('RM') }} {{ "%.2f"|format(emp.hrdf|float) }}</td>
         {% elif sub.statutory_type == 'MTD' %}
         <td style="padding:6px 10px;border-bottom:1px solid var(--border);font-family:monospace;font-size:11px">{{ emp.taxRefNumber or '—' }}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">RM {{ "%.2f"|format(emp.grossSalary|float) }}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right;font-weight:600">RM {{ "%.2f"|format(emp.mtd|float) }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right">{{ currency_prefix|default('RM') }} {{ "%.2f"|format(emp.grossSalary|float) }}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border);text-align:right;font-weight:600">{{ currency_prefix|default('RM') }} {{ "%.2f"|format(emp.mtd|float) }}</td>
         {% endif %}
       </tr>
       {% endfor %}
@@ -208,17 +208,17 @@
         <td colspan="2" style="padding:7px 10px;border-top:2px solid var(--border)">TOTAL</td>
         {% if sub.statutory_type == 'EPF' %}
         <td style="padding:7px 10px;border-top:2px solid var(--border)"></td>
-        <td style="padding:7px 10px;border-top:2px solid var(--border);text-align:right">RM {{ "%.2f"|format(sub.total_ee_amount|float) }}</td>
-        <td style="padding:7px 10px;border-top:2px solid var(--border);text-align:right">RM {{ "%.2f"|format(sub.total_er_amount|float) }}</td>
-        <td style="padding:7px 10px;border-top:2px solid var(--border);text-align:right">RM {{ "%.2f"|format(sub.total_amount|float) }}</td>
+        <td style="padding:7px 10px;border-top:2px solid var(--border);text-align:right">{{ currency_prefix|default('RM') }} {{ "%.2f"|format(sub.total_ee_amount|float) }}</td>
+        <td style="padding:7px 10px;border-top:2px solid var(--border);text-align:right">{{ currency_prefix|default('RM') }} {{ "%.2f"|format(sub.total_er_amount|float) }}</td>
+        <td style="padding:7px 10px;border-top:2px solid var(--border);text-align:right">{{ currency_prefix|default('RM') }} {{ "%.2f"|format(sub.total_amount|float) }}</td>
         {% elif sub.statutory_type == 'SOCSO_EIS' %}
         <td style="padding:7px 10px;border-top:2px solid var(--border)"></td>
         <td colspan="4" style="padding:7px 10px;border-top:2px solid var(--border);text-align:right">Total: RM {{ "%.2f"|format(sub.total_amount|float) }}</td>
-        <td style="padding:7px 10px;border-top:2px solid var(--border);text-align:right">RM {{ "%.2f"|format(sub.total_amount|float) }}</td>
+        <td style="padding:7px 10px;border-top:2px solid var(--border);text-align:right">{{ currency_prefix|default('RM') }} {{ "%.2f"|format(sub.total_amount|float) }}</td>
         {% elif sub.statutory_type in ['HRDF','MTD'] %}
         {% if sub.statutory_type == 'MTD' %}<td style="padding:7px 10px;border-top:2px solid var(--border)"></td>{% endif %}
         <td style="padding:7px 10px;border-top:2px solid var(--border);text-align:right"></td>
-        <td style="padding:7px 10px;border-top:2px solid var(--border);text-align:right">RM {{ "%.2f"|format(sub.total_amount|float) }}</td>
+        <td style="padding:7px 10px;border-top:2px solid var(--border);text-align:right">{{ currency_prefix|default('RM') }} {{ "%.2f"|format(sub.total_amount|float) }}</td>
         {% endif %}
       </tr></tfoot>
     </table>

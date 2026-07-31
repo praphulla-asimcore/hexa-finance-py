@@ -38,7 +38,7 @@ def test_get_str_fallback_and_strip():
 
 def test_parse_employee_valid_row():
     cm = p._build_col_map(["Employee ID", "Name", "Client", "CTC Hexa", "Gross Salary", "Net Salary"])
-    emp = p._parse_employee(["HS164", "Azran Bin Azizan", "Nokia", 9000, 9000, 7268.20], cm)
+    emp = p._parse_employee_my(["HS164", "Azran Bin Azizan", "Nokia", 9000, 9000, 7268.20], cm)
     assert emp["employeeId"] == "HS164"
     assert emp["name"] == "Azran Bin Azizan"
     assert emp["netSalary"] == 7268.20
@@ -47,9 +47,9 @@ def test_parse_employee_valid_row():
 def test_parse_employee_skips_blank_id_and_zero_ctc():
     cm = p._build_col_map(["Employee ID", "Name", "Client", "CTC Hexa", "Gross Salary", "Net Salary"])
     # Blank Employee ID → skipped (prevents an unidentified payee).
-    assert p._parse_employee(["", "Ghost", "Nokia", 9000, 9000, 100], cm) is None
+    assert p._parse_employee_my(["", "Ghost", "Nokia", 9000, 9000, 100], cm) is None
     # Zero CTC Hexa → skipped (not a real consultant line).
-    assert p._parse_employee(["HS1", "Empty", "Nokia", 0, 9000, 100], cm) is None
+    assert p._parse_employee_my(["HS1", "Empty", "Nokia", 0, 9000, 100], cm) is None
 
 
 def test_process_sheets_finds_header_and_builds_entities():

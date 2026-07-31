@@ -62,8 +62,9 @@ def _build_col_map(header_row) -> dict:
     return {str(cell).strip(): idx for idx, cell in enumerate(header_row) if cell is not None}
 
 
-def _parse_employee(row, col_map) -> dict | None:
-    """Parse one employee row. Returns None if row should be skipped."""
+def _parse_employee_my(row, col_map) -> dict | None:
+    """Parse one CSI employee row against the Malaysian template. Returns
+    None if row should be skipped."""
     emp_id_idx = col_map.get("Employee ID")
     if emp_id_idx is None or emp_id_idx >= len(row):
         return None
@@ -121,8 +122,49 @@ def _parse_employee(row, col_map) -> dict | None:
     }
 
 
-def _process_sheets(sheets: list[tuple[str, list]]) -> list[dict]:
+def _parse_employee_id(row, col_map) -> dict | None:
+    raise NotImplementedError(
+        "Indonesia (PTHIT) CSI parsing is not yet configured — no column "
+        "schema has been defined for this entity's payroll file format yet. "
+        "A sample CSI file is needed to map its columns before this entity "
+        "can be uploaded."
+    )
+
+
+def _parse_employee_np(row, col_map) -> dict | None:
+    raise NotImplementedError(
+        "Nepal (HNPL) CSI parsing is not yet configured — no column "
+        "schema has been defined for this entity's payroll file format yet. "
+        "A sample CSI file is needed to map its columns before this entity "
+        "can be uploaded."
+    )
+
+
+# Per-country CSI row parser, selected by the case's entity → country (see
+# app.config.get_entity_country). Fail loud on an unrecognised/unconfigured
+# country rather than silently parsing a foreign file against the Malaysian
+# schema — a country-CSI mismatch could otherwise produce plausible-looking
+# but wrong numbers instead of an obvious error.
+CSI_PARSERS: dict = {
+    "MY": _parse_employee_my,
+    "ID": _parse_employee_id,
+    "NP": _parse_employee_np,
+}
+
+
+def _get_csi_parser(country: str):
+    parser = CSI_PARSERS.get((country or "MY").upper())
+    if parser is None:
+        raise NotImplementedError(
+            f"No CSI parser configured for country {country!r}. "
+            f"Supported: {sorted(CSI_PARSERS)}."
+        )
+    return parser
+
+
+def _process_sheets(sheets: list[tuple[str, list]], country: str = "MY") -> list[dict]:
     """Build entities list from (sheet_name, rows) pairs."""
+    parse_employee = _get_csi_parser(country)
     entities = []
     for sheet_name, rows in sheets:
         if not rows or len(rows) < 2:
@@ -152,7 +194,7 @@ def _process_sheets(sheets: list[tuple[str, list]]) -> list[dict]:
             for row in rows[header_idx + 1:]:
                 if not row:
                     continue
-                emp = _parse_employee(row, col_map)
+                emp = parse_employee(row, col_map)
                 if emp is None:
                     continue
                 entity_val = str(row[entity_col_idx] or "").strip() if entity_col_idx < len(row) else ""
@@ -173,7 +215,7 @@ def _process_sheets(sheets: list[tuple[str, list]]) -> list[dict]:
             for row in rows[header_idx + 1:]:
                 if not row:
                     continue
-                emp = _parse_employee(row, col_map)
+                emp = parse_employee(row, col_map)
                 if emp:
                     employees.append(emp)
 
@@ -188,7 +230,7 @@ def _process_sheets(sheets: list[tuple[str, list]]) -> list[dict]:
     return entities
 
 
-def parse_excel_buffer(data: bytes) -> list[dict]:
+def parse_excel_buffer(data: bytes, country: str = "MY") -> list[dict]:
     # Try openpyxl first (handles .xlsx / .xlsm)
     try:
         wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
@@ -197,7 +239,7 @@ def parse_excel_buffer(data: bytes) -> list[dict]:
             for name in wb.sheetnames
         ]
         wb.close()
-        return _json_safe(_process_sheets(sheets))
+        return _json_safe(_process_sheets(sheets, country))
     except Exception as e:
         if "zip" not in str(e).lower() and "openpyxl" not in str(e).lower():
             raise  # unexpected error — re-raise
@@ -209,7 +251,7 @@ def parse_excel_buffer(data: bytes) -> list[dict]:
             (ws.name, [ws.row_values(r) for r in range(ws.nrows)])
             for ws in wb.sheets()
         ]
-        return _json_safe(_process_sheets(sheets))
+        return _json_safe(_process_sheets(sheets, country))
     except Exception as e:
         raise ValueError(
             f"Could not read file as .xlsx or .xls: {e}. "

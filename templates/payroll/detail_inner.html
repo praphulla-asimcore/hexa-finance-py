@@ -1,4 +1,4 @@
-{% macro fmt_rm(n) %}{% if n is not none %}RM {{ "{:,.2f}".format(n|float) }}{% else %}—{% endif %}{% endmacro %}
+{% macro fmt_rm(n) %}{% if n is not none %}{{ currency_prefix|default('RM') }} {{ "{:,.2f}".format(n|float) }}{% else %}—{% endif %}{% endmacro %}
 {% macro fmt_date(d) %}{% if d %}{{ d[:16].replace('T',' ') }}{% else %}—{% endif %}{% endmacro %}
 
 {% set STEP_DEFS = [

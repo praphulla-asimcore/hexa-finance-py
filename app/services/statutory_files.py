@@ -328,3 +328,26 @@ def generate_mtd_file(submission: dict, employer_mtd_no: str = "") -> dict:
         "total_er_amount": 0.0,
         "total_amount":    total_pcb,
     }
+
+
+# ─── Country dispatch ──────────────────────────────────────────────────────
+# {country: {statutory_type: generator_fn}}. Indonesia/Nepal are deliberately
+# empty (not stubs that raise) -- a country with no filing-file generators
+# configured yet just produces zero statutory submissions rather than
+# crashing check-approval, since this runs as non-critical background
+# enrichment. "Unrecognised country" is guarded separately, one stage
+# earlier, by app.config.get_entity_country / the CSI parser dispatch.
+STATUTORY_FILE_GENERATORS: dict = {
+    "MY": {
+        "EPF":       generate_epf_file,
+        "SOCSO_EIS": generate_socso_eis_file,
+        "HRDF":      generate_hrdf_file,
+        "MTD":       generate_mtd_file,
+    },
+    "ID": {},  # BPJS Kesehatan, BPJS Ketenagakerjaan, PPh21 -- not yet implemented
+    "NP": {},  # SSF or PF+Gratuity, TDS -- not yet implemented
+}
+
+
+def get_statutory_file_generators(country: str) -> dict:
+    return STATUTORY_FILE_GENERATORS.get((country or "MY").upper(), {})

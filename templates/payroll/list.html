@@ -1,6 +1,6 @@
 {% set label = 'CSI' if module == 'csi' else 'Payroll' %}
 
-{% macro fmt_rm(n) %}{% if n is not none %}RM {{ "{:,.2f}".format(n|float) }}{% else %}—{% endif %}{% endmacro %}
+{% macro fmt_rm(n, prefix='RM') %}{% if n is not none %}{{ prefix }} {{ "{:,.2f}".format(n|float) }}{% else %}—{% endif %}{% endmacro %}
 {% macro fmt_date(d) %}{% if d %}{{ d[:16].replace('T',' ') }}{% else %}—{% endif %}{% endmacro %}
 
 {% set STATUS_BADGE = {
@@ -90,7 +90,7 @@
         <span>{{ (c.check_data or {}).get('consultantCount', '—') }} consultants</span>
         {% if (c.check_data or {}).get('ctcTotal') %}
         <span class="pf-dot"></span>
-        <span>{{ fmt_rm((c.check_data or {}).get('ctcTotal')) }}</span>
+        <span>{{ fmt_rm((c.check_data or {}).get('ctcTotal'), c.currencyPrefix|default('RM')) }}</span>
         {% endif %}
       </div>
       <div class="pf-case-by">
