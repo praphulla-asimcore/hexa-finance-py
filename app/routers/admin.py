@@ -343,3 +343,94 @@ async def consultants_delete(entity: str, employee_id: str, request: Request):
     if db:
         db.from_("consultant_master").delete().eq("entity", entity).eq("employee_id", employee_id).execute()
     return RedirectResponse("/admin/consultants", status_code=303)
+
+
+# ─── Nepal employee master (nepal_employee_master -- separate from
+#     consultant_master; see db/nepal_employee_master.sql for why) ────────────
+
+def _nepal_employee_form_to_row(form) -> dict:
+    return {
+        "entity":               "HNPL",
+        "employee_ledger_code": (form.get("employee_ledger_code") or "").strip() or None,
+        "apex_employee_id":     (form.get("apex_employee_id") or "").strip().upper() or None,
+        "employee_name":        (form.get("employee_name") or "").strip(),
+        "citizenship_number":   (form.get("citizenship_number") or "").strip() or None,
+        "pan_number":           (form.get("pan_number") or "").strip() or None,
+        "nationality":          (form.get("nationality") or "").strip() or "Nepali",
+        "bank_name":            (form.get("bank_name") or "").strip() or None,
+        "bank_account_name":    (form.get("bank_account_name") or "").strip() or None,
+        "bank_account_number":  (form.get("bank_account_number") or "").strip().replace(" ", "") or None,
+        "ssf_number":           (form.get("ssf_number") or "").strip() or None,
+        "cit_number":           (form.get("cit_number") or "").strip() or None,
+        "resign_date":          _parse_date(form.get("resign_date")),
+    }
+
+
+def _save_nepal_employee(form, row_id: str | None) -> None:
+    row = _nepal_employee_form_to_row(form)
+    if not row["employee_name"]:
+        return
+    db = get_db()
+    if row_id:
+        db.from_("nepal_employee_master").update(row).eq("id", row_id).execute()
+    else:
+        db.from_("nepal_employee_master").insert(row).execute()
+
+
+@router.get("/admin/nepal-employees")
+async def nepal_employees_list(request: Request, q: str = ""):
+    """Manual view onto nepal_employee_master (see db/nepal_employee_master.sql
+    -- kept separate from consultant_master; Malaysia's Talenox-specific
+    assumptions don't apply to RigoHR's data shape)."""
+    user = get_current_user(request)
+    if user.get("role") not in _BANK_OVERRIDE_EDIT_ROLES:
+        return RedirectResponse("/", status_code=302)
+    db = get_db()
+    rows, total = [], 0
+    if db:
+        all_rows = db.from_("nepal_employee_master").select("*").execute().data or []
+        total = len(all_rows)
+        if q.strip():
+            ql = q.strip().lower()
+            rows = [r for r in all_rows if
+                    ql in (r.get("employee_name") or "").lower()
+                    or ql in (r.get("employee_ledger_code") or "").lower()
+                    or ql in (r.get("apex_employee_id") or "").lower()
+                    or ql in (r.get("pan_number") or "").lower()]
+            rows.sort(key=lambda r: (r.get("employee_name") or "").lower())
+        else:
+            rows = sorted(all_rows, key=lambda r: (r.get("employee_name") or "").lower())
+    return templates.TemplateResponse(request, "admin/nepal_employees.html", {
+        "user": user, "section": "admin", "employees": rows, "q": q, "total": total,
+    })
+
+
+@router.post("/admin/nepal-employees/new")
+async def nepal_employees_new(request: Request):
+    user = get_current_user(request)
+    if user.get("role") not in _BANK_OVERRIDE_EDIT_ROLES:
+        return RedirectResponse("/", status_code=302)
+    if get_db():
+        _save_nepal_employee(await request.form(), None)
+    return RedirectResponse("/admin/nepal-employees", status_code=303)
+
+
+@router.post("/admin/nepal-employees/{employee_id}/edit")
+async def nepal_employees_edit(employee_id: str, request: Request):
+    user = get_current_user(request)
+    if user.get("role") not in _BANK_OVERRIDE_EDIT_ROLES:
+        return RedirectResponse("/", status_code=302)
+    if get_db():
+        _save_nepal_employee(await request.form(), employee_id)
+    return RedirectResponse("/admin/nepal-employees", status_code=303)
+
+
+@router.post("/admin/nepal-employees/{employee_id}/delete")
+async def nepal_employees_delete(employee_id: str, request: Request):
+    user = get_current_user(request)
+    if user.get("role") != "admin":
+        return RedirectResponse("/", status_code=302)
+    db = get_db()
+    if db:
+        db.from_("nepal_employee_master").delete().eq("id", employee_id).execute()
+    return RedirectResponse("/admin/nepal-employees", status_code=303)

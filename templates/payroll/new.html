@@ -30,7 +30,20 @@
       <input type="hidden" name="case_type" value="{{ case_type }}"/>
       <input type="hidden" name="module" value="{{ module }}"/>
 
-      <div class="pf-form-section">
+      <div class="pf-form-section" id="nepal-source-toggle" style="display:none">
+        <label class="label">Data Source</label>
+        <div style="display:flex;gap:16px;font-size:13px">
+          <label style="display:flex;align-items:center;gap:6px;font-weight:400">
+            <input type="radio" name="nepal_source" value="upload" checked onchange="updateNepalSource()"> Upload Excel File
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-weight:400">
+            <input type="radio" name="nepal_source" value="rigohr" onchange="updateNepalSource()"> Pull from RigoHR
+          </label>
+        </div>
+        <span class="pf-hint">Nepal (HNPL) payroll comes from RigoHR — pull directly, or fall back to a manual Excel export.</span>
+      </div>
+
+      <div class="pf-form-section" id="file-upload-section">
         <label class="label">Payroll File <span class="req">*</span></label>
         <div class="pf-drop-zone" id="drop-zone" onclick="document.getElementById('pf-file-input').click()">
           <input id="pf-file-input" type="file" name="file" accept=".xlsx,.xls,.xlsm" style="display:none"
@@ -51,6 +64,25 @@
             <span id="drop-filesize" class="pf-drop-size"></span>
           </div>
         </div>
+      </div>
+
+      <div class="pf-form-section" id="rigohr-pull-section" style="display:none">
+        <label class="label">RigoHR Pull</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input class="input" type="number" id="rigohr-addonid" placeholder="Add-on ID (optional)" style="max-width:170px">
+          <select class="input" id="rigohr-employee-status" style="max-width:150px">
+            <option value="">Employee Status: All</option>
+            <option value="Active">Active only</option>
+            <option value="Retired">Retired only</option>
+          </select>
+          <button type="button" class="btn btn-secondary btn-sm" id="rigohr-preview-btn" onclick="previewRigoHR()">
+            <span id="rigohr-spinner" class="spinner" style="display:none"></span>
+            Preview from RigoHR
+          </button>
+        </div>
+        <span class="pf-hint">Uses the Period month/year selected below. Preview only — does not create a case yet
+          (the RigoHR account mapping isn't confirmed).</span>
+        <div id="rigohr-preview-result" style="margin-top:12px"></div>
       </div>
 
       <div class="pf-form-row">
@@ -149,14 +181,20 @@ function submitUploadForm() {
   document.getElementById('upload-error').style.display = 'none';
   buildPeriodYm();
 
-  const fileInput = document.getElementById('pf-file-input');
-  if (!fileInput.files || !fileInput.files.length) {
-    showFormError('Please select an Excel file (.xlsx or .xls) to upload.');
-    return;
-  }
   const entity = document.getElementById('entity-select').value;
   if (!entity) {
     showFormError('Please select an entity.');
+    return;
+  }
+  const nepalSource = document.querySelector('input[name="nepal_source"]:checked').value;
+  if (entity === 'HNPL' && nepalSource === 'rigohr') {
+    showFormError('Case creation from a RigoHR pull isn\'t available yet — use "Preview from RigoHR" to check the '
+      + 'data, or switch to "Upload Excel File" once you have a Nepal export to upload.');
+    return;
+  }
+  const fileInput = document.getElementById('pf-file-input');
+  if (!fileInput.files || !fileInput.files.length) {
+    showFormError('Please select an Excel file (.xlsx or .xls) to upload.');
     return;
   }
   const ym = document.getElementById('period-ym').value;
@@ -251,6 +289,60 @@ function updateEntityHint(select) {
     hint.style.display = 'none';
     nameHidden.value = '';
   }
+
+  const isNepal = (code === 'HNPL');
+  document.getElementById('nepal-source-toggle').style.display = isNepal ? 'block' : 'none';
+  if (!isNepal) {
+    // Reset to the upload path for every other entity -- upload/create-case
+    // is the only working flow anywhere except Nepal today.
+    document.querySelector('input[name="nepal_source"][value="upload"]').checked = true;
+  }
+  updateNepalSource();
+}
+
+function updateNepalSource() {
+  const code = document.getElementById('entity-select').value;
+  const source = document.querySelector('input[name="nepal_source"]:checked').value;
+  const useRigoHR = (code === 'HNPL' && source === 'rigohr');
+  document.getElementById('file-upload-section').style.display = useRigoHR ? 'none' : 'block';
+  document.getElementById('rigohr-pull-section').style.display = useRigoHR ? 'block' : 'none';
+}
+
+function previewRigoHR() {
+  const resultBox = document.getElementById('rigohr-preview-result');
+  resultBox.innerHTML = '';
+  buildPeriodYm();
+  const ym = document.getElementById('period-ym').value;
+  if (!ym || ym.length !== 6) {
+    resultBox.innerHTML = '<div class="error-msg">Select a period month and year above first.</div>';
+    return;
+  }
+  const year = ym.slice(0, 4);
+  const month = ym.slice(4, 6);
+  const addonid = document.getElementById('rigohr-addonid').value;
+  const employeeStatus = document.getElementById('rigohr-employee-status').value;
+
+  const btn = document.getElementById('rigohr-preview-btn');
+  const spinner = document.getElementById('rigohr-spinner');
+  btn.disabled = true;
+  spinner.style.display = 'inline-block';
+
+  const formData = new FormData();
+  formData.append('year', year);
+  formData.append('month', month);
+  if (addonid) formData.append('addonid', addonid);
+  if (employeeStatus) formData.append('employeeStatus', employeeStatus);
+
+  fetch('/cases/nepal/rigohr-preview', { method: 'POST', body: formData })
+    .then(function(res) { return res.text(); })
+    .then(function(html) { resultBox.innerHTML = html; })
+    .catch(function() {
+      resultBox.innerHTML = '<div class="error-msg">Network error — please check your connection and try again.</div>';
+    })
+    .finally(function() {
+      btn.disabled = false;
+      spinner.style.display = 'none';
+    });
 }
 
 </script>

@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+
+{% macro nepal_employee_form(action, e, submit_label, form_id) %}
+<form method="post" action="{{ action }}" id="{{ form_id }}" class="cm-form">
+  <div class="cm-section">
+    <div class="cm-section-title">Identity</div>
+    <div class="cm-grid">
+      <div><label class="label">Full Name <span class="req">*</span></label>
+        <input class="input" name="employee_name" required value="{{ e.employee_name if e else '' }}"></div>
+      <div><label class="label">RigoHR Employee Ledger Code</label>
+        <input class="input" name="employee_ledger_code" placeholder="e.g. 123-109 (from RigoHR, may not be known yet)"
+               value="{{ (e.employee_ledger_code or '') if e else '' }}"></div>
+      <div><label class="label">APEX Employee ID</label>
+        <input class="input" name="apex_employee_id" placeholder="HEX-0000 (blank if not onboarded yet)"
+               value="{{ (e.apex_employee_id or '') if e else '' }}"></div>
+      <div><label class="label">Citizenship Number</label>
+        <input class="input" name="citizenship_number" placeholder="Nagarikta no."
+               value="{{ (e.citizenship_number or '') if e else '' }}"></div>
+      <div><label class="label">PAN Number</label>
+        <input class="input" name="pan_number" value="{{ (e.pan_number or '') if e else '' }}"></div>
+      <div><label class="label">Nationality</label>
+        <input class="input" name="nationality" value="{{ (e.nationality or 'Nepali') if e else 'Nepali' }}"></div>
+    </div>
+  </div>
+
+  <div class="cm-section">
+    <div class="cm-section-title">Bank Details</div>
+    <div class="cm-grid">
+      <div><label class="label">Bank Name</label>
+        <input class="input" name="bank_name" value="{{ (e.bank_name or '') if e else '' }}"></div>
+      <div><label class="label">Bank Account Name</label>
+        <input class="input" name="bank_account_name" value="{{ (e.bank_account_name or '') if e else '' }}"></div>
+      <div><label class="label">Bank Account Number</label>
+        <input class="input" name="bank_account_number" value="{{ (e.bank_account_number or '') if e else '' }}"></div>
+    </div>
+  </div>
+
+  <div class="cm-section">
+    <div class="cm-section-title">Statutory</div>
+    <div class="cm-grid">
+      <div><label class="label">SSF Number</label>
+        <input class="input" name="ssf_number" placeholder="blank if not required (retiree/intern)"
+               value="{{ (e.ssf_number or '') if e else '' }}"></div>
+      <div><label class="label">CIT Number</label>
+        <input class="input" name="cit_number" value="{{ (e.cit_number or '') if e else '' }}"></div>
+      <div><label class="label">Resign Date</label>
+        <input class="input" type="date" name="resign_date" value="{{ (e.resign_date or '') if e else '' }}"></div>
+    </div>
+  </div>
+
+  <button type="submit" class="btn btn-primary btn-sm">{{ submit_label }}</button>
+</form>
+{% endmacro %}
+
+{% block content %}
+<div class="cp-page">
+  <div class="cp-head">
+    <div>
+      <h1 class="cp-title">Nepal Employees</h1>
+      <div class="cp-sub">
+        {{ total }} employee(s) in nepal_employee_master. Kept separate from consultant_master (Malaysia-specific
+        assumptions don't apply to RigoHR's data shape) — see db/nepal_employee_master.sql. employee_ledger_code
+        and apex_employee_id are commonly blank until backfilled from RigoHR / onboarded into APEX.
+      </div>
+    </div>
+    <button class="btn btn-primary" onclick="cpToggle('add-form')">+ Add Employee</button>
+  </div>
+
+  <form method="get" action="/admin/nepal-employees" style="margin-bottom:14px;display:flex;gap:8px">
+    <input class="input" type="text" name="q" value="{{ q }}" placeholder="Search by name, ledger code, APEX ID, or PAN…" style="max-width:320px">
+    <button type="submit" class="btn btn-secondary btn-sm">Search</button>
+    {% if q %}<a href="/admin/nepal-employees" class="btn btn-secondary btn-sm">Clear</a>{% endif %}
+  </form>
+
+  <div id="add-form" class="cp-addbox" style="display:none">
+    {{ nepal_employee_form('/admin/nepal-employees/new', none, 'Save Employee', 'addform') }}
+  </div>
+
+  <table class="admin-table cp-table">
+    <thead><tr>
+      <th>Name</th><th>Ledger Code</th><th>APEX ID</th>
+      <th>Bank</th><th>Account No.</th><th>SSF No.</th><th>Actions</th>
+    </tr></thead>
+    <tbody>
+      {% for e in employees %}
+      <tr>
+        <td style="text-align:left">{{ e.employee_name }}</td>
+        <td>{{ e.employee_ledger_code or '—' }}</td>
+        <td>{{ e.apex_employee_id or '—' }}</td>
+        <td>{{ e.bank_name or '—' }}</td>
+        <td>{{ e.bank_account_number or '—' }}</td>
+        <td>{{ e.ssf_number or '—' }}</td>
+        <td style="white-space:nowrap">
+          <button class="btn btn-secondary btn-sm" onclick="cpToggle('edit-{{ e.id }}')">Edit</button>
+          {% if user.role == 'admin' %}
+          <form method="post" action="/admin/nepal-employees/{{ e.id }}/delete" style="display:inline"
+                onsubmit="return confirm('Remove {{ e.employee_name }} from nepal_employee_master?')">
+            <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      <tr id="edit-{{ e.id }}" style="display:none">
+        <td colspan="7" class="cp-editcell">
+          {{ nepal_employee_form('/admin/nepal-employees/' ~ e.id ~ '/edit', e, 'Save Changes', 'edit-form-' ~ e.id) }}
+        </td>
+      </tr>
+      {% endfor %}
+      {% if not employees %}
+      <tr><td colspan="7" style="color:var(--text-muted);padding:18px">
+        {% if q %}No employees match "{{ q }}".{% else %}No employees yet. Add one above.{% endif %}
+      </td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+<style>
+.cp-page { padding: 24px 28px; max-width: 1200px; }
+.cp-head { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:18px; }
+.cp-title { font-size:20px; font-weight:800; color:var(--text-primary); margin:0; }
+.cp-sub { font-size:12px; color:var(--text-muted); margin-top:4px; max-width:640px; }
+.cp-addbox, .cp-editcell { background:var(--surface,#fff); border:1px solid var(--border); border-radius:10px; padding:14px; }
+.cp-addbox { margin-bottom:16px; }
+.cp-table th, .cp-table td { text-align:center; }
+.cp-table th:nth-child(1), .cp-table td:nth-child(1) { text-align:left; }
+.cm-section { margin-bottom:14px; }
+.cm-section-title { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:var(--text-muted); margin-bottom:8px; }
+.cm-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+</style>
+<script>
+function cpToggle(id){ var e=document.getElementById(id); e.style.display=(e.style.display==='none'?'':'none'); }
+</script>
+{% endblock %}

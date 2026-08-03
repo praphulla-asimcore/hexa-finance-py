@@ -1,0 +1,47 @@
+<div class="pf-info-banner pf-banner-warning" style="margin-bottom:14px">
+  <strong>Preview only — this does not create a case.</strong> Nepal case creation isn't wired up yet: the
+  RigoHR account-name → payroll-field mapping (which of these accounts is gross/net/SSF/CIT) isn't confirmed.
+  Use this to check the RigoHR connection works and to see exactly which account names a real pull returns.
+</div>
+
+<div class="pf-info-grid" style="margin-bottom:14px">
+  <div class="pf-stamp-box"><span class="pf-stamp-label">Period</span><span class="pf-stamp-value">{{ year }}-{{ '%02d'|format(month) }}</span></div>
+  <div class="pf-stamp-box"><span class="pf-stamp-label">Raw voucher rows</span><span class="pf-stamp-value">{{ raw_row_count }}</span></div>
+  <div class="pf-stamp-box"><span class="pf-stamp-label">Employees found</span><span class="pf-stamp-value">{{ employees|length }}</span></div>
+  <div class="pf-stamp-box"><span class="pf-stamp-label">Distinct account names</span><span class="pf-stamp-value">{{ account_names|length }}</span></div>
+</div>
+
+{% if account_names %}
+<div style="margin-bottom:14px">
+  <div class="cm-section-title" style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px">
+    Account names seen (send confirmation on which map to gross/net/SSF/CIT/etc.)
+  </div>
+  <div style="display:flex;gap:6px;flex-wrap:wrap">
+    {% for a in account_names %}
+    <span class="badge badge-neutral">{{ a }}</span>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if employees %}
+<div style="overflow-x:auto">
+  <table class="admin-table cp-table">
+    <thead><tr><th style="text-align:left">Group Code</th><th style="text-align:left">Employee Ledger Code</th><th style="text-align:left">Name</th><th style="text-align:left">Accounts (name: amount)</th></tr></thead>
+    <tbody>
+      {% for e in employees %}
+      <tr>
+        <td style="text-align:left">{{ e.group_code }}</td>
+        <td style="text-align:left">{{ e.ledger_code or '—' }}</td>
+        <td style="text-align:left">{{ e.name }}</td>
+        <td style="text-align:left;font-size:12px">
+          {% for k, v in e.accounts.items() %}{{ k }}: {{ '%.2f'|format(v) }}{% if not loop.last %} · {% endif %}{% endfor %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="pf-info-banner">No employee-level rows found for this period.</div>
+{% endif %}

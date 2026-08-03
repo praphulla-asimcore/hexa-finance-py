@@ -1819,6 +1819,58 @@ async def new_case_page(request: Request):
     return templates.TemplateResponse(request, "payroll/new_page.html", ctx)
 
 
+# ─── Nepal: preview a RigoHR salary-voucher pull (does NOT create a case) ─────
+# Case creation for Nepal isn't wired up yet -- the RigoHR account-name ->
+# payroll-field mapping isn't confirmed, so there's nowhere safe to route the
+# amounts. This exists to prove the RigoHR connection works end-to-end and to
+# show exactly which account names a real pull returns, informing that
+# mapping -- see app/services/rigohr.py's module docstring.
+
+@router.post("/cases/nepal/rigohr-preview")
+async def nepal_rigohr_preview(request: Request):
+    get_current_user(request)  # any logged-in user; this is read-only against RigoHR
+    form = await request.form()
+
+    try:
+        year = int(str(form.get("year", "")).strip())
+        month = int(str(form.get("month", "")).strip())
+    except (TypeError, ValueError):
+        return HTMLResponse('<div class="error-msg">Year and month are required (numbers).</div>')
+
+    addonid_raw = str(form.get("addonid", "")).strip()
+    addonid = None
+    if addonid_raw:
+        try:
+            addonid = int(addonid_raw)
+        except ValueError:
+            return HTMLResponse('<div class="error-msg">Add-on ID must be a number.</div>')
+    employee_status = str(form.get("employeeStatus", "")).strip() or None
+
+    from app.services.rigohr import (
+        fetch_salary_vouchers, group_by_employee,
+        RigoHRAuthError, RigoHRBadRequestError, RigoHRFetchError,
+    )
+    try:
+        rows = await fetch_salary_vouchers(year, month, addonid, employee_status)
+    except RigoHRAuthError as e:
+        return HTMLResponse(f'<div class="error-msg">RigoHR authentication failed: {e}</div>')
+    except RigoHRBadRequestError as e:
+        return HTMLResponse(f'<div class="error-msg">RigoHR rejected the request: {e}</div>')
+    except RigoHRFetchError as e:
+        return HTMLResponse(f'<div class="error-msg">Could not reach RigoHR: {e}</div>')
+    except Exception as e:
+        return HTMLResponse(f'<div class="error-msg">Unexpected error calling RigoHR: {e}</div>')
+
+    grouped = group_by_employee(rows)
+    account_names = sorted({acct for emp in grouped.values() for acct in emp["accounts"]})
+    employees = [{"group_code": code, **data} for code, data in sorted(grouped.items())]
+
+    return templates.TemplateResponse(request, "payroll/nepal_rigohr_preview.html", {
+        "request": request, "employees": employees, "account_names": account_names,
+        "year": year, "month": month, "raw_row_count": len(rows),
+    })
+
+
 # ─── Step 1: Upload ───────────────────────────────────────────────────────────
 
 @router.post("/cases")

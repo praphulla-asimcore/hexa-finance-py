@@ -125,13 +125,23 @@ async def fetch_salary_vouchers(
 
 
 def group_by_employee(rows: list[dict]) -> dict[str, dict]:
-    """Reshape the flat voucher list into {EmployeeLedgerCode: {name, accounts}}.
-    Only GroupedBy == "Employee" rows carry a real EmployeeLedgerCode; Company/
-    Branch/Department rows are aggregate totals, not per-person data, and are
-    dropped here. `accounts` is {AccountName: Amount} -- e.g.
-    {"Salary Payable": -25000.0, "SSF Payable": -600.0, "CIT Payable": -100.0}.
-    Interpreting which AccountName(s) mean gross/net/employer-vs-employee
-    contribution is NOT done here -- pending the full account-list sample."""
+    """Reshape the flat voucher list into {GroupCode: {name, ledger_code, accounts}}.
+
+    Keyed by GroupCode (RigoHR's internal per-employee code, e.g. "E-101"),
+    NOT EmployeeLedgerCode ("123-109") -- these are two different fields in
+    RigoHR's response. GroupCode is documented as always populated for
+    GroupedBy=="Employee" rows; EmployeeLedgerCode is documented as populated
+    "when GroupedBy = Employee" too, but is carried as a separate field
+    (`ledger_code`) rather than trusted as the key, since it's the one that
+    matches nepal_employee_master.employee_ledger_code and reconciling the
+    two against real data hasn't happened yet.
+
+    Only GroupedBy == "Employee" rows carry per-person data; Company/Branch/
+    Department rows are aggregate totals and are dropped here. `accounts` is
+    {AccountName: Amount} -- e.g. {"Salary Payable": -25000.0,
+    "SSF Payable": -600.0, "CIT Payable": -100.0}. Interpreting which
+    AccountName(s) mean gross/net/employer-vs-employee contribution is NOT
+    done here -- pending the full account-list sample."""
     by_employee: dict[str, dict] = {}
     for row in rows:
         if row.get("GroupedBy") != "Employee":
@@ -139,7 +149,11 @@ def group_by_employee(rows: list[dict]) -> dict[str, dict]:
         code = str(row.get("GroupCode") or "").strip()
         if not code:
             continue
-        emp = by_employee.setdefault(code, {"name": row.get("Name") or "", "accounts": {}})
+        emp = by_employee.setdefault(code, {
+            "name": row.get("Name") or "",
+            "ledger_code": str(row.get("EmployeeLedgerCode") or "").strip(),
+            "accounts": {},
+        })
         account = row.get("AccountName") or ""
         emp["accounts"][account] = emp["accounts"].get(account, 0.0) + float(row.get("Amount") or 0)
     return by_employee
