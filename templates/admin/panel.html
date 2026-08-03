@@ -171,13 +171,25 @@
           </div>
           <div style="margin-bottom:10px">
             <label class="label">Role <span class="req">*</span></label>
-            <select class="input" id="invite-role" style="max-width:240px">
+            <select class="input" id="invite-role" style="max-width:240px" onchange="toggleInviteScope()">
               <option value="preparer">Preparer — uploads &amp; prepares files</option>
               <option value="reviewer">Reviewer — reviews check files</option>
               <option value="approver">Approver — final sign-off</option>
               <option value="arranger">Arranger — fixes CSI exceptions</option>
               <option value="admin">Admin — full access</option>
             </select>
+          </div>
+          <div id="invite-scope-row" style="margin-bottom:10px;display:none">
+            <label class="label">Country Scope</label>
+            <select class="input" id="invite-scope" style="max-width:240px">
+              <option value="">All entities (default)</option>
+              <option value="MY">Malaysia only</option>
+              <option value="NP">Nepal only</option>
+              <option value="ID">Indonesia only</option>
+              <option value="SG">Singapore only</option>
+              <option value="MM">Myanmar only</option>
+            </select>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Arranger only sees exceptions/notifications for this country's entities. Leave "All entities" for the existing behavior.</div>
           </div>
           <div id="invite-result" style="font-size:13px;margin-bottom:8px"></div>
           <button type="submit" class="btn btn-primary btn-sm">Send Invitation Email</button>
@@ -194,6 +206,7 @@
               <th>Name</th>
               <th>Email</th>
               <th>Role</th>
+              <th>Scope</th>
               <th>Status</th>
               <th></th>
             </tr>
@@ -213,6 +226,20 @@
                   'user':     'badge-neutral',
                 } %}
                 <span class="badge {{ role_badge.get(u.role, 'badge-neutral') }}">{{ u.role }}</span>
+              </td>
+              <td>
+                {% if u.role == 'arranger' %}
+                <select class="input" style="font-size:12px;padding:3px 6px;max-width:150px" onchange="updateScope('{{ u.id }}', this.value)">
+                  <option value="" {% if not u.country_scope %}selected{% endif %}>All entities</option>
+                  <option value="MY" {% if u.country_scope == 'MY' %}selected{% endif %}>Malaysia only</option>
+                  <option value="NP" {% if u.country_scope == 'NP' %}selected{% endif %}>Nepal only</option>
+                  <option value="ID" {% if u.country_scope == 'ID' %}selected{% endif %}>Indonesia only</option>
+                  <option value="SG" {% if u.country_scope == 'SG' %}selected{% endif %}>Singapore only</option>
+                  <option value="MM" {% if u.country_scope == 'MM' %}selected{% endif %}>Myanmar only</option>
+                </select>
+                {% else %}
+                <span style="font-size:12px;color:var(--text-muted)">—</span>
+                {% endif %}
               </td>
               <td>
                 <span class="badge {% if u.status == 'active' %}badge-success{% elif u.status == 'invited' %}badge-warning{% else %}badge-neutral{% endif %}">
@@ -248,6 +275,11 @@
 </style>
 
 <script>
+function toggleInviteScope() {
+  const role = document.getElementById('invite-role').value;
+  document.getElementById('invite-scope-row').style.display = (role === 'arranger') ? '' : 'none';
+}
+
 async function sendInvite(e) {
   e.preventDefault();
   const btn = e.target.querySelector('button[type=submit]');
@@ -262,6 +294,7 @@ async function sendInvite(e) {
         email: document.getElementById('invite-email').value.trim(),
         name:  document.getElementById('invite-name').value.trim(),
         role:  document.getElementById('invite-role').value,
+        country_scope: document.getElementById('invite-scope').value,
       })
     });
     let d = {};
@@ -277,6 +310,15 @@ async function sendInvite(e) {
   } finally {
     btn.disabled = false;
   }
+}
+
+async function updateScope(id, countryScope) {
+  const r = await fetch('/api/users/' + id + '/scope', {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ country_scope: countryScope })
+  });
+  if (!r.ok) alert('Failed to update scope.');
 }
 
 async function deleteUser(id, email, btn) {

@@ -133,3 +133,10 @@ APPROVERS: dict = {
 # reviewer — he receives the check-approval email and his click is the recorded
 # reviewer approval. Other case types (CSI) use APPROVERS["reviewer"] above.
 PAYROLL_REVIEWER: dict = {"name": "Asim", "email": "asim.ovc977@gmail.com"}
+
+# Per-entity reviewer override, takes precedence over both APPROVERS["reviewer"]
+# and PAYROLL_REVIEWER above. Final approver and director stay global (APPROVERS)
+# for every entity, confirmed 2026-08-03 — only the reviewer varies by entity so far.
+REVIEWER_BY_ENTITY: dict = {
+    "HNPL": {"name": "Ujjwal Adhikari", "email": "ujjwal@hexamatics.com"},
+}

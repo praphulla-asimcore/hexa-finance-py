@@ -12,7 +12,7 @@ from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse, HTMLResponse, Response, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from app.config import TEMPLATES_DIR, APP_URL, APPROVERS, PAYROLL_REVIEWER, ORGS, STATUTORY_NOS, ARIA_WEBHOOK_URL, get_entity_country, get_entity_currency
+from app.config import TEMPLATES_DIR, APP_URL, APPROVERS, PAYROLL_REVIEWER, REVIEWER_BY_ENTITY, ORGS, STATUTORY_NOS, ARIA_WEBHOOK_URL, get_entity_country, get_entity_currency
 from app.services.currency import fmt_currency, currency_prefix
 from app.deps import get_current_user
 from app.services.db import get_db
@@ -190,10 +190,16 @@ async def fire_aria_webhook(db, case_id: str) -> None:
             pass
 
 
-def _get_arranger_emails(db) -> list:
+def _get_arranger_emails(db, country: str = "") -> list:
+    """Active arrangers, filtered to those scoped to `country` plus any
+    unscoped arranger (country_scope NULL/empty -> receives every country's
+    notifications, same as the pre-scoping behavior)."""
     try:
-        resp = db.from_("users").select("email").eq("role", "arranger").eq("status", "active").execute()
-        return [u["email"] for u in (resp.data or [])]
+        resp = db.from_("users").select("email, country_scope").eq("role", "arranger").eq("status", "active").execute()
+        return [
+            u["email"] for u in (resp.data or [])
+            if not (u.get("country_scope") or "").strip() or u["country_scope"] == country
+        ]
     except Exception:
         return []
 
@@ -2136,7 +2142,7 @@ async def gen_check(case_id: str, request: Request):
     if case_type == "CSI" and check_data.get("flagCount", 0) > 0:
         try:
             kase["check_data"] = check_data
-            email_arranger_exceptions(_get_arranger_emails(db), kase)
+            email_arranger_exceptions(_get_arranger_emails(db, get_entity_country(kase.get("entity", ""))), kase)
         except Exception:
             pass
 
@@ -3070,7 +3076,7 @@ async def return_to_preparer(case_id: str, request: Request):
     # Notify arrangers when a CSI case is returned so they can fix consultant data
     if kase.get("type") == "CSI":
         try:
-            email_arranger_exceptions(_get_arranger_emails(db), kase)
+            email_arranger_exceptions(_get_arranger_emails(db, get_entity_country(kase.get("entity", ""))), kase)
         except Exception:
             pass
 
@@ -3167,7 +3173,7 @@ async def reupload_case(
     if kase.get("type") == "CSI" and check_data.get("flagCount", 0) > 0:
         fresh = {**kase, "check_data": check_data}
         try:
-            email_arranger_exceptions(_get_arranger_emails(db), fresh)
+            email_arranger_exceptions(_get_arranger_emails(db, get_entity_country(kase.get("entity", ""))), fresh)
         except Exception:
             pass
 
@@ -3187,8 +3193,11 @@ async def send_check_approval(case_id: str, request: Request):
     if kase.get("status") != "check_generated":
         return await _refresh_detail(case_id, db, request, user, _get_active_step(kase.get("status","")))
 
-    # Payroll keeps Asim as the reviewer (temporary override); CSI uses Ikhram.
-    reviewer = PAYROLL_REVIEWER if kase.get("type") == "PAYROLL" else APPROVERS["reviewer"]
+    # Entity-specific reviewer (e.g. HNPL -> Ujjwal) wins; otherwise Payroll keeps
+    # Asim as the reviewer (temporary override), CSI uses Ikhram.
+    reviewer = REVIEWER_BY_ENTITY.get(kase.get("entity", ""))
+    if reviewer is None:
+        reviewer = PAYROLL_REVIEWER if kase.get("type") == "PAYROLL" else APPROVERS["reviewer"]
 
     # Wrap the token insert like send_payment_approval does: if this throws, the
     # whole request would 500 and htmx — which never swaps on a non-2xx — would

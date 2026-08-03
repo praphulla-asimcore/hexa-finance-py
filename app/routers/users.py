@@ -30,7 +30,7 @@ async def list_users(request: Request):
     db = get_db()
     if not db:
         return JSONResponse({"users": []})
-    resp = db.from_("users").select("id, email, name, role, status, created_at, last_login").order("created_at", desc=True).execute()
+    resp = db.from_("users").select("id, email, name, role, status, country_scope, created_at, last_login").order("created_at", desc=True).execute()
     return JSONResponse({"users": resp.data or []})
 
 
@@ -41,6 +41,7 @@ async def invite_user(request: Request):
     email = body.get("email", "").lower().strip()
     name  = body.get("name", "").strip()
     role  = body.get("role", "preparer")
+    country_scope = (body.get("country_scope") or "").strip().upper() or None
 
     if not email:
         return _err("Email is required.")
@@ -65,6 +66,7 @@ async def invite_user(request: Request):
                 "status": "invited",
                 "invite_token": token,
                 "invite_expires": expires,
+                "country_scope": country_scope,
             }).eq("id", ex["id"]).execute()
             user_id = ex["id"]
         else:
@@ -75,6 +77,7 @@ async def invite_user(request: Request):
                 "status": "invited",
                 "invite_token": token,
                 "invite_expires": expires,
+                "country_scope": country_scope,
             }).execute()
             rows = res.data or []
             if not rows:
@@ -90,6 +93,21 @@ async def invite_user(request: Request):
         pass
 
     return JSONResponse({"ok": True, "userId": user_id, "inviteUrl": invite_url})
+
+
+@router.patch("/{user_id}/scope")
+async def update_country_scope(user_id: str, request: Request):
+    """Set/clear an arranger's country_scope without touching invite status --
+    unlike /invite, which resets an already-active user back to 'invited'."""
+    _require_admin(request)
+    body = await request.json()
+    country_scope = (body.get("country_scope") or "").strip().upper() or None
+
+    db = get_db()
+    if not db:
+        return _err("Database not configured.", 503)
+    db.from_("users").update({"country_scope": country_scope}).eq("id", user_id).execute()
+    return JSONResponse({"ok": True})
 
 
 @router.delete("/{user_id}")
