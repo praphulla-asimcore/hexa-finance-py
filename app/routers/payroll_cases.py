@@ -2400,6 +2400,81 @@ async def mark_missing(case_id: str, request: Request,
     return await _refresh_detail(case_id, db, request, user, 2)
 
 
+@router.post("/cases/{case_id}/sight-all-consultants")
+async def sight_all_consultants(case_id: str, request: Request):
+    """Bulk version of sight_consultant: marks every consultant who has no
+    consultant_sighting row yet as 'sighted', in one request. Deliberately
+    mirrors sight_consultant's own upsert/completion logic line-for-line
+    (rather than sharing a helper with it) so this addition cannot change
+    that endpoint's existing behavior. Never touches a consultant already
+    marked 'sighted' or 'missing' -- 'missing' in particular is a deliberate
+    FE decision with its own resubmission flow (resight_consultant), not
+    something a bulk action should silently overwrite."""
+    user = get_current_user(request)
+    db = get_db()
+    resp = db.from_("payroll_cases").select("*").eq("id", case_id).single().execute()
+    kase = resp.data
+    if not kase:
+        return HTMLResponse('<div class="error-msg">Case not found.</div>')
+    if kase.get("status") != "documents_pending_review":
+        return HTMLResponse(
+            f'<div class="error-msg">Sighting only allowed when status is '
+            f'documents_pending_review. Current: {kase["status"]}</div>')
+
+    entities = (kase.get("parsed_data") or {}).get("entities", [])
+
+    existing = db.from_("consultant_sighting").select("employee_id").eq("case_id", case_id).execute().data or []
+    already_marked = {str(r["employee_id"]).strip() for r in existing}
+
+    now = _now()
+    by = user.get("name") or user.get("email") or "unknown"
+    newly_sighted = 0
+    for ent in entities:
+        emp_entity = ent.get("sheetName", "")
+        for emp in ent.get("employees", []):
+            eid = str(emp.get("employeeId", "")).strip()
+            if not eid or eid in already_marked:
+                continue
+            _sighting_row = {
+                "consultant_name": emp.get("name", eid),
+                "entity": emp_entity[:20],
+                "status": "sighted",
+                "sighted_by": by,
+                "sighted_at": now,
+            }
+            try:
+                db.from_("consultant_sighting").insert(
+                    {"case_id": case_id, "employee_id": eid, **_sighting_row}
+                ).execute()
+            except psycopg.errors.UniqueViolation:
+                db.from_("consultant_sighting").update(_sighting_row).eq(
+                    "case_id", case_id).eq("employee_id", eid).execute()
+            already_marked.add(eid)
+            newly_sighted += 1
+
+    if newly_sighted > 0:
+        await _audit_log(db, case_id, "SIGHT_ALL", by, user.get("id"), _get_ip(request), {
+            "newlySighted": newly_sighted,
+        })
+
+    total_employees = sum(len(ent.get("employees", [])) for ent in entities)
+    progress = _sighting_progress(db, case_id, total_employees)
+    if progress["complete"]:
+        check_data = _build_check_data(entities, case_id=str(case_id), db=db,
+                                       currency=get_entity_currency(kase.get("entity", "")))
+        db.from_("payroll_cases").update({
+            "status": "uploaded",
+            "check_data": check_data,
+            "check_generated_at": now,
+        }).eq("id", case_id).execute()
+        await _audit_log(db, case_id, "SIGHTING_COMPLETE", by, user.get("id"), _get_ip(request), {
+            "sighted": progress["sighted"], "missing": progress["missing"],
+            "total": progress["total"],
+        })
+
+    return await _refresh_detail(case_id, db, request, user, 2)
+
+
 # ─── Step 2 (ingested): per-document FE sighting toggle ──────────────────────
 
 @router.post("/cases/{case_id}/sight-document/{doc_id}")

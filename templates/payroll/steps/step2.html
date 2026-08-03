@@ -34,6 +34,37 @@
       {% endif %}
     </div>
 
+    {% if sp and sp.marked < sp.total %}
+    <div style="margin-bottom:16px">
+      <button type="button" id="sight-all-trigger" class="btn btn-primary"
+          style="background:#059669;border-color:#059669"
+          onclick="document.getElementById('sight-all-trigger').style.display='none';
+                   document.getElementById('sight-all-confirm').style.display='flex';">
+        ✓ Sight All ({{ sp.total - sp.marked }} remaining)
+      </button>
+      <div id="sight-all-confirm" style="display:none;flex-direction:column;gap:8px;margin-top:8px;padding:12px 14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;max-width:480px">
+        <p style="margin:0;font-size:12px;color:#065f46">
+          Mark all {{ sp.total - sp.marked }} remaining consultant(s) as <strong>Document Sighted</strong>? This skips individual review — only use it once documents have genuinely been checked for everyone left.
+        </p>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary" style="background:#059669;border-color:#059669"
+              hx-post="/cases/{{ kase.id }}/sight-all-consultants"
+              hx-target="#case-detail-inner"
+              hx-swap="innerHTML"
+              hx-indicator=".spinner">
+            <span class="spinner htmx-indicator"></span>
+            Yes, Sight All
+          </button>
+          <button type="button" class="btn btn-secondary"
+              onclick="document.getElementById('sight-all-confirm').style.display='none';
+                       document.getElementById('sight-all-trigger').style.display='inline-flex';">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
     {% for g in consultant_docs %}
     {% set sr = sighting_map.get(g.consultant_id) if sighting_map else none %}
     <div class="pf-detail-card" style="margin-bottom:10px">
