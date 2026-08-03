@@ -132,12 +132,81 @@ def _parse_employee_id(row, col_map) -> dict | None:
 
 
 def _parse_employee_np(row, col_map) -> dict | None:
-    raise NotImplementedError(
-        "Nepal (HNPL) CSI parsing is not yet configured — no column "
-        "schema has been defined for this entity's payroll file format yet. "
-        "A sample CSI file is needed to map its columns before this entity "
-        "can be uploaded."
-    )
+    """Parse one CSI employee row against Nepal's payroll register format
+    (mapped from Nepal_CSI_Sample.xlsx, 2026-08-03 — SBC/Time Energy/GW
+    client sheets, one row per employee, no "Entity" column so each sheet is
+    one client, same as Malaysia's older single-sheet-per-entity format).
+
+    EIN (Employee Identification Number) is the canonical identifier,
+    confirmed over EID (a per-file internal row number) — only EIN is stable
+    enough to eventually match nepal_employee_master.employee_ledger_code.
+    """
+    ein_idx = col_map.get("EIN")
+    if ein_idx is None or ein_idx >= len(row):
+        return None
+    ein_val = row[ein_idx]
+    if ein_val is None or str(ein_val).strip() == "":
+        return None
+
+    gross = _get(row, col_map, "Gross Income")
+    if gross == 0:
+        return None
+
+    # Some sheets (e.g. GW) carry a post-adjustment final payable figure
+    # distinct from "Net Salary" -- prefer it only when that column actually
+    # exists on this sheet, not just when its value happens to be non-zero.
+    if "Net Payable After tax adjustment" in col_map:
+        net_salary = _get(row, col_map, "Net Payable After tax adjustment")
+    else:
+        net_salary = _get(row, col_map, "Net Salary")
+
+    ssf_contribution = _get(row, col_map, "SSF Contribution")  # employer-side, per file
+    ssf_deduction    = _get(row, col_map, "SSF Deduction")     # employee-side, deducted from gross
+
+    return {
+        "employeeId":  str(ein_val).strip(),
+        "eid":         _get_str(row, col_map, "EID"),
+        "name":        _get_str(row, col_map, "Employee"),
+        "costCentre":  _get_str(row, col_map, "Branch"),
+        "designation": _get_str(row, col_map, "Designation"),
+        "nationality": "Nepali",
+        "basicSalary": _get(row, col_map, "Basic Salary"),
+        "grossSalary": gross,
+        "netSalary":   net_salary,
+        # Nepal-specific statutory figures, extracted as-is from the file --
+        # not recomputed (see app.services.statutory.np, which currently
+        # passes these through unchanged pending confirmation of Nepal's
+        # SSF-vs-PF scheme and TDS slabs).
+        "ssfContribution": ssf_contribution,
+        "ssfDeduction":    ssf_deduction,
+        "cit":             _get(row, col_map, "CIT"),
+        "sst":             _get(row, col_map, "SST"),
+        "tds":             _get(row, col_map, "TDS"),
+        "deductionPF":     _get(row, col_map, "Deduction PF"),
+        "incomePF":        _get(row, col_map, "Income PF"),
+        "totalDeduction":  _get(row, col_map, "Total Deduction"),
+        # No confirmed Nepal margin/billing model yet -- this file has no
+        # CTC Client/Total Billing/Mgmt Fee columns like Malaysia's CSI does.
+        # ctcHexa is structurally required downstream (totalCTC summation),
+        # so use gross + the file's own employer-side SSF figure as an
+        # honest interim value (both real, present numbers -- nothing
+        # fabricated) rather than 0, which would misleadingly read as "no
+        # cost." Revisit once Nepal's margin/billing model is confirmed.
+        "ctcHexa":     round(gross + ssf_contribution, 2),
+        "ctcHexaFile": round(gross + ssf_contribution, 2),
+        # Malaysia-specific concepts with no Nepal equivalent yet -- zeroed/
+        # blank rather than guessed, since this file carries no billing data.
+        "ctcClient":     0,
+        "totalBilling":  0,
+        "mgmtFee":       0,
+        "favouriteBeneficiaryCode": "",
+        "clientType":    "",
+        "claim": 0, "bonus": 0, "caDedn": 0,
+        "epfEmployee": 0, "epfEmployer": 0,
+        "eisEmployee": 0, "eisEmployer": 0,
+        "socsoEmployee": 0, "socsoEmployer": 0,
+        "hrdf": 0, "mtd": 0,
+    }
 
 
 # Per-country CSI row parser, selected by the case's entity → country (see
@@ -162,6 +231,15 @@ def _get_csi_parser(country: str):
     return parser
 
 
+# Columns whose absence gets surfaced to the user as "missingColumns" on the
+# entity — country-specific since Nepal's file never has Malaysia's literal
+# "Employee ID"/"CTC Hexa" column names (and vice versa).
+REQUIRED_COLUMNS: dict = {
+    "MY": ["Employee ID", "CTC Hexa", "Gross Salary", "Net Salary"],
+    "NP": ["EIN", "Employee", "Gross Income", "Net Salary"],
+}
+
+
 def _process_sheets(sheets: list[tuple[str, list]], country: str = "MY") -> list[dict]:
     """Build entities list from (sheet_name, rows) pairs."""
     parse_employee = _get_csi_parser(country)
@@ -184,7 +262,7 @@ def _process_sheets(sheets: list[tuple[str, list]], country: str = "MY") -> list
         entity_col_idx = col_map.get("Entity")
 
         # Old format required cols; new format has different names
-        required = ["Employee ID", "CTC Hexa", "Gross Salary", "Net Salary"]
+        required = REQUIRED_COLUMNS.get((country or "MY").upper(), REQUIRED_COLUMNS["MY"])
         missing_cols = [c for c in required if c not in col_map]
 
         if has_entity_col:
