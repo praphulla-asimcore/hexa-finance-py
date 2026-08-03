@@ -56,6 +56,13 @@ RIGOHR_BASE_URL: str = os.getenv("RIGOHR_BASE_URL", "https://api.app.rigohr.com/
 RIGOHR_KEY_ID: str = os.getenv("RIGOHR_KEY_ID", "")
 RIGOHR_SECRET_KEY: str = os.getenv("RIGOHR_SECRET_KEY", "")
 
+# RigoHR requires an IP-allowlisted caller, but Vercel serverless functions
+# have no fixed outbound IP -- RIGOHR_PROXY_URL routes the RigoHR call through
+# a static-IP forward proxy (e.g. "http://user:pass@<droplet-ip>:3128") whose
+# IP is what gets allowlisted on RigoHR's side. Empty ⇒ call RigoHR directly
+# (also a credential, same never-logged convention as above).
+RIGOHR_PROXY_URL: str = os.getenv("RIGOHR_PROXY_URL", "")
+
 IS_PROD: bool = os.getenv("VERCEL_ENV") == "production"
 
 BASE_DIR: Path = _root

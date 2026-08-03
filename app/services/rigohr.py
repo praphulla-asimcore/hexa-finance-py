@@ -35,7 +35,7 @@ import logging
 
 import httpx
 
-from app.config import RIGOHR_BASE_URL, RIGOHR_KEY_ID, RIGOHR_SECRET_KEY
+from app.config import RIGOHR_BASE_URL, RIGOHR_KEY_ID, RIGOHR_PROXY_URL, RIGOHR_SECRET_KEY
 
 logger = logging.getLogger("hexa.rigohr")
 
@@ -84,7 +84,7 @@ async def fetch_salary_vouchers(
         params["employeeStatus"] = employee_status
     url = f"{RIGOHR_BASE_URL}/salary-vouchers"
 
-    async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
+    async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS, proxy=RIGOHR_PROXY_URL or None) as client:
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             is_last = attempt == _MAX_ATTEMPTS
             try:
