@@ -190,6 +190,21 @@ async def fire_aria_webhook(db, case_id: str) -> None:
             pass
 
 
+def _resolve_reviewer(kase: dict) -> dict:
+    """Entity-specific reviewer (e.g. HNPL -> Ujjwal) wins; otherwise Payroll
+    keeps Asim as the reviewer (temporary override), CSI uses Ikhram. Single
+    source of truth for both the actual approval-token/email logic
+    (send_check_approval) and the Step 3 display (approvers context in
+    _case_detail_ctx) -- these drifted apart once already (display kept
+    showing the global APPROVERS["reviewer"] even for entities with an
+    override), so route both through here instead of duplicating the
+    selection logic."""
+    reviewer = REVIEWER_BY_ENTITY.get(kase.get("entity", ""))
+    if reviewer is None:
+        reviewer = PAYROLL_REVIEWER if kase.get("type") == "PAYROLL" else APPROVERS["reviewer"]
+    return reviewer
+
+
 def _get_arranger_emails(db, country: str = "") -> list:
     """Active arrangers, filtered to those scoped to `country` plus any
     unscoped arranger (country_scope NULL/empty -> receives every country's
@@ -1719,7 +1734,9 @@ def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None, d
         "logs": logs,
         "selected_step": selected_step,
         "orgs": ORGS,
-        "approvers": APPROVERS,
+        # Reviewer resolved per-entity (e.g. HNPL -> Ujjwal); final/director stay
+        # global per APPROVERS, confirmed unchanged for every entity so far.
+        "approvers": {**APPROVERS, "reviewer": _resolve_reviewer(kase)},
         "bank_gate": _bank_gate(kase),
         "consultant_docs": consultant_docs,
         "all_sighted": bool(consultant_docs) and any(g["ready_to_complete"] for g in consultant_docs),
@@ -3193,11 +3210,7 @@ async def send_check_approval(case_id: str, request: Request):
     if kase.get("status") != "check_generated":
         return await _refresh_detail(case_id, db, request, user, _get_active_step(kase.get("status","")))
 
-    # Entity-specific reviewer (e.g. HNPL -> Ujjwal) wins; otherwise Payroll keeps
-    # Asim as the reviewer (temporary override), CSI uses Ikhram.
-    reviewer = REVIEWER_BY_ENTITY.get(kase.get("entity", ""))
-    if reviewer is None:
-        reviewer = PAYROLL_REVIEWER if kase.get("type") == "PAYROLL" else APPROVERS["reviewer"]
+    reviewer = _resolve_reviewer(kase)
 
     # Wrap the token insert like send_payment_approval does: if this throws, the
     # whole request would 500 and htmx — which never swaps on a non-2xx — would
