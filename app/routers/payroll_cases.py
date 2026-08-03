@@ -628,12 +628,27 @@ def _document_exception_flags(db, case_id: str) -> list[dict]:
     return flags
 
 
+# Statutory breakdown shown on the check summary -- country-specific labels
+# and source fields (see the matching per-country employee dict shape in
+# app.services.parser). MY keeps its exact original 5 fields/labels. NP uses
+# SSF (employer-side contribution)/CIT/SST/TDS, extracted as-is from the file
+# by _parse_employee_np since Nepal's statutory calc isn't confirmed yet.
+# Any other/unconfigured country gets an empty breakdown rather than a
+# guessed one (see app.services.statutory's own "fail loud" convention).
+_STAT_FIELDS: dict = {
+    "MY": {"epf": "epfEmployer", "eis": "eisEmployer", "socso": "socsoEmployer", "hrdf": "hrdf", "mtd": "mtd"},
+    "NP": {"ssf": "ssfContribution", "cit": "cit", "sst": "sst", "tds": "tds"},
+}
+
+
 def _build_check_data(entities: list[dict], airtable_list: list | None = None,
-                      case_id: str | None = None, db=None, currency: str = "MYR") -> dict:
+                      case_id: str | None = None, db=None, currency: str = "MYR",
+                      country: str = "MY") -> dict:
     flags = []
     consultants = gross = ctc = net = 0
     total_billing = total_mgmt_fee = total_ctc_client = 0.0
-    stat = {"epf": 0.0, "eis": 0.0, "socso": 0.0, "hrdf": 0.0, "mtd": 0.0}
+    stat_fields = _STAT_FIELDS.get(country, {})
+    stat = {k: 0.0 for k in stat_fields}
     cats = {"Local": 0, "Foreign": 0, "Contractor": 0}
     seen_ids: set = set()
 
@@ -667,8 +682,8 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None,
             cc  = (emp.get("costCentre") or "").strip()
             cats[emp.get("category", "Local")] = cats.get(emp.get("category", "Local"), 0) + 1
             gross += g; ctc += c; net += n
-            stat["epf"] += epf; stat["eis"] += eis
-            stat["socso"] += soc; stat["hrdf"] += hrd; stat["mtd"] += mtd
+            for stat_key, src_field in stat_fields.items():
+                stat[stat_key] += float(emp.get(src_field, 0) or 0)
             total_billing  += float(emp.get("totalBilling", 0) or 0)
             total_mgmt_fee += float(emp.get("mgmtFee", 0) or 0)
             total_ctc_client += ctc_client
@@ -685,7 +700,10 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None,
             # consultant DB — the failure mode that paid one consultant's salary
             # into another's account. Flag it here, at check time, so it is
             # corrected long before the bank file is built.
-            if airtable_list:
+            # MY only -- Airtable is Malaysia's consultant DB; matching a Nepal
+            # (or any non-MY) employee's ID against it is meaningless, not a
+            # real conflict.
+            if country == "MY" and airtable_list:
                 conflict = id_conflict(emp, airtable_list)
                 if conflict is not None:
                     resolved_id = conflict.get("employeeNumber") or conflict.get("employeeId", "")
@@ -698,9 +716,20 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None,
                                             f"consultant database — verify the correct Employee ID"})
 
             # ── Negative values ───────────────────────────────────────────────
-            for field, val in [("Gross", g), ("Net", n), ("EPF Employer", epf),
-                                ("EIS Employer", eis), ("SOCSO Employer", soc),
-                                ("HRDF", hrd), ("MTD", mtd)]:
+            # Gross/Net checked for every country; statutory fields checked
+            # per-country against that country's own extracted figures.
+            neg_check_fields = [("Gross", g), ("Net", n)]
+            if country == "MY":
+                neg_check_fields += [("EPF Employer", epf), ("EIS Employer", eis),
+                                      ("SOCSO Employer", soc), ("HRDF", hrd), ("MTD", mtd)]
+            elif country == "NP":
+                neg_check_fields += [
+                    ("SSF Contribution", float(emp.get("ssfContribution", 0) or 0)),
+                    ("CIT", float(emp.get("cit", 0) or 0)),
+                    ("SST", float(emp.get("sst", 0) or 0)),
+                    ("TDS", float(emp.get("tds", 0) or 0)),
+                ]
+            for field, val in neg_check_fields:
                 if val < 0:
                     flags.append({"code": "NEGATIVE_VALUE", "employee": name,
                                   "entity": entity, "field": field, "diff": _round2(val)})
@@ -720,7 +749,10 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None,
                 flags.append({"code": "ZERO_NET", "employee": name, "entity": entity})
 
             # ── CTC Hexa variance (Gross + employer statutory + Claims ≠ CTC) ─
-            if g > 0:
+            # MY only -- Nepal's ctcHexa is an interim gross+SSF figure (see
+            # _parse_employee_np), not a confirmed formula to variance-check
+            # against yet.
+            if country == "MY" and g > 0:
                 expected_ctc = g + epf + eis + soc + hrd + clm
                 if abs(c - expected_ctc) > 0.01:
                     flags.append({"code": "CTC_VARIANCE", "employee": name,
@@ -728,10 +760,10 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None,
                                   "expected": _round2(expected_ctc),
                                   "actual": c, "diff": _round2(abs(c - expected_ctc))})
 
-            # ── EPF employer rate sanity check ────────────────────────────────
+            # ── EPF employer rate sanity check (MY only) ──────────────────────
             # Foreign workers (2%) and 60+ locals (6–6.5%) legitimately fall
             # below the under-60 local band, so only check the standard case.
-            if emp.get("category") not in (None, "Contractor") and g > 0 and epf > 0 and emp.get("epfBasis", "local_under_60") == "local_under_60":
+            if country == "MY" and emp.get("category") not in (None, "Contractor") and g > 0 and epf > 0 and emp.get("epfBasis", "local_under_60") == "local_under_60":
                 rate = epf / g
                 if rate < 0.10 or rate > 0.145:
                     flags.append({"code": "EPF_RATE_VARIANCE", "employee": name,
@@ -739,19 +771,19 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None,
                                   "rate_pct": _round2(rate * 100),
                                   "diff": _round2(epf)})
 
-            # ── SOCSO ceiling (RM 104.15 / month employer, RM6,000 wage) ─────
-            if emp.get("category") not in (None, "Contractor") and soc > 104.15 + 0.01:
+            # ── SOCSO ceiling (RM 104.15 / month employer, RM6,000 wage, MY only) ─
+            if country == "MY" and emp.get("category") not in (None, "Contractor") and soc > 104.15 + 0.01:
                 flags.append({"code": "SOCSO_CEILING", "employee": name,
                                "entity": entity, "diff": _round2(soc - 104.15)})
 
-            # ── EIS ceiling (RM 11.90 / month employer, RM6,000 wage) ────────
-            if emp.get("category") not in (None, "Contractor") and eis > 11.90 + 0.01:
+            # ── EIS ceiling (RM 11.90 / month employer, RM6,000 wage, MY only) ────
+            if country == "MY" and emp.get("category") not in (None, "Contractor") and eis > 11.90 + 0.01:
                 flags.append({"code": "EIS_CEILING", "employee": name,
                                "entity": entity, "diff": _round2(eis - 11.90)})
 
-            # ── MTD = 0 for high earner (Gross > RM 5,000) ───────────────────
+            # ── MTD = 0 for high earner (Gross > RM 5,000, MY only) ───────────
             # Contractors legitimately have MTD = 0, so exclude them.
-            if emp.get("category") not in (None, "Contractor") and mtd == 0 and g > 5000:
+            if country == "MY" and emp.get("category") not in (None, "Contractor") and mtd == 0 and g > 5000:
                 flags.append({"code": "MTD_ZERO_HIGH_EARNER", "employee": name,
                                "entity": entity, "gross": _round2(g)})
 
@@ -776,7 +808,13 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None,
                                "claim": _round2(clm), "gross": _round2(g)})
 
             # ── Missing bank account: not in Airtable DB or account blank ──────
-            if airtable_list is not None:
+            # MY only -- Airtable is Malaysia's consultant DB. Nepal has no
+            # equivalent lookup wired up yet (nepal_employee_master has no
+            # reliable key to match a CSI-parsed employee against yet --
+            # employee_ledger_code is still NULL for everyone), so this check
+            # is skipped rather than false-flagging every Nepal consultant or
+            # guessing a fuzzy name match on a payment-critical field.
+            if country == "MY" and airtable_list is not None:
                 matched = match_consultant(emp, airtable_list)
                 if matched is None:
                     flags.append({"code": "MISSING_BANK_ACCOUNT", "employee": name,
@@ -2142,7 +2180,7 @@ async def gen_check(case_id: str, request: Request):
         _build_check_data_payroll(entities)
         if case_type == "PAYROLL"
         else _build_check_data(entities, airtable_list, case_id=case_id, db=db,
-                               currency=get_entity_currency(kase.get("entity", "")))
+                               currency=get_entity_currency(kase.get("entity", "")), country=get_entity_country(kase.get("entity", "")))
     )
     now = _now()
     db.from_("payroll_cases").update({
@@ -2227,7 +2265,7 @@ async def complete_sighting(case_id: str, request: Request):
             filtered_entities.append({**ent, "employees": filtered_employees})
 
     check_data = _build_check_data(filtered_entities, case_id=str(case_id), db=db,
-                                   currency=get_entity_currency(kase.get("entity", "")))
+                                   currency=get_entity_currency(kase.get("entity", "")), country=get_entity_country(kase.get("entity", "")))
 
     now = _now()
     updated_parsed = {
@@ -2322,7 +2360,7 @@ async def sight_consultant(case_id: str, request: Request,
     progress = _sighting_progress(db, case_id, total_employees)
     if progress["complete"]:
         check_data = _build_check_data(entities, case_id=str(case_id), db=db,
-                                       currency=get_entity_currency(kase.get("entity", "")))
+                                       currency=get_entity_currency(kase.get("entity", "")), country=get_entity_country(kase.get("entity", "")))
         db.from_("payroll_cases").update({
             "status": "uploaded",
             "check_data": check_data,
@@ -2386,7 +2424,7 @@ async def mark_missing(case_id: str, request: Request,
     progress = _sighting_progress(db, case_id, total_employees)
     if progress["complete"]:
         check_data = _build_check_data(entities, case_id=str(case_id), db=db,
-                                       currency=get_entity_currency(kase.get("entity", "")))
+                                       currency=get_entity_currency(kase.get("entity", "")), country=get_entity_country(kase.get("entity", "")))
         db.from_("payroll_cases").update({
             "status": "uploaded",
             "check_data": check_data,
@@ -2461,7 +2499,7 @@ async def sight_all_consultants(case_id: str, request: Request):
     progress = _sighting_progress(db, case_id, total_employees)
     if progress["complete"]:
         check_data = _build_check_data(entities, case_id=str(case_id), db=db,
-                                       currency=get_entity_currency(kase.get("entity", "")))
+                                       currency=get_entity_currency(kase.get("entity", "")), country=get_entity_country(kase.get("entity", "")))
         db.from_("payroll_cases").update({
             "status": "uploaded",
             "check_data": check_data,
@@ -2829,7 +2867,7 @@ async def upload_excluded_document(
                         "missingColumns": []}]
     # case_id=None, db=None → doc-gate checks skipped (already verified above)
     check_data = _build_check_data(mini_entities, case_id=None, db=None,
-                                   currency=get_entity_currency(kase.get("entity", "")))
+                                   currency=get_entity_currency(kase.get("entity", "")), country=get_entity_country(kase.get("entity", "")))
 
     mini_parsed = {
         "source":           "RESUBMISSION",
@@ -2946,7 +2984,7 @@ async def resight_consultant(case_id: str, request: Request,
     mini_ref = f"{original_ref}-RESUB-{consultant_id}"
     mini_entities = [{"sheetName": original_entity, "employees": [emp_dict], "missingColumns": []}]
     check_data = _build_check_data(mini_entities, case_id=None, db=None,
-                                   currency=get_entity_currency(kase.get("entity", "")))
+                                   currency=get_entity_currency(kase.get("entity", "")), country=get_entity_country(kase.get("entity", "")))
     mini_parsed = {
         "source": "RESUBMISSION",
         "resubmission_of": case_id,
@@ -3228,7 +3266,7 @@ async def reupload_case(
         _build_check_data_payroll(parsed_entities)
         if kase.get("type") == "PAYROLL"
         else _build_check_data(parsed_entities, airtable_list,
-                               currency=get_entity_currency(kase.get("entity", "")))
+                               currency=get_entity_currency(kase.get("entity", "")), country=get_entity_country(kase.get("entity", "")))
     )
 
     file_hash = _sha256(content)
