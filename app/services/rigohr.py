@@ -88,7 +88,13 @@ async def fetch_salary_vouchers(
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             is_last = attempt == _MAX_ATTEMPTS
             try:
-                resp = await client.get(url, headers=headers, params=params)
+                # stream=True defers body read until after we branch on status_code --
+                # RigoHR's 401 responses have a malformed body that breaks strict
+                # HTTP/1.1 parsing (httpx.RemoteProtocolError) if read eagerly, which
+                # previously got misclassified as a transient network error and
+                # retried 3x instead of surfacing the real auth rejection immediately.
+                request = client.build_request("GET", url, headers=headers, params=params)
+                resp = await client.send(request, stream=True)
             except (httpx.TimeoutException, httpx.TransportError) as e:
                 logger.warning(
                     "RigoHR fetch attempt %d/%d for %04d-%02d: network error (%s)",
@@ -99,27 +105,31 @@ async def fetch_salary_vouchers(
                 await asyncio.sleep(_RETRY_BACKOFF_SECONDS[min(attempt - 1, len(_RETRY_BACKOFF_SECONDS) - 1)])
                 continue
 
-            if resp.status_code in (401, 403):
-                raise RigoHRAuthError(f"HTTP {resp.status_code} -- check RigoHR TenantId/Bearer key/scope")
-            if resp.status_code == 400:
-                raise RigoHRBadRequestError("HTTP 400 -- malformed request (year/month/addonid/employeeStatus)")
-            if resp.status_code == 429 or resp.status_code >= 500:
-                logger.warning(
-                    "RigoHR fetch attempt %d/%d for %04d-%02d: HTTP %d",
-                    attempt, _MAX_ATTEMPTS, year, month, resp.status_code,
-                )
-                if is_last:
-                    raise RigoHRFetchError(f"HTTP {resp.status_code} after {_MAX_ATTEMPTS} attempts")
-                await asyncio.sleep(_RETRY_BACKOFF_SECONDS[min(attempt - 1, len(_RETRY_BACKOFF_SECONDS) - 1)])
-                continue
-            if resp.status_code != 200:
-                raise RigoHRFetchError(f"unexpected HTTP {resp.status_code}")
-
             try:
-                body = resp.json()
-            except Exception as e:
-                raise RigoHRFetchError("response was not valid JSON") from e
-            return body if isinstance(body, list) else []
+                if resp.status_code in (401, 403):
+                    raise RigoHRAuthError(f"HTTP {resp.status_code} -- check RigoHR TenantId/Bearer key/scope")
+                if resp.status_code == 400:
+                    raise RigoHRBadRequestError("HTTP 400 -- malformed request (year/month/addonid/employeeStatus)")
+                if resp.status_code == 429 or resp.status_code >= 500:
+                    logger.warning(
+                        "RigoHR fetch attempt %d/%d for %04d-%02d: HTTP %d",
+                        attempt, _MAX_ATTEMPTS, year, month, resp.status_code,
+                    )
+                    if is_last:
+                        raise RigoHRFetchError(f"HTTP {resp.status_code} after {_MAX_ATTEMPTS} attempts")
+                    await asyncio.sleep(_RETRY_BACKOFF_SECONDS[min(attempt - 1, len(_RETRY_BACKOFF_SECONDS) - 1)])
+                    continue
+                if resp.status_code != 200:
+                    raise RigoHRFetchError(f"unexpected HTTP {resp.status_code}")
+
+                try:
+                    await resp.aread()
+                    body = resp.json()
+                except Exception as e:
+                    raise RigoHRFetchError("response was not valid JSON") from e
+                return body if isinstance(body, list) else []
+            finally:
+                await resp.aclose()
 
     return []  # unreachable (loop always returns or raises), keeps type-checkers happy
 
