@@ -46,6 +46,16 @@ HEXAFLOW_FINANCE_BASE_URL: str = os.getenv("HEXAFLOW_FINANCE_BASE_URL", "https:/
 HEXAFLOW_FINANCE_KEY_ID: str = os.getenv("HEXAFLOW_FINANCE_KEY_ID", "fk_finance_full_ro")
 HEXAFLOW_FINANCE_KEY_SECRET: str = os.getenv("HEXAFLOW_FINANCE_KEY_SECRET", "")
 
+# RigoHR (Nepal/HNPL payroll system) external API. RIGOHR_SECRET_KEY is a
+# credential -- read at request time only, never logged, never given a
+# non-empty default. Empty secret ⇒ the integration is disabled, same
+# convention as HEXAFLOW_FINANCE_KEY_SECRET above. Key ID + Secret Key are
+# generated once via RigoHR's Admin UI (System Admin > Company Setup > API
+# Management) -- the two are not the same credential, both are required.
+RIGOHR_BASE_URL: str = os.getenv("RIGOHR_BASE_URL", "https://api.app.rigohr.com/v2/ext")
+RIGOHR_KEY_ID: str = os.getenv("RIGOHR_KEY_ID", "")
+RIGOHR_SECRET_KEY: str = os.getenv("RIGOHR_SECRET_KEY", "")
+
 IS_PROD: bool = os.getenv("VERCEL_ENV") == "production"
 
 BASE_DIR: Path = _root
