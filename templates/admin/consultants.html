@@ -26,13 +26,14 @@
                value="{{ (c.apex_employee_id or '') if c else '' }}"></div>
       <div><label class="label">Full Legal Name <span class="req">*</span></label>
         <input class="input" name="consultant_name" required value="{{ c.consultant_name if c else '' }}"></div>
-      <div><label class="label">IC / Passport Number</label>
+      <div><label class="label">IC / Passport / Business Reg No.</label>
         <input class="input" name="ic_number" value="{{ (c.ic_number or '') if c else '' }}"></div>
-      <div><label class="label">IC Type</label>
+      <div><label class="label">IC Type <span title="Set this explicitly for a business-registered account, especially Malaysia's new-format 12-digit SSM company numbers — without it, a 12-digit business number is indistinguishable from an NRIC and would be misrouted on the bank file.">(explicit)</span></label>
         <select class="input" name="ic_type">
-          <option value="">—</option>
+          <option value="">— (guess from format)</option>
           <option value="NRIC" {% if c and c.ic_type == 'NRIC' %}selected{% endif %}>NRIC</option>
           <option value="Passport" {% if c and c.ic_type == 'Passport' %}selected{% endif %}>Passport</option>
+          <option value="Business Registration" {% if c and c.ic_type == 'Business Registration' %}selected{% endif %}>Business Registration</option>
         </select></div>
       <div><label class="label">Nationality</label>
         <input class="input" name="nationality" value="{{ (c.nationality or '') if c else '' }}"></div>

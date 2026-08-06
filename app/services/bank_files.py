@@ -388,10 +388,17 @@ def build_dp_txt(beneficiaries, value_date, mmyy, run_number, notify_emails,
 def _id_fields(id_number: str, id_type: str = "") -> tuple:
     """Return (new_ic, biz_reg, passport) for fields 25, 27, 28 of the 01 record.
 
-    When the Airtable ``ID Type`` is known it is authoritative — NRIC → New IC No
-    (field 25), Passport → Police/Army ID/Passport No (field 28). Otherwise fall
-    back to inferring from the number's format. Spaces/hyphens are stripped so a
-    dashed NRIC (e.g. 900101-01-5523) is recognised as a 12-digit IC."""
+    When the consultant-DB ``ID Type`` is known it is authoritative — NRIC → New
+    IC No (field 25), Passport → Police/Army ID/Passport No (field 28), Business
+    Registration → Business Reg No (field 27). Otherwise fall back to inferring
+    from the number's format. Spaces/hyphens are stripped so a dashed NRIC (e.g.
+    900101-01-5523) is recognised as a 12-digit IC.
+
+    The explicit Business Registration type matters because Malaysia's new-format
+    SSM company registration numbers (post-2019) are 12 plain digits, e.g.
+    '202001012345' — format-identical to a 12-digit NRIC. Without an explicit
+    type, such a number would silently be misrouted into the NRIC field instead
+    of Business Reg No."""
     id_str = _strip_spaces_dashes(id_number)
     if not id_str:
         return ("", "", "")
@@ -401,6 +408,8 @@ def _id_fields(id_number: str, id_type: str = "") -> tuple:
         return (id_str, "", "")
     if t == "passport":
         return ("", "", id_str)
+    if t.startswith("business"):
+        return ("", id_str, "")
 
     if id_str.isdigit() and len(id_str) == 12:
         return (id_str, "", "")   # Malaysian NRIC → New IC No (field 25)
@@ -480,8 +489,8 @@ def fetch_local_bank_overrides(db) -> list[dict]:
             "bankName":                  r.get("bank_name") or "",
             "accountNo":                 r.get("bank_account_number") or "",
             "bankCode":                  r.get("bank_code") or "",
-            "idNumber":                  "",
-            "idType":                    "",
+            "idNumber":                  r.get("id_number") or "",
+            "idType":                    r.get("id_type") or "",
             "favouriteBeneficiaryCode":  r.get("favourite_beneficiary_code") or "",
         }
         for r in rows

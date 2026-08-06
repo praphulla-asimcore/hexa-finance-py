@@ -91,6 +91,12 @@ def test_11_id_type_overrides_number_format_inference():
     assert bf._id_fields("123456", "Passport") == ("", "", "123456")
 
 
+def test_11b_business_registration_type_overrides_12_digit_nric_inference():
+    # A new-format 12-digit SSM company number is otherwise indistinguishable
+    # from a 12-digit NRIC — explicit type must force it into Business Reg.
+    assert bf._id_fields("202001012345", "Business Registration") == ("", "202001012345", "")
+
+
 # ── 12-15: RCGEN2 .txt builder ───────────────────────────────────────────────
 def test_12_rcgen_token_is_deterministic():
     a = bf._rcgen_token("RCgen.txt", 1000, 12345)
