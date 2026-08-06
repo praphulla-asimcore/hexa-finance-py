@@ -7,6 +7,7 @@ from fastapi.templating import Jinja2Templates
 from pathlib import Path
 
 from app.config import PUBLIC_DIR, TEMPLATES_DIR
+from app.deps import try_get_user
 from app.routers import auth, users, payroll_cases, consultants, accounts, admin, journal_history, pages, statutory, ingest
 from app.jobs import aria_sync, hexaflow_events_sync
 
@@ -66,8 +67,13 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         if request.headers.get("HX-Request"):
             return HTMLResponse("", status_code=401, headers={"HX-Redirect": "/login"})
         return RedirectResponse("/login", status_code=302)
+    # error.html extends base.html, whose sidebar/nav reference `user.role`
+    # unconditionally — omitting it here isn't "no user", it's a second crash
+    # (UndefinedError) that replaces a real error page with a blank one,
+    # right when a preparer most needs to see what went wrong.
     return templates.TemplateResponse(request, "error.html",
-                                      {"status_code": exc.status_code, "detail": exc.detail},
+                                      {"status_code": exc.status_code, "detail": exc.detail,
+                                       "user": try_get_user(request) or {}},
                                       status_code=exc.status_code)
 
 
