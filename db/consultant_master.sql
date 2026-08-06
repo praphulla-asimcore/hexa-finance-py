@@ -26,7 +26,7 @@ create table if not exists consultant_master (
     apex_employee_id        varchar(50),                  -- resolved HEX-xxxx APEX id, null until known
     consultant_name         varchar(200),
     ic_number               text,
-    ic_type                 varchar(20),                  -- NRIC / Passport (inferred)
+    ic_type                 varchar(30),                  -- NRIC / Passport / Business Registration (inferred if unset)
     nationality             varchar(100),
     bank_name               varchar(100),
     bank_code               varchar(10),
@@ -41,6 +41,11 @@ create table if not exists consultant_master (
 );
 
 create index if not exists consultant_master_apex_id_idx on consultant_master (apex_employee_id);
+
+-- Safe to re-run: widens ic_type from its original varchar(20), which was too
+-- narrow for the "Business Registration" ID type value (21 chars) and caused
+-- StringDataRightTruncation on save once that option was added to the admin UI.
+alter table consultant_master alter column ic_type type varchar(30);
 
 comment on table consultant_master is
     'Standing consultant master imported from the Talenox HR export. Bank-detail '
