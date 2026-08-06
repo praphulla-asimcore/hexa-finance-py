@@ -7,6 +7,8 @@
       <input class="input" name="employee_id" required value="{{ o.employee_id if o else '' }}" {% if lock_id %}readonly{% endif %}></div>
     <div><label class="label">Consultant Name <span class="req">*</span></label>
       <input class="input" name="consultant_name" required value="{{ o.consultant_name if o else '' }}"></div>
+    <div><label class="label">Bank Account Name <span title="Only fill this in if the bank account is registered under a different name than the consultant (e.g. paid via their own company). Leave blank to print the Consultant Name on the bank file.">(if different)</span></label>
+      <input class="input" name="bank_account_name" value="{{ (o.bank_account_name or '') if o else '' }}" placeholder="e.g. Tan Consulting Sdn Bhd"></div>
     <div><label class="label">Bank Name</label>
       <select class="input" name="bank_name">
         <option value="">—</option>
@@ -42,7 +44,7 @@
 
   <table class="admin-table cp-table">
     <thead><tr>
-      <th>Employee ID</th><th>Name</th><th>Bank</th><th>Account No.</th>
+      <th>Employee ID</th><th>Name</th><th>Bank Account Name</th><th>Bank</th><th>Account No.</th>
       <th>Fav. Beneficiary Code</th><th>Source</th><th>Updated</th><th>Actions</th>
     </tr></thead>
     <tbody>
@@ -50,6 +52,7 @@
       <tr>
         <td><strong>{{ o.employee_id }}</strong></td>
         <td style="text-align:left">{{ o.consultant_name }}</td>
+        <td style="text-align:left">{{ o.bank_account_name or '—' }}</td>
         <td>{{ o.bank_name or '—' }}</td>
         <td>{{ o.bank_account_number or '—' }}</td>
         <td>{{ o.favourite_beneficiary_code or '—' }}</td>
@@ -66,13 +69,13 @@
         </td>
       </tr>
       <tr id="edit-{{ o.employee_id }}" style="display:none">
-        <td colspan="8" class="cp-editcell">
+        <td colspan="9" class="cp-editcell">
           {{ override_form('/admin/bank-overrides/' ~ o.employee_id ~ '/edit', o, 'Save Changes', 'edit-form-' ~ o.employee_id, true) }}
         </td>
       </tr>
       {% endfor %}
       {% if not overrides %}
-      <tr><td colspan="8" style="color:var(--text-muted);padding:18px">No overrides yet. Add one above.</td></tr>
+      <tr><td colspan="9" style="color:var(--text-muted);padding:18px">No overrides yet. Add one above.</td></tr>
       {% endif %}
     </tbody>
   </table>
@@ -85,7 +88,7 @@
 .cp-sub { font-size:12px; color:var(--text-muted); margin-top:4px; max-width:640px; }
 .cp-addbox, .cp-editcell { background:var(--surface,#fff); border:1px solid var(--border); border-radius:10px; padding:14px; }
 .cp-addbox { margin-bottom:16px; }
-.cp-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:10px; }
+.cp-grid { display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin-bottom:10px; }
 .cp-table th, .cp-table td { text-align:center; }
 .cp-table th:nth-child(2), .cp-table td:nth-child(2) { text-align:left; }
 </style>

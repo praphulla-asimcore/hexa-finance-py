@@ -131,6 +131,7 @@ def _override_form_to_row(form, updated_by: str) -> dict:
     return {
         "employee_id":                (form.get("employee_id") or "").strip(),
         "consultant_name":            (form.get("consultant_name") or "").strip(),
+        "bank_account_name":          (form.get("bank_account_name") or "").strip() or None,
         "bank_name":                  bank_name or None,
         "bank_code":                  bank_name_to_code(bank_name) or None,
         "bank_account_number":        (form.get("bank_account_number") or "").strip() or None,

@@ -476,6 +476,7 @@ def fetch_local_bank_overrides(db) -> list[dict]:
             "employeeNumber":            r["employee_id"],
             "employeeId":                r["employee_id"],
             "name":                      r["consultant_name"],
+            "bankAccountName":           r.get("bank_account_name") or "",
             "bankName":                  r.get("bank_name") or "",
             "accountNo":                 r.get("bank_account_number") or "",
             "bankCode":                  r.get("bank_code") or "",
@@ -506,6 +507,7 @@ def fetch_hexaflow_directory(db) -> list[dict]:
             "employeeNumber":            r["employee_id"],
             "employeeId":                r["employee_id"],
             "name":                      r.get("consultant_name") or "",
+            "bankAccountName":           "",
             "bankName":                  r.get("bank_name") or "",
             "accountNo":                 r.get("bank_account_number") or "",
             "bankCode":                  r.get("bank_code") or "",
@@ -538,6 +540,7 @@ def fetch_consultant_master(db) -> list[dict]:
             "employeeNumber":            r.get("apex_employee_id") or r["employee_id"],
             "employeeId":                r.get("apex_employee_id") or r["employee_id"],
             "name":                      r.get("consultant_name") or "",
+            "bankAccountName":           r.get("bank_account_name") or "",
             "bankName":                  r.get("bank_name") or "",
             "accountNo":                 r.get("bank_account_number") or "",
             "bankCode":                  r.get("bank_code") or "",
@@ -550,8 +553,8 @@ def fetch_consultant_master(db) -> list[dict]:
 
 
 _CONSULTANT_MERGE_FIELDS = (
-    "employeeNumber", "employeeId", "name", "bankName", "accountNo", "bankCode",
-    "idNumber", "idType", "favouriteBeneficiaryCode",
+    "employeeNumber", "employeeId", "name", "bankAccountName", "bankName", "accountNo",
+    "bankCode", "idNumber", "idType", "favouriteBeneficiaryCode",
 )
 
 
@@ -632,6 +635,14 @@ def match_consultant(emp: dict, airtable_list: list[dict]):
          it is unique. No substring matching — "Lim" must not match "Lim Adam",
          and unrelated names (e.g. Azeean Norain vs Muhammad Nazarul) never
          collide.
+
+    Deliberately always corroborates against ``name`` (the consultant's own
+    legal/personal name), never ``bankAccountName``. A consultant paid into a
+    company account (bank registers the account under a business name, not
+    their personal name) still identifies themselves on the CSI/payroll sheet
+    by their own name — using the account name here would blind this check to
+    exactly the ID-swap fraud it exists to catch. ``bankAccountName`` only
+    affects what gets PRINTED on the bank file, not who a row is matched to.
     """
     emp_id = (emp.get("employeeId") or "").strip()
     emp_name = _norm_name(emp.get("name", ""))
@@ -878,12 +889,20 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
                                         "entity": ent["sheetName"]})
                 continue
 
+            # Printed payee name: prefer the bank's own account-holder name
+            # (bankAccountName, e.g. a contractor invoicing through their own
+            # company) when set, else fall back to the consultant's legal
+            # name. This is DISPLAY ONLY — match_consultant() above already
+            # corroborated identity using the legal name, so swapping the
+            # printed name here can't be exploited to redirect a payment.
+            payee_name = (matched.get("bankAccountName") or matched["name"]) if matched else emp["name"]
+
             beneficiaries.append({
                 "seq": seq_ref,
                 "employeeId": emp["employeeId"],
                 "employeeCode": matched["employeeNumber"] if matched else emp.get("employeeId", ""),
                 "favouriteBeneficiaryCode": fav_code,
-                "name": matched["name"] if matched else emp["name"],
+                "name": payee_name,
                 "costCentre": emp.get("costCentre", ""),
                 "amount": emp.get("netSalary", 0),
                 "accountNumber": _strip_spaces_dashes(matched["accountNo"] if matched else ""),
@@ -893,7 +912,7 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
                 "email": notify_emails[0] if notify_emails else "",
                 "idNumber": matched["idNumber"] if matched else emp.get("idNumber", ""),
                 "idType": (matched.get("idType") if matched else "") or emp.get("idType", ""),
-                "advicePrefix": (matched["name"] if matched else emp["name"]).replace(" ", "_"),
+                "advicePrefix": payee_name.replace(" ", "_"),
                 "entity": ent["sheetName"],
                 "matched": matched is not None,
             })
