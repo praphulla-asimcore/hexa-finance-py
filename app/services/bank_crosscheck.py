@@ -61,8 +61,28 @@ def read_xlsm_payment_rows(xlsx_bytes: bytes) -> list[dict]:
     return rows
 
 
-def _csi_payable(entities: list[dict]) -> list[dict]:
+def _alias_norms_by_id(account_source: list[dict] | None) -> dict[str, str]:
+    """employeeId -> normalised bankAccountName, for consultants paid into an
+    account registered under a different name than their own (e.g. a
+    contractor invoicing through their own company). Sourced from the same
+    admin-curated consultant records bank_files.py already used to decide
+    what to print — not from the CSI itself, so a mistyped CSI Employee ID
+    still can't manufacture a false alias match (see module docstring)."""
+    out = {}
+    for a in account_source or []:
+        alias = (a.get("bankAccountName") or "").strip()
+        if not alias:
+            continue
+        for key in ("employeeNumber", "employeeId"):
+            eid = (a.get(key) or "").strip()
+            if eid:
+                out[eid] = _norm_name(alias)
+    return out
+
+
+def _csi_payable(entities: list[dict], alias_by_id: dict[str, str] | None = None) -> list[dict]:
     """CSI consultants who should be paid (non-zero net salary)."""
+    alias_by_id = alias_by_id or {}
     out = []
     for ent in entities or []:
         for emp in ent.get("employees", []):
@@ -72,11 +92,13 @@ def _csi_payable(entities: list[dict]) -> list[dict]:
                 amt = 0.0
             if amt == 0:
                 continue
+            emp_id = str(emp.get("employeeId", "")).strip()
             out.append({
                 "name":       str(emp.get("name", "")).strip(),
-                "employeeId": str(emp.get("employeeId", "")).strip(),
+                "employeeId": emp_id,
                 "amount":     amt,
                 "norm":       _norm_name(emp.get("name", "")),
+                "aliasNorm":  alias_by_id.get(emp_id, ""),
             })
     return out
 
@@ -113,7 +135,8 @@ def crosscheck_csi_vs_xlsm(xlsx_bytes: bytes, entities: list[dict],
                 "error": str(e)[:200], "issues": [], "fileRows": 0,
                 "csiPayable": 0, "fileTotal": 0.0, "expectedTotal": 0.0}
 
-    csi = _csi_payable(entities)
+    alias_by_id = _alias_norms_by_id(account_source)
+    csi = _csi_payable(entities, alias_by_id)
 
     excluded_norms = {_norm_name(x.get("name", "")) for x in (excluded or []) if x.get("name")}
     excluded_ids = {str(x.get("employeeId", "")).strip() for x in (excluded or []) if x.get("employeeId")}
@@ -127,7 +150,8 @@ def crosscheck_csi_vs_xlsm(xlsx_bytes: bytes, entities: list[dict],
     for fr in file_rows:
         fnorm = _norm_name(fr["name"])
         same_amt = [i for i, c in enumerate(csi) if c["amount"] == fr["amount"]]
-        name_ok = [i for i in same_amt if _names_agree(fnorm, csi[i]["norm"])]
+        name_ok = [i for i in same_amt if _names_agree(fnorm, csi[i]["norm"])
+                   or (csi[i]["aliasNorm"] and _names_agree(fnorm, csi[i]["aliasNorm"]))]
         if name_ok:
             idx = next((i for i in name_ok if not covered[i]), name_ok[0])
             covered[idx] = True
@@ -144,7 +168,9 @@ def crosscheck_csi_vs_xlsm(xlsx_bytes: bytes, entities: list[dict],
 
         # ── Independent account-ownership check (by name, not Employee ID) ──
         if account_source:
-            at = [a for a in account_source if _names_agree(fnorm, _norm_name(a.get("name", "")))]
+            at = [a for a in account_source
+                  if _names_agree(fnorm, _norm_name(a.get("name", "")))
+                  or (a.get("bankAccountName") and _names_agree(fnorm, _norm_name(a["bankAccountName"])))]
             if len(at) == 1:
                 exp = _strip_spaces_dashes(str(at[0].get("accountNo", "")))
                 if exp and fr["account"] and exp != fr["account"]:

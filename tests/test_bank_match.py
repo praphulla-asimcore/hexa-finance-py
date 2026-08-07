@@ -103,6 +103,27 @@ def test_crosscheck_flags_account_tampering():
     assert any(i["code"] == "ACCOUNT_MISMATCH" for i in res["issues"])
 
 
+def test_crosscheck_accepts_bank_account_name_alias():
+    """A consultant paid into their own company's account: the bank file
+    legitimately prints the company name, not the CSI's personal name. The
+    cross-check must recognise this via the account-source bankAccountName,
+    not flag it as IDENTITY_MISMATCH / MISSING_FROM_FILE."""
+    account_source = AIRTABLE + [
+        {"employeeNumber": "HS300", "employeeId": "", "name": "Shahrul Sham Othman",
+         "bankAccountName": "Amiesham Enterprise", "bankName": "Maybank",
+         "accountNo": "002618188H", "favouriteBeneficiaryCode": "F3"},
+    ]
+    xlsm = _fill_rcms_template(
+        [_benef("HS300", "Amiesham Enterprise", 10200.00, "002618188H", "F3")],
+        "04062026", "0626", ["a@b.com"])
+    entities = [{"sheetName": "HSSB", "employees": [
+        {"name": "Shahrul Sham Othman", "employeeId": "HS300", "netSalary": 10200.00},
+    ]}]
+    res = crosscheck_csi_vs_xlsm(xlsm, entities, account_source, excluded=[])
+    assert res["ok"] is True
+    assert res["summary"] == "RCGEN2 matches with CSI"
+
+
 def test_crosscheck_flags_dropped_consultant():
     """A CSI consultant with no file row and no exclusion → MISSING_FROM_FILE."""
     xlsm = _fill_rcms_template(
