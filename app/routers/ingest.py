@@ -174,6 +174,44 @@ async def apex_ingest(request: Request):
     if dup.data:
         return _json(409, {"error_code": "DUPLICATE_RUN_REF", "message": "Duplicate run_ref"})
 
+    # ── Step 2b: drop any consultant already covered by an existing case for
+    # this entity+period. run_ref only catches an exact replay of the SAME
+    # run; it does nothing when HexaFlow sends a genuinely new run_ref that
+    # happens to re-include consultants already paid earlier this period (the
+    # failure mode this guards against). Kept consultants still ingest
+    # normally — only the overlapping ones are excluded and reported back, the
+    # same fail-loud-never-guess pattern used for doc-gate/missing-sighting
+    # exclusions in bank_files.py, rather than silently double-accruing them.
+    existing = db.from_("payroll_cases").select("reference,parsed_data").eq(
+        "type", "CSI").eq("entity", entity).eq("period", period_month).execute()
+    already_in: dict[str, str] = {}   # consultant_id -> reference of the case that already has them
+    for row in (existing.data or []):
+        ref = row.get("reference") or ""
+        for ent in ((row.get("parsed_data") or {}).get("entities") or []):
+            for emp in (ent.get("employees") or []):
+                eid = str(emp.get("employeeId") or "").strip()
+                if eid and eid not in already_in:
+                    already_in[eid] = ref
+
+    duplicate_consultants = []
+    fresh_consultants = []
+    for c in consultants:
+        cid = str(c.get("consultant_id") or "").strip()
+        if cid and cid in already_in:
+            duplicate_consultants.append({
+                "consultant_id": cid, "name": c.get("name", ""),
+                "existing_case_reference": already_in[cid],
+            })
+        else:
+            fresh_consultants.append(c)
+
+    if not fresh_consultants:
+        return _json(409, {"error_code": "ALL_CONSULTANTS_ALREADY_INGESTED",
+                           "message": f"Every consultant in this run already has a case for "
+                                      f"{entity} {period_month}; nothing new to ingest",
+                           "duplicates": duplicate_consultants})
+    consultants = fresh_consultants
+
     # ── Step 3: re-download every document and verify its SHA-256 ────────────
     # Keep the verified bytes in memory so step 5 doesn't download twice.
     verified: list[dict] = []      # one entry per (consultant, document) that passed
@@ -298,6 +336,7 @@ async def apex_ingest(request: Request):
                     "consultant_count": consultant_count, "document_count": document_count,
                     "totals": totals,
                     "entities": entities,
+                    "excluded_duplicate_consultants": duplicate_consultants,
                 }
                 cur.execute(
                     """
@@ -328,8 +367,16 @@ async def apex_ingest(request: Request):
     await _audit_log(
         db, str(case_id), "CSI_INGESTED", generated_by, None, _get_ip(request),
         {"run_ref": run_ref, "consultant_count": consultant_count,
-         "document_count": document_count, "generated_by": generated_by},
+         "document_count": document_count, "generated_by": generated_by,
+         "excluded_duplicate_consultants": duplicate_consultants},
     )
+    if duplicate_consultants:
+        logger.warning(
+            "APEX ingest run_ref=%s excluded %d consultant(s) already covered by an "
+            "existing %s %s case: %s",
+            run_ref, len(duplicate_consultants), entity, period_month,
+            [d["consultant_id"] for d in duplicate_consultants],
+        )
 
     # ── Step 9b: HexaFlow Consultant Finance Profile pull (Pack 5) ───────────
     # Best-effort, decoupled from the case just committed above: a pull failure
@@ -349,4 +396,5 @@ async def apex_ingest(request: Request):
         "status": _CASE_STATUS,
         "consultant_count": consultant_count,
         "document_count": document_count,
+        "excluded_duplicate_consultants": duplicate_consultants,
     })

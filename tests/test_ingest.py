@@ -30,6 +30,7 @@ class FakeDBState:
         self.references: set = set()
         self.last_parsed = None      # parsed_data dict from the last payroll_cases INSERT
         self.last_status = None      # status from the last payroll_cases INSERT
+        self.cases: list = []        # every inserted case: {reference, type, entity, period, parsed_data}
 
 
 class _FakeResult:
@@ -48,11 +49,21 @@ class _FakeQuery:
     def limit(self, n): return self
 
     def execute(self):
-        # Only the duplicate-run_ref check needs real behaviour.
         if self._op == "select" and self.table == "payroll_cases":
-            ref = self._eq.get("reference")
-            if ref is not None and ref in self.state.references:
-                return _FakeResult([{"id": "existing"}])
+            # Duplicate-run_ref check.
+            if "reference" in self._eq:
+                ref = self._eq.get("reference")
+                if ref is not None and ref in self.state.references:
+                    return _FakeResult([{"id": "existing"}])
+                return _FakeResult([])
+            # Existing-consultants-for-this-period check (Step 2b).
+            if "type" in self._eq:
+                rows = [
+                    {"reference": c["reference"], "parsed_data": c["parsed_data"]}
+                    for c in self.state.cases
+                    if all(c.get(k) == v for k, v in self._eq.items())
+                ]
+                return _FakeResult(rows)
             return _FakeResult([])
         return _FakeResult([])      # inserts (audit log) / everything else
 
@@ -96,6 +107,11 @@ class FakeCursor:
                 self.state.last_status = params[6]       # status
                 pd = params[7]                            # parsed_data (Jsonb)
                 self.state.last_parsed = getattr(pd, "obj", pd)
+                self.state.cases.append({
+                    "reference": params[0], "type": params[1],
+                    "entity": params[2], "period": params[4],
+                    "parsed_data": self.state.last_parsed,
+                })
             self._fetch = {"id": "case-0001"}
         else:
             self._fetch = None                           # UPDATE …
@@ -367,6 +383,49 @@ def test_finance_profile_pull_crash_does_not_fail_ingest(client, monkeypatch):
     r = client.post("/api/apex/ingest", json=make_hexaflow_payload(), headers=_hdr())
     assert r.status_code == 201
     assert r.json()["status"] == "documents_pending_review"
+
+
+# ── Step 2b: exclude consultants already covered by an existing case for
+# the same entity+period (a new run_ref alone doesn't catch this) ────────────
+
+def test_second_run_excludes_consultant_already_ingested_this_period(client):
+    """C1 ingested in run 1; run 2 (new run_ref) resends C1 plus a genuinely
+    new C3 for the same HSSB/2026-05 period — C1 must be dropped, C3 kept."""
+    first = client.post("/api/apex/ingest", json=make_payload("RUN-A"), headers=_hdr())
+    assert first.status_code == 201
+    first_ref = first.json()["run_ref"]
+
+    payload = make_payload("RUN-B")
+    payload["consultants"].append({"consultant_id": "C3", "name": "Wei", "documents": []})
+    second = client.post("/api/apex/ingest", json=payload, headers=_hdr())
+    assert second.status_code == 201
+    body = second.json()
+    assert body["consultant_count"] == 1   # only C3 — C1 and C2 already covered by run 1
+    excluded_ids = {d["consultant_id"] for d in body["excluded_duplicate_consultants"]}
+    assert excluded_ids == {"C1", "C2"}
+    assert all(d["existing_case_reference"] == first_ref for d in body["excluded_duplicate_consultants"])
+
+
+def test_all_consultants_already_ingested_returns_409(client):
+    """Every consultant in the new run already has a case for this period ⇒
+    reject rather than create an empty case."""
+    assert client.post("/api/apex/ingest", json=make_payload("RUN-C"), headers=_hdr()).status_code == 201
+    second = client.post("/api/apex/ingest", json=make_payload("RUN-D"), headers=_hdr())
+    assert second.status_code == 409
+    assert second.json()["error_code"] == "ALL_CONSULTANTS_ALREADY_INGESTED"
+    assert {d["consultant_id"] for d in second.json()["duplicates"]} == {"C1", "C2"}
+
+
+def test_duplicate_check_scoped_to_entity_and_period(client):
+    """Same consultant_id, different period_month ⇒ not a duplicate; a normal
+    new month's run must ingest every consultant."""
+    assert client.post("/api/apex/ingest", json=make_payload("RUN-E"), headers=_hdr()).status_code == 201
+    next_month = make_payload("RUN-F")
+    next_month["period_month"] = "2026-06"
+    r = client.post("/api/apex/ingest", json=next_month, headers=_hdr())
+    assert r.status_code == 201
+    assert r.json()["consultant_count"] == 2
+    assert r.json()["excluded_duplicate_consultants"] == []
 
 
 def test_no_secret_fields_persisted(client, state):
