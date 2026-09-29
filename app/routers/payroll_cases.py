@@ -1560,6 +1560,148 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
             "posted": len(journal_ids), "failed": failed, "skipped": skipped}
 
 
+# ─── Revenue accrual (7th payout, non-APC clients) ───────────────────────────
+# 7th-payout clients are invoiced after month end, so their revenue is accrued
+# at month end: DR Work In Progress_Sales / CR EOR revenue, per client, amount =
+# total billing before SST. Finance's invoice (DR AR / CR WIP) clears the WIP,
+# so the app posts no reversal. 25th/EOM payouts are invoiced before month end
+# and APC clients are billed in advance — neither is accrued here.
+_REVENUE_ACCOUNTS: dict = {
+    "762447369": {  # HSSB
+        "wip":     "2877958000000096447",  # HSSB-009  Work In Progress_Sales
+        "revenue": "2877958000006986298",  # Hx-4000   Employer of Record Services (EOR)
+    },
+    "897668064": {  # HCSSB
+        "wip":     "7046319000000758002",  # Work In Progress_Sales
+        "revenue": "7046319000000462196",  # 1.6.2  Credit Clients - Revenue
+    },
+    "761483650": {  # HEDU
+        "wip":     "2866569000003949003",  # Work In Progress_Sales
+        "revenue": "2866569000002636083",  # Credit Clients - Revenue
+    },
+    "853265884": {  # DATACRATS
+        "wip":     "5216911000000402002",  # Work In Progress_Sales
+        "revenue": "5216911000000402010",  # 1.6.2  Credit Clients - Revenue (under 1.6 EOR - Revenue)
+    },
+}
+
+
+def _payout_cycle(kase: dict) -> str:
+    """'7TH' | '25TH' | 'EOM' | '15TH'. APEX/HexaFlow cases carry cycle_code in
+    parsed_data (their period is plain YYYY-MM); manual uploads encode it in
+    the period ('202608-7th')."""
+    code = ((kase.get("parsed_data") or {}).get("cycle_code") or "").strip().upper()
+    if code:
+        return code
+    try:
+        return _parse_period(kase.get("period", ""))[2].upper()
+    except ValueError:
+        return ""
+
+
+def _revenue_accrual_by_client(employees: list) -> dict:
+    """client (cost centre) → total billing before SST, non-APC consultants only."""
+    totals: dict = {}
+    for emp in employees:
+        if (emp.get("clientType") or "CC").upper() == "APC":
+            continue
+        amount = float(emp.get("totalBilling") or 0)
+        if amount <= 0:
+            continue
+        client = (emp.get("costCentre") or "").strip()
+        totals[client] = totals.get(client, 0.0) + amount
+    return {c: _round2(a) for c, a in totals.items()}
+
+
+async def _auto_book_revenue_accrual(kase: dict, db, already_posted: set = frozenset()) -> dict:
+    """One journal per non-APC client for a 7th-payout CSI case, dated the last
+    day of the period month. already_posted: clients booked by an earlier
+    (partially failed) attempt — skipped so a retry never double-posts.
+    Returns {"success", "not_applicable"?, "journal_ids", "posted_clients",
+    "failed", "error"?}."""
+    if kase.get("type", "CSI") != "CSI" or _payout_cycle(kase) != "7TH":
+        return {"success": True, "not_applicable": True}
+
+    org_id = get_entity_org(kase.get("entity", "")).get("id")
+    if not org_id:
+        return {"success": False, "error": f"No Zoho org ID for entity {kase.get('entity')}"}
+    try:
+        yr, mo, _cycle = _parse_period(kase.get("period", ""))
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+
+    employees = [emp for ent in (kase.get("parsed_data") or {}).get("entities", [])
+                 for emp in ent.get("employees", [])]
+    by_client = {c: a for c, a in _revenue_accrual_by_client(employees).items()
+                 if c not in already_posted}
+    if not by_client:
+        return {"success": True, "posted": 0, "journal_ids": [], "posted_clients": [], "failed": [],
+                "note": "Nothing (left) to accrue."}
+    if "" in by_client:
+        return {"success": False, "error": "Consultant(s) with billing but no client/cost centre — cannot tag revenue."}
+
+    accts = _REVENUE_ACCOUNTS.get(org_id) or {}
+    missing = [label for key, label in (("wip", "Work In Progress_Sales"), ("revenue", "EOR revenue"))
+               if not accts.get(key)]
+    if missing:
+        return {"success": False, "error": f"{' and '.join(missing)} account not configured for "
+                f"{kase.get('entity')} — create it in Zoho and add its ID to _REVENUE_ACCOUNTS."}
+
+    # Customer reporting tag per client, mandatory like the cost accrual.
+    try:
+        tags = await fetch_reporting_tags(org_id)
+        cust_tag = next((t for t in tags if t["tag_name"].lower() == "customer"), None)
+        if not cust_tag:
+            return {"success": False, "error": "Reporting tag 'Customer' not found in Zoho."}
+        tag_id = cust_tag["tag_id"]
+        tag_options = await fetch_tag_options(org_id, tag_id)
+        for client in by_client:
+            if client.lower() not in tag_options:
+                tag_options[client.lower()] = await create_tag_option(org_id, tag_id, client)
+    except Exception as e:
+        return {"success": False, "error": f"Customer tag resolution failed (nothing posted): {e}"}
+
+    journal_date = f"{yr:04d}-{mo:02d}-{calendar.monthrange(yr, mo)[1]:02d}"
+    mmm_yy       = _period_mmm_yy(kase.get("period", ""))
+    entity_code  = kase.get("entity", "")
+    journal_ids, posted_clients, failed = [], [], []
+    for n, (client, amount) in enumerate(sorted(by_client.items()), 1):
+        extra = {"description": f"{entity_code}_EOR_Revenue_Accrual_{client}_{mmm_yy}",
+                 "tags": [{"tag_id": tag_id, "tag_option_id": tag_options[client.lower()]}]}
+        try:
+            journal = await post_journal_entry(org_id, {
+                "journal_date":     journal_date,
+                "reference_number": f"REVACCR-{kase['period']}-{entity_code}-{n:03d}-{str(kase['id'])[-8:]}",
+                "notes": f"Revenue Accrual (7th payout) – {kase.get('period')} – {client} – Ref: {kase['reference']}",
+                "line_items": [
+                    {"account_id": accts["wip"],     "debit_or_credit": "debit",  "amount": amount, **extra},
+                    {"account_id": accts["revenue"], "debit_or_credit": "credit", "amount": amount, **extra},
+                ],
+            })
+            if journal.get("journal_id"):
+                journal_ids.append(journal["journal_id"])
+                posted_clients.append(client)
+        except Exception as e:
+            failed.append({"client": client, "error": str(e)})
+
+    if journal_ids:
+        # Append (the cost accrual has just written this column) so case
+        # deletion also removes the revenue journals.
+        fresh = db.from_("payroll_cases").select("zoho_journal_ids").eq("id", kase["id"]).single().execute()
+        existing = (fresh.data or {}).get("zoho_journal_ids") or []
+        db.from_("payroll_cases").update({
+            "zoho_org_id":      org_id,
+            "zoho_journal_ids": existing + journal_ids,
+        }).eq("id", kase["id"]).execute()
+    if failed and not journal_ids:
+        return {"success": False, "failed": failed, "posted_clients": [],
+                "error": f"No revenue accrual journals posted. First failure: {failed[0]}"}
+    return {"success": not failed, "journal_ids": journal_ids, "posted": len(journal_ids),
+            "posted_clients": posted_clients,
+            "failed": failed, "total": _round2(sum(by_client.values())),
+            **({"error": f"{len(failed)} client journal(s) failed: {failed[0]}"} if failed else {})}
+
+
 # ─── Auto payment booking (Step 6) ───────────────────────────────────────────
 
 async def _auto_book_payment(kase: dict, db) -> dict:
@@ -3480,11 +3622,19 @@ async def post_accrual_manual(case_id: str, request: Request):
     if kase.get("status") not in ALLOWED:
         return await _refresh_detail(case_id, db, request, user, 3)
 
-    # Block if already successfully posted — prevent duplicate Zoho journal entries
-    logs_resp = db.from_("payroll_audit_log").select("metadata").eq("case_id", case_id).eq("event_type", "ZOHO_ACCRUAL_AUTO").execute()
+    # Cost and revenue accruals are guarded separately so a retry posts only the
+    # part that hasn't succeeded — never a duplicate Zoho journal.
+    logs_resp = db.from_("payroll_audit_log").select("event_type,metadata").eq("case_id", case_id).execute()
+    cost_done, rev_done, rev_posted_clients = False, False, set()
     for log in (logs_resp.data or []):
-        if (log.get("metadata") or {}).get("success"):
-            return await _refresh_detail(case_id, db, request, user, 3)
+        meta = log.get("metadata") or {}
+        if log.get("event_type") == "ZOHO_ACCRUAL_AUTO":
+            cost_done = cost_done or bool(meta.get("success"))
+        elif log.get("event_type") == "ZOHO_REVENUE_ACCRUAL":
+            rev_done = rev_done or bool(meta.get("success"))
+            rev_posted_clients.update(meta.get("posted_clients") or [])
+    if cost_done and rev_done:
+        return await _refresh_detail(case_id, db, request, user, 3)
 
     # Resubmission cases skip the accrual journal — CTC already posted in original run
     skip_accrual = (kase.get("parsed_data") or {}).get("skip_accrual", False)
@@ -3498,6 +3648,8 @@ async def post_accrual_manual(case_id: str, request: Request):
         await _audit_log(db, case_id, "ZOHO_ACCRUAL_AUTO",
                          user.get("name") or user.get("email"), user.get("id"), _get_ip(request),
                          {"success": True, "resubmission_skip": True})
+        await _audit_log(db, case_id, "ZOHO_REVENUE_ACCRUAL", "System", None, None,
+                         {"success": True, "resubmission_skip": True})
         return await _refresh_detail(case_id, db, request, user, 3)
 
     # Mark in-progress BEFORE the slow Zoho work so the 3s detail poller sees
@@ -3506,17 +3658,27 @@ async def post_accrual_manual(case_id: str, request: Request):
     await _audit_log(db, case_id, "ZOHO_ACCRUAL_STARTED", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {})
 
     case_type = kase.get("type", "CSI")
-    try:
-        if case_type == "PAYROLL":
-            accrual_result = await _auto_book_accruals_payroll(kase, db)
-        else:
-            accrual_result = await _auto_book_accruals(kase, db)
-    except Exception as e:
-        accrual_result = {"success": False, "error": str(e)}
+    if not cost_done:
+        try:
+            if case_type == "PAYROLL":
+                accrual_result = await _auto_book_accruals_payroll(kase, db)
+            else:
+                accrual_result = await _auto_book_accruals(kase, db)
+        except Exception as e:
+            accrual_result = {"success": False, "error": str(e)}
 
-    await _audit_log(db, case_id, "ZOHO_ACCRUAL_AUTO",
-                     user.get("name") or user.get("email"), user.get("id"),
-                     _get_ip(request), accrual_result)
+        await _audit_log(db, case_id, "ZOHO_ACCRUAL_AUTO",
+                         user.get("name") or user.get("email"), user.get("id"),
+                         _get_ip(request), accrual_result)
+
+    if not rev_done:
+        try:
+            revenue_result = await _auto_book_revenue_accrual(kase, db, rev_posted_clients)
+        except Exception as e:
+            revenue_result = {"success": False, "error": str(e)}
+        await _audit_log(db, case_id, "ZOHO_REVENUE_ACCRUAL",
+                         user.get("name") or user.get("email"), user.get("id"),
+                         _get_ip(request), revenue_result)
 
     return await _refresh_detail(case_id, db, request, user, 3)
 

@@ -290,6 +290,16 @@ def test_decimal_string_money_parsed(client, state):
     assert emp["totalBilling"] == 1000.00
 
 
+def test_client_type_and_lindung_ingested(client, state):
+    payload = make_hexaflow_payload()
+    payload["consultants"][0]["client_type"] = "apc"
+    payload["consultants"][0]["socso_lindung"] = "12.50"
+    client.post("/api/apex/ingest", json=payload, headers=_hdr())
+    alice, bob = state.last_parsed["entities"][0]["employees"]
+    assert alice["clientType"] == "APC" and alice["socsoLindung"] == 12.50
+    assert bob["clientType"] == "CC" and bob["socsoLindung"] == 0.0   # omitted → defaults
+
+
 def test_provided_documents_still_hash_checked(client):
     """A HexaFlow-shaped payload that DOES include a document is still verified;
     a wrong hash is rejected as tampered (document validation unchanged)."""

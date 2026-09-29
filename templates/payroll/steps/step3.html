@@ -107,6 +107,33 @@
   </div>
   {% endif %}
 
+  {# ── Revenue accrual (7th payout, non-APC) — own log + retry, independent of the cost accrual ── #}
+  {% set _rev_logs = (logs | selectattr('event_type','equalto','ZOHO_REVENUE_ACCRUAL') | list) if logs else [] %}
+  {% set rev_meta = ((_rev_logs | last).metadata or {}) if _rev_logs else none %}
+  {% if rev_meta and not rev_meta.get('not_applicable') and not rev_meta.get('resubmission_skip') %}
+    {% if rev_meta.get('success') %}
+    <div class="pf-info-banner pf-banner-ok" style="margin-bottom:16px">
+      ✓ Revenue accrual posted (7th payout) — {{ rev_meta.get('posted', 0) }} client journal(s)
+      {% if rev_meta.get('total') %}<span style="margin-left:8px">{{ fmt_rm(rev_meta.total) }}</span>{% endif %}
+      {% if rev_meta.get('note') %}<span style="margin-left:8px;opacity:.7">{{ rev_meta.note }}</span>{% endif %}
+    </div>
+    {% else %}
+    <div style="background:#fef3c7;border:1px solid #fde68a;border-radius:10px;padding:14px 16px;margin-bottom:16px">
+      <div style="font-weight:700;color:#92400e;margin-bottom:6px;font-size:13px">
+        ⚠ Revenue accrual not posted to Zoho Books
+      </div>
+      <div style="font-size:12px;color:#78350f;margin-bottom:10px">{{ rev_meta.get('error', 'Unknown error') }}</div>
+      <button class="btn btn-primary btn-sm"
+          hx-post="/cases/{{ kase.id }}/post-accrual"
+          hx-target="#case-detail-inner"
+          hx-swap="innerHTML">
+        <span class="spinner htmx-indicator"></span>
+        Retry — Post Revenue Accrual
+      </button>
+    </div>
+    {% endif %}
+  {% endif %}
+
   {# ── Approver chain ── #}
   <div class="pf-approver-chain">
     {% set rev_status = 'approved' if kase.status in ['check_reviewer_approved','check_approved','bank_file_generated','bank_uploaded','payment_approval_sent','payment_approved','payment_rejected','zoho_posted'] else ('pending' if kase.status == 'check_approval_sent' else 'waiting') %}

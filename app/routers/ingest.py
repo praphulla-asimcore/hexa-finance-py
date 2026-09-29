@@ -293,6 +293,12 @@ async def apex_ingest(request: Request):
                         "employeeId":   c.get("consultant_id", ""),
                         "name":         c.get("name", ""),
                         "costCentre":   c.get("cost_centre", ""),
+                        # APC (advance-paying) vs CC (credit) client, sent by
+                        # HexaFlow per consultant — drives the APC-/CC- expense
+                        # accounts and the 7th-payout revenue accrual. Missing
+                        # or unrecognised → CC, same default as the CSI parser.
+                        "clientType":   ("APC" if str(c.get("client_type") or c.get("margin_type") or "")
+                                         .strip().upper() == "APC" else "CC"),
                         "category":     c.get("category", "Local"),
                         "grossSalary":  _safe_float(c.get("gross")),
                         "basicSalary":  _safe_float(c.get("basic")),
