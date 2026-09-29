@@ -172,44 +172,27 @@ async def confirm_payment(sub_id: str, request: Request):
     return await _refresh(sub_id, db, request, user)
 
 
-_STATUTORY_PAYABLE_NAMES = {
-    "EPF":       "EPF, SSF, CPF, Pag-IBIG/HDMF Payable",
-    "SOCSO_EIS": "BPJS TK, SSC, SSS, SOCSO, EIS Payable",
-    "HRDF":      "HRDF, SDL Payable",
-    "MTD":       "TDS, PCB/MTD, PIT Payable",
-}
-
-
 async def _post_zoho(sub: dict, payment_ref: str, payment_date: str) -> str | None:
-    from app.services.zoho import post_journal_entry, fetch_accounts
-    from app.routers.payroll_cases import _ORG_ACCOUNT_MAPS, _PAYROLL_ORG_MAP
+    """Remittance: DR Statutory Liabilities - <scheme> / CR bank — clears what
+    the CSI and Payroll accruals credited (see payroll_cases._CSI_ACCOUNTS)."""
+    from app.services.zoho import post_journal_entry
+    from app.routers.payroll_cases import _CSI_ACCOUNTS, _STATUTORY_TYPE_COMPONENT
 
     org_cfg = ORGS.get(sub["entity"], {})
     org_id  = org_cfg.get("id")
     if not org_id:
         raise ValueError(f"No Zoho org for entity {sub['entity']}")
 
-    # Bank account: from hardcoded map (must be configured for the org)
-    hardcoded = _ORG_ACCOUNT_MAPS.get(org_id)
-    if not hardcoded:
-        raise ValueError(f"Add {org_id} to _ORG_ACCOUNT_MAPS first.")
-    _, _, _, bank_id = hardcoded
+    accts = _CSI_ACCOUNTS.get(org_id)
+    if not accts:
+        raise ValueError(f"Add {org_id} to _CSI_ACCOUNTS first.")
+    bank_id = accts["bank"]
 
-    # Resolve the correct statutory payable account by name via Zoho API
     statutory_type = sub.get("statutory_type", "")
-    payable_name   = _STATUTORY_PAYABLE_NAMES.get(statutory_type)
-    if not payable_name:
+    component      = _STATUTORY_TYPE_COMPONENT.get(statutory_type)
+    if not component:
         raise ValueError(f"Unknown statutory type: {statutory_type}")
-
-    all_accounts = await fetch_accounts(org_id)
-    by_name      = {a["name"]: a["id"] for a in all_accounts if a.get("name")}
-    payable_id   = by_name.get(payable_name)
-    if not payable_id:
-        # Fall back to the org's payable_fallback (Other payables and accruals) if account not found
-        payroll_maps = _PAYROLL_ORG_MAP.get(org_id, {})
-        payable_id   = payroll_maps.get("payable_fallback")
-    if not payable_id:
-        raise ValueError(f"Payable account '{payable_name}' not found in Zoho org {org_id}.")
+    payable_id = accts["statutory"][component]
 
     amount = float(sub.get("total_amount") or 0)
     if amount <= 0:

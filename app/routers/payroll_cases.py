@@ -19,7 +19,7 @@ from app.services.db import get_db
 from app.services.parser import parse_excel_buffer, parse_payroll_excel_buffer
 from app.services.statutory import get_statutory_module
 from app.services.zoho import (
-    post_journal_entry, create_expense, attach_journal_document, fetch_accounts,
+    post_journal_entry, create_expense, attach_journal_document,
     delete_journal_entry, delete_expense, fetch_contacts, create_contact,
     fetch_reporting_tags, fetch_tag_options, create_tag_option,
 )
@@ -265,6 +265,7 @@ async def _create_or_update_statutory(kase: dict, db, triggered_by: str) -> None
                 "eisEmployer":   float(emp.get("eisEmployer") or 0),
                 "socsoEmployee": float(emp.get("socsoEmployee") or 0),
                 "socsoEmployer": float(emp.get("socsoEmployer") or 0),
+                "socsoLindung":  float(emp.get("socsoLindung") or 0),
                 "hrdf":          float(emp.get("hrdf") or 0),
                 "mtd":           float(emp.get("mtd") or 0),
             })
@@ -910,79 +911,187 @@ def _period_mmm_yy(period_str: str) -> str:
         return period_str
 
 
-# ─── Account ID maps (hardcoded from Chart_of_Accounts.csv) ─────────────────
-# Zoho API default filter excludes sub-accounts (2.6.x.x) so we use the CSV.
-# Key: component → Zoho account_id  (org-specific)
+# ─── CSI account maps (per Zoho org) ─────────────────────────────────────────
+# Posting rules follow "APEX Required Accounting Entries vr.1" — see
+# docs/apex-accounting-entries.md. Account IDs are hardcoded because the Zoho
+# chartofaccounts list endpoint silently omits most sub-accounts (2.6.x.x).
+#
+#   Salary components (basic incl. claims, bonus, ca_dedn):
+#       DR APC-/CC- expense            CR Consultant Salary Payable
+#   Statutory components (epf, socso_eis incl. Lindung L24, hrdf, mtd):
+#       DR APC-/CC- statutory expense  CR Statutory Liabilities - <same scheme>
+#   Payment (net salary):  DR Consultant Salary Payable  CR bank
+#   Remittance (statutory.py):  DR Statutory Liabilities - <scheme>  CR bank
 
-# HSSB org (762447369) — sourced from Chart_of_Accounts.csv
-_HSSB_APC = {
-    "basic":     "2877958000012773826",  # APC - Consultant Salaries and Benefits
-    "claim":     "2877958000012773830",  # APC - Consultant Claims and Reimbursements
-    "bonus":     "2877958000012773834",  # APC - Bonus, Commission, Incentive…
-    "ca_dedn":   "2877958000012773846",  # APC - Cash Advance Deduction
-    "epf":       "2877958000012773866",  # APC - EPF, SSF, CPF, Pag-IBIG/HDMF
-    "socso_eis": "2877958000012773874",  # APC - BPJS TK, SSC, SSS, SOCSO, EIS
-    "hrdf":      "2877958000012773878",  # APC - HRDF, SDL
-    "mtd":       "2877958000012773890",  # APC - TDS, PCB/MTD, PIT
-}
-_HSSB_CC = {
-    "basic":     "2877958000012773902",  # CC - Consultant Salaries and Benefits
-    "claim":     "2877958000012773906",  # CC - Consultant Claims and Reimbursements
-    "bonus":     "2877958000012773910",  # CC - Bonus, Commission, Incentive…
-    "ca_dedn":   "2877958000012773922",  # CC - Cash Advance Deduction
-    "epf":       "2877958000012773942",  # CC - EPF, SSF, CPF, Pag-IBIG/HDMF
-    "socso_eis": "2877958000012773950",  # CC - BPJS TK, SSC, SSS, SOCSO, EIS
-    "hrdf":      "2877958000012773954",  # CC - HRDF, SDL
-    "mtd":       "2877958000012773966",  # CC - TDS, PCB/MTD, PIT
-}
-_HSSB_PAYABLE = "2877958000005041061"   # Consultant Salary Payable (HSSB-041)
-_HSSB_BANK    = "2877958000000096397"   # Cash at Bank - MBB_MYR  (HSSB-003)
+# Components whose accrual credit goes to a Statutory Liabilities account
+# rather than the salary payable. Keys match the "statutory" map below.
+_STATUTORY_COMPONENTS = ("epf", "socso_eis", "hrdf", "mtd")
 
-# Lookup by org_id → (apc_map, cc_map, payable_id, bank_id)
-_ORG_ACCOUNT_MAPS: dict = {
-    "762447369": (_HSSB_APC, _HSSB_CC, _HSSB_PAYABLE, _HSSB_BANK),
+# statutory_submissions.statutory_type → component key
+_STATUTORY_TYPE_COMPONENT = {"EPF": "epf", "SOCSO_EIS": "socso_eis", "HRDF": "hrdf", "MTD": "mtd"}
+
+_CSI_ACCOUNTS: dict = {
+    # HSSB — Hexamatics Servcomm Sdn Bhd
+    "762447369": {
+        "apc": {
+            "basic":     "2877958000012773826",  # 2.6.1.1     APC - Consultant Salaries and Benefits
+            "bonus":     "2877958000012773834",  # 2.6.1.3     APC - Bonus, Commission, Incentive…
+            "ca_dedn":   "2877958000012773846",  # 2.6.1.6     APC - Cash Advance Deduction
+            "epf":       "2877958000012773866",  # 2.6.1.10.1  APC - EPF, SSF, CPF, Pag-IBIG/HDMF
+            "socso_eis": "2877958000012773874",  # 2.6.1.10.3  APC - BPJS TK, SSC, SSS, SOCSO, EIS
+            "hrdf":      "2877958000012773878",  # 2.6.1.10.4  APC - HRDF, SDL
+            "mtd":       "2877958000012773890",  # 2.6.1.10.7  APC - TDS, PCB/MTD, PIT
+        },
+        "cc": {
+            "basic":     "2877958000012773902",  # 2.6.2.1     CC - Consultant Salaries and Benefits
+            "bonus":     "2877958000012773910",  # 2.6.2.3     CC - Bonus, Commission, Incentive…
+            "ca_dedn":   "2877958000012773922",  # 2.6.2.6     CC - Cash Advance Deduction
+            "epf":       "2877958000012773942",  # 2.6.2.10.1  CC - EPF, SSF, CPF, Pag-IBIG/HDMF
+            "socso_eis": "2877958000012773950",  # 2.6.2.10.3  CC - BPJS TK, SSC, SSS, SOCSO, EIS
+            "hrdf":      "2877958000012773954",  # 2.6.2.10.4  CC - HRDF, SDL
+            "mtd":       "2877958000012773966",  # 2.6.2.10.7  CC - TDS, PCB/MTD, PIT
+        },
+        "statutory": {
+            "epf":       "2877958000015466002",  # Statutory Liabilities - EPF, SSF, CPF, Pag-IBIG/HDMF
+            "socso_eis": "2877958000015466007",  # Statutory Liabilities - BPJS TK, SSC, SSS, SOCSO, EIS
+            "hrdf":      "2877958000015466012",  # Statutory Liabilities - HRDF, SDL
+            "mtd":       "2877958000015466017",  # Statutory Liabilities - TDS, PCB/MTD, PIT
+        },
+        "payable": "2877958000005041061",  # HSSB-041  Consultant Salary Payable
+        "bank":    "2877958000000096397",  # HSSB-003  Cash at Bank - MBB_MYR
+    },
+    # HCSSB — Hexa Consulting Services Sdn Bhd
+    "897668064": {
+        "apc": {
+            "basic":     "7046319000000462243",
+            "bonus":     "7046319000000462251",
+            "ca_dedn":   "7046319000000462263",
+            "epf":       "7046319000000462283",
+            "socso_eis": "7046319000000462291",
+            "hrdf":      "7046319000000462295",
+            "mtd":       "7046319000000462307",
+        },
+        "cc": {
+            "basic":     "7046319000000462319",
+            "bonus":     "7046319000000462327",
+            "ca_dedn":   "7046319000000462339",
+            "epf":       "7046319000000462359",
+            "socso_eis": "7046319000000462367",
+            "hrdf":      "7046319000000462371",
+            "mtd":       "7046319000000462383",
+        },
+        "statutory": {
+            "epf":       "7046319000000756006",
+            "socso_eis": "7046319000000756011",
+            "hrdf":      "7046319000000756016",
+            "mtd":       "7046319000000756021",
+        },
+        "payable": "7046319000000756002",  # Consultant Salary Payable
+        "bank":    "7046319000000123108",  # Cash at Bank - MBB_MYR (564128827049)
+    },
+    # HEDU — Karya Indah Sdn. Bhd. (KISB)
+    "761483650": {
+        "apc": {
+            "basic":     "2866569000003947030",
+            "bonus":     "2866569000003947035",
+            "ca_dedn":   "2866569000003947040",
+            "epf":       "2866569000003947050",
+            "socso_eis": "2866569000003947055",
+            "hrdf":      "2866569000003947060",
+            "mtd":       "2866569000003947065",
+        },
+        "cc": {
+            "basic":     "2866569000003947070",
+            "bonus":     "2866569000003947075",
+            "ca_dedn":   "2866569000003947080",
+            "epf":       "2866569000003947090",
+            "socso_eis": "2866569000003947095",
+            "hrdf":      "2866569000003947100",
+            "mtd":       "2866569000003947105",
+        },
+        "statutory": {
+            "epf":       "2866569000003947010",
+            "socso_eis": "2866569000003947015",
+            "hrdf":      "2866569000003947020",
+            "mtd":       "2866569000003947025",
+        },
+        "payable": "2866569000003947002",  # Consultant Salary Payable
+        "bank":    "2866569000000291110",  # Bank_MBB
+    },
+    # DATACRATS — Datacrats Sdn Bhd
+    "853265884": {
+        "apc": {
+            "basic":     "5216911000000400044",
+            "bonus":     "5216911000000400049",
+            "ca_dedn":   "5216911000000400054",
+            "epf":       "5216911000000400064",
+            "socso_eis": "5216911000000400069",
+            "hrdf":      "5216911000000400074",
+            "mtd":       "5216911000000400079",
+        },
+        "cc": {
+            "basic":     "5216911000000400084",
+            "bonus":     "5216911000000400089",
+            "ca_dedn":   "5216911000000400094",
+            "epf":       "5216911000000400104",
+            "socso_eis": "5216911000000400109",
+            "hrdf":      "5216911000000400114",
+            "mtd":       "5216911000000400119",
+        },
+        "statutory": {
+            "epf":       "5216911000000400010",
+            "socso_eis": "5216911000000400015",
+            "hrdf":      "5216911000000400020",
+            "mtd":       "5216911000000400025",
+        },
+        "payable": "5216911000000400002",  # Consultant Salary Payable
+        "bank":    "5216911000000091003",  # Cash at Bank - MBB
+    },
 }
 
-# Fallback: code-based keys for API lookup when org not in hardcoded map
-_APC_CODES = {
-    "basic": "2.6.1.1", "claim": "2.6.1.2", "bonus": "2.6.1.3", "ca_dedn": "2.6.1.6",
-    "epf": "2.6.1.10.1", "socso_eis": "2.6.1.10.3", "hrdf": "2.6.1.10.4", "mtd": "2.6.1.10.7",
-}
-_CC_CODES = {
-    "basic": "2.6.2.1", "claim": "2.6.2.2", "bonus": "2.6.2.3", "ca_dedn": "2.6.2.6",
-    "epf": "2.6.2.10.1", "socso_eis": "2.6.2.10.3", "hrdf": "2.6.2.10.4", "mtd": "2.6.2.10.7",
-}
-_APC_NAMES = {
-    "basic": "APC - Consultant Salaries and Benefits",
-    "claim": "APC - Consultant Claims and Reimbursements",
-    "bonus": "APC - Bonus, Commission, Incentive, Galloping, THR, EOC",
-    "ca_dedn": "APC - Cash Advance Deduction",
-    "epf": "APC - EPF, SSF, CPF, Pag-IBIG/HDMF",
-    "socso_eis": "APC - BPJS TK, SSC, SSS, SOCSO, EIS",
-    "hrdf": "APC - HRDF, SDL",
-    "mtd": "APC - TDS, PCB/MTD, PIT",
-}
-_CC_NAMES = {
-    "basic": "CC - Consultant Salaries and Benefits",
-    "claim": "CC - Consultant Claims and Reimbursements",
-    "bonus": "CC - Bonus, Commission, Incentive, Galloping, THR, EOC",
-    "ca_dedn": "CC - Cash Advance Deduction",
-    "epf": "CC - EPF, SSF, CPF, Pag-IBIG/HDMF",
-    "socso_eis": "CC - BPJS TK, SSC, SSS, SOCSO, EIS",
-    "hrdf": "CC - HRDF, SDL",
-    "mtd": "CC - TDS, PCB/MTD, PIT",
-}
-_PAYABLE_CODE = "HSSB-041"
-_PAYABLE_NAME = "Consultant Salary Payable"
-_BANK_CODE    = "HSSB-003"
-_BANK_NAME    = "Cash at Bank - MBB_MYR"
+
+def _csi_components(emp: dict) -> list:
+    """Per-consultant accrual split. Claims sit inside 'basic' (Consultant
+    Salaries & Benefits) — APEX rectification #1, no separate claims head.
+    E-SOCSO Lindung (L24) is added to socso_eis — rectification #2."""
+    return [
+        ("basic",     _round2((emp.get("netSalary") or 0) - (emp.get("bonus") or 0))),
+        ("bonus",     _round2(emp.get("bonus", 0))),
+        ("ca_dedn",   _round2(emp.get("caDedn", 0))),
+        ("epf",       _round2((emp.get("epfEmployee") or 0) + (emp.get("epfEmployer") or 0))),
+        ("socso_eis", _round2((emp.get("socsoEmployee") or 0) + (emp.get("socsoEmployer") or 0)
+                              + (emp.get("eisEmployee") or 0) + (emp.get("eisEmployer") or 0)
+                              + (emp.get("socsoLindung") or 0))),
+        ("hrdf",      _round2(emp.get("hrdf", 0))),
+        ("mtd",       _round2(emp.get("mtd", 0))),
+    ]
+
+
+def _accrual_lines(components: list, expense_map: dict, salary_payable: str,
+                   statutory_map: dict, line_extra: dict) -> tuple[list, list]:
+    """Balanced DR/CR pairs for one person's accrual journal. Statutory
+    components credit their Statutory Liabilities account; everything else
+    credits the salary payable. Returns (line_items, unmapped component keys);
+    callers count unmapped keys as skipped."""
+    lines, unmapped = [], []
+    for comp_key, amount in components:
+        if amount <= 0:
+            continue
+        dr_id = expense_map.get(comp_key)
+        cr_id = statutory_map.get(comp_key) if comp_key in _STATUTORY_COMPONENTS else salary_payable
+        if not dr_id or not cr_id:
+            unmapped.append(comp_key)
+            continue
+        lines.append({"account_id": dr_id, "debit_or_credit": "debit",  "amount": amount, **line_extra})
+        lines.append({"account_id": cr_id, "debit_or_credit": "credit", "amount": amount, **line_extra})
+    return lines, unmapped
 
 
 # ─── Payroll (internal employee) account IDs (HSSB org 762447369) ────────────
 # Sourced from Chart_of_Accounts.csv (verified active in Zoho). The payroll
 # accrual mirrors the CSI logic: one journal PER employee, each component
-# debited to its own Internal-* expense account and credited to the single
-# Internal Salary Payable account, with the employee tagged as a Zoho contact
+# debited to its own Internal-* expense account and credited to Internal Salary
+# Payable (statutory components: Statutory Liabilities), with the employee tagged as a Zoho contact
 # and the "Customer" reporting tag.
 
 # DR side — per-component Internal expense accounts (parallels the CSI APC/CC maps)
@@ -1003,9 +1112,10 @@ _HSSB_PAYROLL = {
     "net_pay":       "2877958000005041067",  # HSSB-043  Internal Salary Payable
     # Bank (same as CSI)
     "bank":          "2877958000000096397",  # HSSB-003  Cash at Bank - MBB_MYR
-    # Fallback payable used by the statutory remittance path (statutory.py) when
-    # a named statutory payable can't be resolved in Zoho.
-    "payable_fallback": "2877958000000098963",  # HSSB-052  Other payables and accruals
+    # CR for statutory components — the same Statutory Liabilities accounts the
+    # CSI accrual uses, since statutory remittances (statutory.py) combine CSI
+    # and internal payroll per entity/month and debit these to clear them.
+    "statutory":     _CSI_ACCOUNTS["762447369"]["statutory"],
 }
 
 _PAYROLL_ORG_MAP: dict = {
@@ -1097,7 +1207,8 @@ async def _auto_book_accruals_payroll(kase: dict, db) -> dict:
     """
     Posts ONE Zoho journal PER internal employee (mirrors the CSI accrual):
     each pay component is debited to its own Internal-* expense account and
-    credited to Internal Salary Payable, with every line tagged to the
+    credited to Internal Salary Payable (statutory components: to Statutory
+    Liabilities - <scheme>), with every line tagged to the
     employee's Zoho contact (customer_id) and the "Customer" reporting tag
     option "Internal_<Employee Name>_<YYYYMM>".
     """
@@ -1177,18 +1288,11 @@ async def _auto_book_accruals_payroll(kase: dict, db) -> dict:
         line_tags  = [{"tag_id": tag_id, "tag_option_id": option_id}]
         desc       = f"{entity_code}_Salary_Internal_{cons.replace(' ', '_')}_{mmm_yy}"
 
-        line_items = []
-        for comp_key, amount in _payroll_components(emp):
-            if amount <= 0:
-                continue
-            dr_id = exp_map.get(comp_key)
-            if not dr_id:
-                skipped += 1
-                continue
-            line_items.append({"account_id": dr_id, "debit_or_credit": "debit", "amount": amount,
-                                "description": desc, "customer_id": contact_id, "tags": line_tags})
-            line_items.append({"account_id": payable_id, "debit_or_credit": "credit", "amount": amount,
-                                "description": desc, "customer_id": contact_id, "tags": line_tags})
+        line_items, unmapped = _accrual_lines(
+            _payroll_components(emp), exp_map, payable_id, maps["statutory"],
+            {"description": desc, "customer_id": contact_id, "tags": line_tags},
+        )
+        skipped += len(unmapped)
 
         if not line_items:
             continue
@@ -1331,9 +1435,10 @@ async def _auto_book_payment_payroll(kase: dict, db) -> dict:
 
 async def _auto_book_accruals(kase: dict, db) -> dict:
     """
-    Posts ONE Zoho journal entry for all consultants, breakdown by breakdown.
-    DR: expense accounts (APC or CC codes).  CR: HSSB-041 (paired per line).
-    Returns {"success": bool, "journal_id": str|None, "error": str|None, "skipped": int}
+    Posts ONE Zoho journal PER consultant. DR: APC-/CC- expense per component.
+    CR: Consultant Salary Payable for salary components, Statutory Liabilities
+    - <scheme> for statutory ones (see _CSI_ACCOUNTS / _accrual_lines).
+    Returns {"success": bool, "journal_ids": list, "error": str|None, "skipped": int}
     """
     org_cfg = ORGS.get(kase.get("entity", ""), {})
     org_id  = org_cfg.get("id")
@@ -1348,34 +1453,9 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
     mmm_yy       = _period_mmm_yy(kase.get("period", ""))
     entity_code  = kase.get("entity", "HSSB")
 
-    # Use hardcoded account IDs if available for this org (avoids API sub-account issue)
-    hardcoded = _ORG_ACCOUNT_MAPS.get(org_id)
-    if hardcoded:
-        _apc_map, _cc_map, payable_id, _bank_id_cached = hardcoded
-
-        def account_id_from_map(is_apc: bool, comp_key: str) -> str | None:
-            return (_apc_map if is_apc else _cc_map).get(comp_key)
-
-        def account_id(code: str, name_fallback: str = "") -> str | None:
-            return payable_id  # only used for payable in this path
-
-    else:
-        # Fallback: fetch from Zoho API
-        try:
-            all_accounts = await fetch_accounts(org_id)
-        except Exception as e:
-            return {"success": False, "error": f"Could not fetch Zoho accounts: {e}"}
-        by_code = {a["code"]: a["id"] for a in all_accounts if a.get("code")}
-        by_name = {a["name"]: a["id"] for a in all_accounts if a.get("name")}
-
-        def account_id_from_map(is_apc: bool, comp_key: str) -> str | None:
-            codes = _APC_CODES if is_apc else _CC_CODES
-            names = _APC_NAMES if is_apc else _CC_NAMES
-            return by_code.get(codes[comp_key]) or by_name.get(names.get(comp_key, ""))
-
-        payable_id = by_code.get(_PAYABLE_CODE) or by_name.get(_PAYABLE_NAME)
-        if not payable_id:
-            return {"success": False, "error": f"Account '{_PAYABLE_NAME}' not found in Zoho ({len(all_accounts)} fetched). Zoho API does not return sub-accounts by default. Add org to _ORG_ACCOUNT_MAPS."}
+    accts = _CSI_ACCOUNTS.get(org_id)
+    if not accts:
+        return {"success": False, "error": f"CSI account map not configured for org {org_id}. Add it to _CSI_ACCOUNTS."}
 
     entities = (kase.get("parsed_data") or {}).get("entities", [])
     all_employees = [
@@ -1436,18 +1516,6 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
         return {"success": False, "error": "Pre-resolution failed (nothing posted): " + "; ".join(errors[:6])}
 
     # ── Post one balanced JV per consultant, with Contact + Customer tag ──────
-    components_for = lambda emp: [
-        ("basic",     _round2((emp.get("netSalary") or 0) - (emp.get("bonus") or 0) - (emp.get("claim") or 0))),
-        ("claim",     _round2(emp.get("claim", 0))),
-        ("bonus",     _round2(emp.get("bonus", 0))),
-        ("ca_dedn",   _round2(emp.get("caDedn", 0))),
-        ("epf",       _round2((emp.get("epfEmployee") or 0) + (emp.get("epfEmployer") or 0))),
-        ("socso_eis", _round2((emp.get("socsoEmployee") or 0) + (emp.get("socsoEmployer") or 0)
-                              + (emp.get("eisEmployee") or 0) + (emp.get("eisEmployer") or 0))),
-        ("hrdf",      _round2(emp.get("hrdf", 0))),
-        ("mtd",       _round2(emp.get("mtd", 0))),
-    ]
-
     journal_ids, failed, skipped = [], [], 0
     for emp in all_employees:
         is_apc     = (emp.get("clientType") or "CC").upper() == "APC"
@@ -1458,18 +1526,11 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
         desc       = f"{entity_code}_CSI_{client}_{cons}_{mmm_yy}"
         line_tags  = [{"tag_id": tag_id, "tag_option_id": option_id}]
 
-        line_items = []
-        for comp_key, amount in components_for(emp):
-            if amount <= 0:
-                continue
-            dr_id = account_id_from_map(is_apc, comp_key)
-            if not dr_id:
-                skipped += 1
-                continue
-            line_items.append({"account_id": dr_id, "debit_or_credit": "debit", "amount": amount,
-                                "description": desc, "customer_id": contact_id, "tags": line_tags})
-            line_items.append({"account_id": payable_id, "debit_or_credit": "credit", "amount": amount,
-                                "description": desc, "customer_id": contact_id, "tags": line_tags})
+        line_items, unmapped = _accrual_lines(
+            _csi_components(emp), accts["apc" if is_apc else "cc"], accts["payable"], accts["statutory"],
+            {"description": desc, "customer_id": contact_id, "tags": line_tags},
+        )
+        skipped += len(unmapped)
 
         if not line_items:
             continue
@@ -1503,7 +1564,8 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
 
 async def _auto_book_payment(kase: dict, db) -> dict:
     """
-    Posts ONE Zoho journal: DR HSSB-041 / CR HSSB-003 per consultant (Net Salary).
+    Posts ONE Zoho expense per consultant: DR Consultant Salary Payable / CR bank
+    (Net Salary). Statutory liabilities are cleared by statutory.py.
     """
     org_cfg = ORGS.get(kase.get("entity", ""), {})
     org_id  = org_cfg.get("id") or kase.get("zoho_org_id")
@@ -1518,23 +1580,10 @@ async def _auto_book_payment(kase: dict, db) -> dict:
     mmm_yy      = _period_mmm_yy(kase.get("period", ""))
     entity_code = kase.get("entity", "HSSB")
 
-    # Use hardcoded IDs if available for this org
-    hardcoded = _ORG_ACCOUNT_MAPS.get(org_id)
-    if hardcoded:
-        _, _, payable_id, bank_id = hardcoded
-    else:
-        try:
-            all_accounts = await fetch_accounts(org_id)
-        except Exception as e:
-            return {"success": False, "error": f"Could not fetch Zoho accounts: {e}"}
-        by_code = {a["code"]: a["id"] for a in all_accounts if a.get("code")}
-        by_name = {a["name"]: a["id"] for a in all_accounts if a.get("name")}
-        payable_id = by_code.get(_PAYABLE_CODE) or by_name.get(_PAYABLE_NAME)
-        bank_id    = by_code.get(_BANK_CODE)    or by_name.get(_BANK_NAME)
-        if not payable_id:
-            return {"success": False, "error": f"Account '{_PAYABLE_NAME}' not found in Zoho. Add org {org_id} to _ORG_ACCOUNT_MAPS."}
-        if not bank_id:
-            return {"success": False, "error": f"Account '{_BANK_NAME}' not found in Zoho. Add org {org_id} to _ORG_ACCOUNT_MAPS."}
+    accts = _CSI_ACCOUNTS.get(org_id)
+    if not accts:
+        return {"success": False, "error": f"CSI account map not configured for org {org_id}. Add it to _CSI_ACCOUNTS."}
+    payable_id, bank_id = accts["payable"], accts["bank"]
 
     # Build payment rows from parsed employee data.
     # Description matches accrual format exactly: {entity_code}_CSI_{costCentre}_{name}_{mmm_yy}

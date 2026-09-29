@@ -80,12 +80,11 @@ ORGS: dict = {
     "HSSB":  {"id": "762447369", "name": "Hexamatics Servcomm Sdn Bhd", "country": "MY"},
     "HSPL":  {"id": "753289306", "name": "Hexamatics Singapore Pte. Ltd", "country": "SG"},
     "PTHIT": {"id": "768662733", "name": "PT Hexamatics Info Tech", "country": "ID"},
+    # CSI-only entities (see consultant_master_import.SHEETS). HEDU's Zoho org
+    # is Karya Indah (KISB — parser._ENTITY_ALIASES maps HEDU→KISB).
+    "HEDU":      {"id": "761483650", "name": "Karya Indah Sdn. Bhd.", "country": "MY"},
+    "DATACRATS": {"id": "853265884", "name": "Datacrats Sdn Bhd", "country": "MY"},
 }
-
-# HEDU/DATACRATS (per app/services/consultant_master_import.py's SHEETS) are
-# CSI-only entities with no Zoho org registered in ORGS yet -- still Malaysian,
-# so they need a country for parser/statutory/bank-file dispatch regardless.
-_ENTITY_COUNTRY_OVERRIDES: dict = {"HEDU": "MY", "DATACRATS": "MY"}
 
 COUNTRY_CURRENCY: dict = {
     "MY": "MYR",
@@ -105,8 +104,6 @@ def get_entity_country(entity: str) -> str:
     app's universal assumption pre-rollout -- but any country-specific module
     should still fail loud on an unrecognised code rather than guess."""
     entity = (entity or "").upper()
-    if entity in _ENTITY_COUNTRY_OVERRIDES:
-        return _ENTITY_COUNTRY_OVERRIDES[entity]
     return (ORGS.get(entity) or {}).get("country", _DEFAULT_COUNTRY)
 
 

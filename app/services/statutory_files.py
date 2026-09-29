@@ -148,23 +148,26 @@ def generate_socso_eis_file(submission: dict, employer_socso_no: str = "") -> di
 
     headers = [
         "No.", "SOCSO No.", "Employee Name", "IC / Passport No.",
-        "ee SOCSO (RM)", "er SOCSO (RM)", "ee EIS (RM)", "er EIS (RM)", "Total (RM)",
+        "ee SOCSO (RM)", "er SOCSO (RM)", "ee EIS (RM)", "er EIS (RM)",
+        "er Lindung L24 (RM)", "Total (RM)",
     ]
     _write_col_headers(ws, data_row, headers)
 
-    t = dict(ee_s=0.0, er_s=0.0, ee_e=0.0, er_e=0.0)
+    t = dict(ee_s=0.0, er_s=0.0, ee_e=0.0, er_e=0.0, er_l=0.0)
     for i, emp in enumerate(employees, 1):
         ee_s = _r2(emp.get("socsoEmployee"))
         er_s = _r2(emp.get("socsoEmployer"))
         ee_e = _r2(emp.get("eisEmployee"))
         er_e = _r2(emp.get("eisEmployer"))
-        tot  = ee_s + er_s + ee_e + er_e
+        er_l = _r2(emp.get("socsoLindung"))   # E-SOCSO Lindung (L24), employer-borne
+        tot  = ee_s + er_s + ee_e + er_e + er_l
         t["ee_s"] += ee_s; t["er_s"] += er_s
         t["ee_e"] += ee_e; t["er_e"] += er_e
+        t["er_l"] += er_l
         r = data_row + i
         for col, val in enumerate(
             [i, emp.get("socsoNumber",""), emp.get("name",""), emp.get("idNumber",""),
-             ee_s, er_s, ee_e, er_e, round(tot,2)], 1):
+             ee_s, er_s, ee_e, er_e, er_l, round(tot,2)], 1):
             ws.cell(row=r, column=col, value=val)
 
     total_all = sum(t.values())
@@ -173,11 +176,11 @@ def generate_socso_eis_file(submission: dict, employer_socso_no: str = "") -> di
         "", "", "TOTAL", "",
         round(t["ee_s"],2), round(t["er_s"],2),
         round(t["ee_e"],2), round(t["er_e"],2),
-        round(total_all, 2),
+        round(t["er_l"],2), round(total_all, 2),
     ])
 
     for col, w in [("A",6),("B",14),("C",35),("D",22),
-                   ("E",14),("F",14),("G",14),("H",14),("I",14)]:
+                   ("E",14),("F",14),("G",14),("H",14),("I",16),("J",14)]:
         ws.column_dimensions[col].width = w
 
     data = _save(wb)
@@ -186,7 +189,7 @@ def generate_socso_eis_file(submission: dict, employer_socso_no: str = "") -> di
         "file_name":      f"SOCSO_EIS_{entity}_{wage_month}_{_ts()}.xlsx",
         "file_hash":      _sha256(data),
         "total_ee_amount": round(t["ee_s"] + t["ee_e"], 2),
-        "total_er_amount": round(t["er_s"] + t["er_e"], 2),
+        "total_er_amount": round(t["er_s"] + t["er_e"] + t["er_l"], 2),
         "total_amount":    round(total_all, 2),
     }
 

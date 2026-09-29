@@ -315,6 +315,9 @@ async def apex_ingest(request: Request):
                         "socsoEmployer":_safe_float(c.get("socso_employer")),
                         "eisEmployee":  _safe_float(c.get("eis_employee")),
                         "eisEmployer":  _safe_float(c.get("eis_employer")),
+                        # E-SOCSO Lindung (L24) — employer-borne, accrued and
+                        # remitted with SOCSO. Optional; older payloads omit it.
+                        "socsoLindung": _safe_float(c.get("socso_lindung")),
                         "mtd":          _safe_float(c.get("mtd")),
                         "hrdf":         _safe_float(c.get("hrdf")),
                         "totalBilling": _safe_float(c.get("total_billing")),
