@@ -107,6 +107,11 @@ def get_entity_country(entity: str) -> str:
     return (ORGS.get(entity) or {}).get("country", _DEFAULT_COUNTRY)
 
 
+def get_entity_org(entity: str) -> dict:
+    """ORGS entry for an entity, case-insensitive — APEX sends e.g. "Datacrats"."""
+    return ORGS.get((entity or "").upper()) or {}
+
+
 def get_entity_currency(entity: str) -> str:
     return COUNTRY_CURRENCY.get(get_entity_country(entity), "MYR")
 

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from app.config import TEMPLATES_DIR, ORGS, STATUTORY_NOS, get_entity_currency
+from app.config import TEMPLATES_DIR, ORGS, STATUTORY_NOS, get_entity_currency, get_entity_org
 from app.deps import get_current_user
 from app.services.db import get_db
 from app.services.currency import currency_prefix
@@ -178,7 +178,7 @@ async def _post_zoho(sub: dict, payment_ref: str, payment_date: str) -> str | No
     from app.services.zoho import post_journal_entry
     from app.routers.payroll_cases import _CSI_ACCOUNTS, _STATUTORY_TYPE_COMPONENT
 
-    org_cfg = ORGS.get(sub["entity"], {})
+    org_cfg = get_entity_org(sub["entity"])
     org_id  = org_cfg.get("id")
     if not org_id:
         raise ValueError(f"No Zoho org for entity {sub['entity']}")

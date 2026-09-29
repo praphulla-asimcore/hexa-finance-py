@@ -100,3 +100,10 @@ def test_socso_schedule_includes_lindung():
     res = sf.generate_socso_eis_file(sub)
     assert res["total_er_amount"] == round(86.65 + 9.90 + 12.50, 2)
     assert res["total_amount"] == round(24.75 + 86.65 + 9.90 + 9.90 + 12.50, 2)
+
+
+@pytest.mark.parametrize("apex_entity", ["HSSB", "HCSSB", "HEDU", "Datacrats"])
+def test_apex_entity_spelling_resolves_to_mapped_org(apex_entity):
+    # APEX pushes "Datacrats" (mixed case); the org lookup must not miss it.
+    from app.config import get_entity_org
+    assert get_entity_org(apex_entity)["id"] in pc._CSI_ACCOUNTS

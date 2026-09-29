@@ -12,7 +12,7 @@ from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse, HTMLResponse, Response, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from app.config import TEMPLATES_DIR, APP_URL, APPROVERS, PAYROLL_REVIEWER, REVIEWER_BY_ENTITY, ORGS, STATUTORY_NOS, ARIA_WEBHOOK_URL, get_entity_country, get_entity_currency
+from app.config import TEMPLATES_DIR, APP_URL, APPROVERS, PAYROLL_REVIEWER, REVIEWER_BY_ENTITY, ORGS, STATUTORY_NOS, ARIA_WEBHOOK_URL, get_entity_country, get_entity_currency, get_entity_org
 from app.services.currency import fmt_currency, currency_prefix
 from app.deps import get_current_user
 from app.services.db import get_db
@@ -1212,7 +1212,7 @@ async def _auto_book_accruals_payroll(kase: dict, db) -> dict:
     employee's Zoho contact (customer_id) and the "Customer" reporting tag
     option "Internal_<Employee Name>_<YYYYMM>".
     """
-    org_cfg = ORGS.get(kase.get("entity", ""), {})
+    org_cfg = get_entity_org(kase.get("entity", ""))
     org_id  = org_cfg.get("id")
     if not org_id:
         return {"success": False, "error": f"No Zoho org ID for entity {kase.get('entity')}"}
@@ -1332,7 +1332,7 @@ async def _auto_book_payment_payroll(kase: dict, db) -> dict:
     cleared by the statutory workflow (statutory.py).
     Uses payment_date (actual payment date) NOT the period cycle date.
     """
-    org_cfg = ORGS.get(kase.get("entity", ""), {})
+    org_cfg = get_entity_org(kase.get("entity", ""))
     org_id  = org_cfg.get("id") or kase.get("zoho_org_id")
     if not org_id:
         return {"success": False, "error": f"No Zoho org ID for entity {kase.get('entity')}"}
@@ -1440,7 +1440,7 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
     - <scheme> for statutory ones (see _CSI_ACCOUNTS / _accrual_lines).
     Returns {"success": bool, "journal_ids": list, "error": str|None, "skipped": int}
     """
-    org_cfg = ORGS.get(kase.get("entity", ""), {})
+    org_cfg = get_entity_org(kase.get("entity", ""))
     org_id  = org_cfg.get("id")
     if not org_id:
         return {"success": False, "error": f"No Zoho org ID for entity {kase.get('entity')}"}
@@ -1567,7 +1567,7 @@ async def _auto_book_payment(kase: dict, db) -> dict:
     Posts ONE Zoho expense per consultant: DR Consultant Salary Payable / CR bank
     (Net Salary). Statutory liabilities are cleared by statutory.py.
     """
-    org_cfg = ORGS.get(kase.get("entity", ""), {})
+    org_cfg = get_entity_org(kase.get("entity", ""))
     org_id  = org_cfg.get("id") or kase.get("zoho_org_id")
     if not org_id:
         return {"success": False, "error": f"No Zoho org ID for entity {kase.get('entity')}"}
