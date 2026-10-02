@@ -93,9 +93,10 @@ def _profile_form_to_dict(form) -> dict:
 
 @router.get("/admin/client-profiles")
 async def client_profiles(request: Request):
+    # Open to every signed-in user (not admin-only): finance staff maintain
+    # client document rules and the APC/CC type. get_current_user still
+    # rejects anyone not logged in.
     user = get_current_user(request)
-    if user.get("role") != "admin":
-        return RedirectResponse("/", status_code=302)
     db = get_db()
     profiles = []
     _ensure_client_type_column()
@@ -105,14 +106,12 @@ async def client_profiles(request: Request):
         # Active profiles only (the shim can't express "effective_to IS NULL").
         profiles = [p for p in (resp.data or []) if p.get("effective_to") is None]
     return templates.TemplateResponse(request, "admin/client_profiles.html",
-                                      {"user": user, "section": "admin", "profiles": profiles})
+                                      {"user": user, "section": "client_profiles", "profiles": profiles})
 
 
 @router.post("/admin/client-profiles/new")
 async def client_profiles_new(request: Request):
-    user = get_current_user(request)
-    if user.get("role") != "admin":
-        return RedirectResponse("/", status_code=302)
+    user = get_current_user(request)   # any signed-in user
     db = get_db()
     _ensure_client_type_column()
     if db:
@@ -135,9 +134,7 @@ async def client_profiles_new(request: Request):
 
 @router.post("/admin/client-profiles/{profile_id}/edit")
 async def client_profiles_edit(profile_id: str, request: Request):
-    user = get_current_user(request)
-    if user.get("role") != "admin":
-        return RedirectResponse("/", status_code=302)
+    user = get_current_user(request)   # any signed-in user
     db = get_db()
     _ensure_client_type_column()
     if db:
@@ -156,9 +153,7 @@ async def client_profiles_edit(profile_id: str, request: Request):
 
 @router.post("/admin/client-profiles/{profile_id}/deactivate")
 async def client_profiles_deactivate(profile_id: str, request: Request):
-    user = get_current_user(request)
-    if user.get("role") != "admin":
-        return RedirectResponse("/", status_code=302)
+    user = get_current_user(request)   # any signed-in user
     db = get_db()
     if db:
         db.from_("client_document_profiles").update(
