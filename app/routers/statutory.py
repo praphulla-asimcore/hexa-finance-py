@@ -17,8 +17,21 @@ TYPE_LABELS = {
     "SOCSO_EIS": "SOCSO + EIS",
     "HRDF":      "HRDF",
     "MTD":       "MTD / PCB",
+    # Philippines (HCI)
+    "PAGIBIG":    "Pag-IBIG (HDMF)",
+    "PHILHEALTH": "PhilHealth",
+    "SSS":        "SSS",
+    "WHT":        "Withholding Tax",
+    # Singapore (HSPL)
+    "CPF":        "CPF",
+    "SDL":        "SDL",
+    "SHG":        "SHG / FWL",
+    # Myanmar (HMCL)
+    "SSB":        "SSB",
+    "PIT":        "PIT",
 }
-TYPE_ORDER = ["EPF", "SOCSO_EIS", "HRDF", "MTD"]
+TYPE_ORDER = ["EPF", "SOCSO_EIS", "HRDF", "MTD", "PAGIBIG", "PHILHEALTH", "SSS", "WHT",
+              "CPF", "SDL", "SHG", "SSB", "PIT"]
 
 STATUS_INFO = {
     "file_ready":  ("File Ready",   "info"),
@@ -192,7 +205,9 @@ async def _post_zoho(sub: dict, payment_ref: str, payment_date: str) -> str | No
     component      = _STATUTORY_TYPE_COMPONENT.get(statutory_type)
     if not component:
         raise ValueError(f"Unknown statutory type: {statutory_type}")
-    payable_id = accts["statutory"][component]
+    payable_id = accts["statutory"].get(component)
+    if not payable_id:
+        raise ValueError(f"No Statutory Liabilities account for {component} in org {org_id}.")
 
     amount = float(sub.get("total_amount") or 0)
     if amount <= 0:

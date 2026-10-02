@@ -2,12 +2,17 @@
 
 {% set has_files = kase.status in ['bank_file_generated','bank_uploaded','payment_approval_sent','payment_approved','payment_rejected','zoho_posted'] %}
 {% set can_regen = kase.status in ['check_approved','bank_file_generated','bank_uploaded','payment_approval_sent'] %}
+{% set bank_format = (kase.check_data or {}).get('bankFormat') or 'RCGEN_MY' %}
+{% set manual_payments = (kase.check_data or {}).get('manualPayments') or [] %}
 
 <div class="pf-panel-body">
   <div class="pf-panel-header">
     <span class="pf-panel-step">Step 4</span>
     <h2 class="pf-panel-title">Bank Upload File</h2>
-    <p class="pf-panel-sub">The official Maybank RCGEN2 macro workbook is pre-filled on check approval. SHA-256 hash recorded.</p>
+    <p class="pf-panel-sub">
+      {% if bank_format == 'RCMS_PH' %}Maybank Philippines RCMS payroll file (Maybank PH account holders) plus a manual-payment list for everyone else, generated on check approval.
+      {% elif bank_format == 'MANUAL' %}Payment list for manual bank payment, generated on check approval (no bulk-upload template on file for this entity).
+      {% else %}The official Maybank RCGEN2 macro workbook is pre-filled on check approval.{% endif %} SHA-256 hash recorded.</p>
   </div>
 
   {% if has_files %}
@@ -18,11 +23,11 @@
     <div class="pf-flags-card pf-flags-ok" style="margin-bottom:14px">
       <div class="pf-flags-header" style="color:#166534">✓ {{ xcheck.summary }}</div>
       <div style="font-size:12px;line-height:1.6">
-        Reconciled {{ xcheck.fileRows }} payment row(s) in the RCGEN2 workbook against
+        Reconciled {{ xcheck.fileRows }} payment row(s) in the {{ 'RCGEN2 workbook' if bank_format == 'RCGEN_MY' else 'payment file' }} against
         {{ xcheck.csiPayable }} payable consultant(s) in the CSI{% if xcheck.excludedCount %}
         ({{ xcheck.excludedCount }} excluded &amp; flagged){% endif %}.
-        File total <strong>RM{{ '{:,.2f}'.format(xcheck.fileTotal) }}</strong>
-        = CSI total <strong>RM{{ '{:,.2f}'.format(xcheck.expectedTotal) }}</strong>.
+        File total <strong>{{ currency_prefix }}{{ '{:,.2f}'.format(xcheck.fileTotal) }}</strong>
+        = CSI total <strong>{{ currency_prefix }}{{ '{:,.2f}'.format(xcheck.expectedTotal) }}</strong>.
         Every payee, account and amount traces back to the CSI.
       </div>
       {% if xcheck.issues %}
@@ -37,7 +42,7 @@
     <div class="pf-flags-card pf-flags-warn" style="margin-bottom:14px">
       <div class="pf-flags-header">⚠ Cross-check: {{ xcheck.summary }}</div>
       <div style="font-size:12px;color:#991B1B;margin-bottom:8px">
-        Do <strong>not</strong> upload this file to Maybank until every issue below is resolved.
+        Do <strong>not</strong> upload or pay from this file until every issue below is resolved.
         Each row was checked against the CSI (payee + amount) and the consultant database (account).
       </div>
       {% for it in (xcheck.issues or []) %}
@@ -129,16 +134,40 @@
     </div>
   </div>
   {% else %}
-  <div class="pf-info-banner pf-banner-ok">Bank file ready — download the workbook, generate the TXT, then upload the TXT to Maybank CMS.</div>
+  <div class="pf-info-banner pf-banner-ok">
+    {% if bank_format == 'RCMS_PH' %}Bank file ready — upload the RCMS .txt to Maybank Philippines, and pay the manual list by hand.
+    {% elif bank_format == 'MANUAL' %}Payment list ready — pay each consultant from the entity's bank account.
+    {% else %}Bank file ready — download the workbook, generate the TXT, then upload the TXT to Maybank CMS.{% endif %}
+  </div>
   {% endif %}
+  {% if manual_payments %}
+  <div class="pf-flags-card" style="margin:12px 0;background:#F8FAFC;border-left:4px solid #64748b">
+    <div class="pf-flags-header" style="color:#334155">{{ manual_payments|length }} consultant(s) to pay manually —
+      {{ currency_prefix }}{{ '{:,.2f}'.format(manual_payments | sum(attribute='amount')) }}</div>
+    {% for m in manual_payments %}
+    <div class="pf-flag-row"><span class="pf-flag-code">MANUAL</span>
+      <span><strong>{{ m.payeeName }}</strong> — {{ m.bankName or 'bank not given' }} {{ m.accountNumber }} —
+        {{ currency_prefix }}{{ '{:,.2f}'.format(m.amount) }}{% if bank_format == 'RCMS_PH' %} <em style="color:#64748b">({{ m.reason }})</em>{% endif %}</span></div>
+    {% endfor %}
+    <div style="font-size:12px;color:#475569;margin-top:8px">Listed on the workbook's <em>Manual Payments</em> sheet. These are included in the Zoho payment entries once payment is approved.</div>
+  </div>
+  {% endif %}
+  {% if bank_format == 'RCGEN_MY' %}
   <ol style="margin:12px 0 4px;padding-left:20px;font-size:13px;color:#334155;line-height:1.7">
     <li>Download the RCGEN2 macro workbook below and open it in Microsoft Excel.</li>
     <li>Click <strong>Enable Content / Enable Macros</strong> when prompted.</li>
     <li>On the workbook's <em>Domestic Payments</em> sheet, click its <strong>Generate</strong> button to produce the <code>RCgen_Payment_DP_*.txt</code>.</li>
     <li>Upload that generated <strong>.txt</strong> to the Maybank Cash Management portal (File Upload).</li>
   </ol>
+  {% elif bank_format == 'RCMS_PH' %}
+  <ol style="margin:12px 0 4px;padding-left:20px;font-size:13px;color:#334155;line-height:1.7">
+    <li>Download the <strong>RCMS .txt</strong> and upload it to Maybank Philippines RCMS (debit account {{ '00885004416' }}). It is the exact file the bank's <em>RCMS Payroll Converter v2.0</em> macro would produce.</li>
+    <li>Download the workbook for the <em>Payroll Converter</em> summary and the <em>Manual Payments</em> sheet.</li>
+    <li>Pay every consultant on the <em>Manual Payments</em> sheet by hand.</li>
+  </ol>
+  {% endif %}
   <div class="pf-info-grid">
-    <div class="pf-stamp-box"><span class="pf-stamp-label">RCGEN2 Workbook</span><span class="pf-stamp-value">{{ kase.bank_file_name or '—' }}</span></div>
+    <div class="pf-stamp-box"><span class="pf-stamp-label">{{ 'RCGEN2 Workbook' if bank_format == 'RCGEN_MY' else 'Workbook' }}</span><span class="pf-stamp-value">{{ kase.bank_file_name or '—' }}</span></div>
     <div class="pf-stamp-box"><span class="pf-stamp-label">SHA-256</span><span class="pf-stamp-value" style="font-family:monospace;font-size:11px">{{ (kase.bank_file_hash or '—')[:32] }}{% if kase.bank_file_hash %}…{% endif %}</span></div>
     <div class="pf-stamp-box"><span class="pf-stamp-label">Generated at</span><span class="pf-stamp-value">{{ fmt_date(kase.bank_file_generated_at) }}</span></div>
     <div class="pf-stamp-box"><span class="pf-stamp-label">Triggered by</span><span class="pf-stamp-value">{{ kase.bank_file_triggered_by or '—' }} approval</span></div>
@@ -147,13 +176,13 @@
   <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
     {% if bank_gate.blocked %}
     <button class="btn btn-primary" disabled title="Blocked by a failed control" style="opacity:.45;cursor:not-allowed">⬇ Bank Upload File (.txt)</button>
-    <button class="btn btn-secondary" disabled title="Blocked by a failed control" style="opacity:.45;cursor:not-allowed">⬇ RCGEN2 Macro Workbook (.xlsm)</button>
+    <button class="btn btn-secondary" disabled title="Blocked by a failed control" style="opacity:.45;cursor:not-allowed">⬇ {{ 'RCGEN2 Macro Workbook (.xlsm)' if bank_format == 'RCGEN_MY' else 'Payment Workbook (.xlsx)' }}</button>
     {% else %}
     {% if bank_txt and bank_txt.data %}
-    <a href="/cases/{{ kase.id }}/bank-file-txt" class="btn btn-primary">⬇ Bank Upload File (.txt)</a>
+    <a href="/cases/{{ kase.id }}/bank-file-txt" class="btn btn-primary">⬇ {{ 'Maybank PH RCMS File (.txt)' if bank_format == 'RCMS_PH' else 'Bank Upload File (.txt)' }}</a>
     {% endif %}
     {% if kase.bank_file_data %}
-    <a href="/cases/{{ kase.id }}/bank-file-xlsx" class="btn btn-secondary">⬇ RCGEN2 Macro Workbook (.xlsm)</a>
+    <a href="/cases/{{ kase.id }}/bank-file-xlsx" class="btn {{ 'btn-primary' if bank_format == 'MANUAL' else 'btn-secondary' }}">⬇ {{ 'RCGEN2 Macro Workbook (.xlsm)' if bank_format == 'RCGEN_MY' else ('Payment List (.xlsx)' if bank_format == 'MANUAL' else 'Payment Workbook (.xlsx)') }}</a>
     {% endif %}
     {% endif %}
     {% if can_regen %}
@@ -170,7 +199,8 @@
     any already-sent director-approval email will stop working.
   </div>
   {% endif %}
-  {% if bank_txt and bank_txt.data %}
+  {% if bank_format != 'RCGEN_MY' %}
+  {% elif bank_txt and bank_txt.data %}
   <div style="font-size:12px;color:#64748b;margin-top:8px">
     The <strong>.txt</strong> is generated directly by the system (run #{{ bank_txt.runNumber }}) — upload it to Maybank CMS with File Format <strong>MY COMBINE PIPE V6</strong>. No Excel/macro needed. The .xlsm remains available as a fallback.
   </div>

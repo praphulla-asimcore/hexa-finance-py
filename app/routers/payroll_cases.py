@@ -268,6 +268,9 @@ async def _create_or_update_statutory(kase: dict, db, triggered_by: str) -> None
                 "socsoLindung":  float(emp.get("socsoLindung") or 0),
                 "hrdf":          float(emp.get("hrdf") or 0),
                 "mtd":           float(emp.get("mtd") or 0),
+                "healthEmployee": float(emp.get("healthEmployee") or 0),
+                "healthEmployer": float(emp.get("healthEmployer") or 0),
+                "shg":           float(emp.get("shg") or 0),
             })
 
     # Malaysia's 4 statutory bodies (EPF/SOCSO/EIS/HRDF/MTD) don't map 1:1 onto
@@ -284,6 +287,8 @@ async def _create_or_update_statutory(kase: dict, db, triggered_by: str) -> None
         "MTD":       (available.get("MTD"),       {"employer_mtd_no":    employer_nos.get("mtd", "")}),
     }
     generators = {k: (fn, kw) for k, (fn, kw) in all_generators.items() if fn}
+    # PH / SG / MM contribution schedules take no employer-number kwargs.
+    generators.update({k: (fn, {}) for k, fn in available.items() if k not in all_generators})
 
     for stat_type, (gen_fn, gen_kwargs) in generators.items():
         try:
@@ -639,6 +644,10 @@ def _document_exception_flags(db, case_id: str) -> list[dict]:
 _STAT_FIELDS: dict = {
     "MY": {"epf": "epfEmployer", "eis": "eisEmployer", "socso": "socsoEmployer", "hrdf": "hrdf", "mtd": "mtd"},
     "NP": {"ssf": "ssfContribution", "cit": "cit", "sst": "sst", "tds": "tds"},
+    # APEX-ingested only (see ingest._STAT_ALIASES for the payload names).
+    "PH": {"sss": "socsoEmployer", "philhealth": "healthEmployer", "pagibig": "epfEmployer", "wht": "mtd"},
+    "SG": {"cpf": "epfEmployer", "sdl": "hrdf", "shg": "shg"},
+    "MM": {"ssb": "socsoEmployer", "pit": "mtd"},
 }
 
 
@@ -889,6 +898,18 @@ def _parse_period(period_str: str) -> tuple[int, int, str]:
     raise ValueError(f"Unrecognised period format: {period_str!r}")
 
 
+def _accrual_date(kase: dict) -> str:
+    """Journal date for BOTH the cost and the revenue accrual of a case: the
+    25th payout books on the 25th of the period month; EOM, 7th and 15th book
+    on the period month's last day (7th/15th are paid the following month but
+    belong to the period). APEX cases carry the cycle in cycle_code, since
+    their period is plain YYYY-MM."""
+    yr, mo, _cycle = _parse_period(kase.get("period", ""))
+    if _payout_cycle(kase) == "25TH":
+        return f"{yr:04d}-{mo:02d}-25"
+    return f"{yr:04d}-{mo:02d}-{calendar.monthrange(yr, mo)[1]:02d}"
+
+
 def _compute_journal_date(period_str: str) -> str:
     """
     period_str: e.g. '202506-25th' | '202506-EOM' | '202506-7th' | '202506-15th'
@@ -925,10 +946,24 @@ def _period_mmm_yy(period_str: str) -> str:
 
 # Components whose accrual credit goes to a Statutory Liabilities account
 # rather than the salary payable. Keys match the "statutory" map below.
-_STATUTORY_COMPONENTS = ("epf", "socso_eis", "hrdf", "mtd")
+_STATUTORY_COMPONENTS = ("epf", "health", "socso_eis", "hrdf", "shg", "mtd")
 
 # statutory_submissions.statutory_type → component key
-_STATUTORY_TYPE_COMPONENT = {"EPF": "epf", "SOCSO_EIS": "socso_eis", "HRDF": "hrdf", "MTD": "mtd"}
+_STATUTORY_TYPE_COMPONENT = {
+    "EPF": "epf", "SOCSO_EIS": "socso_eis", "HRDF": "hrdf", "MTD": "mtd",
+    # PH / SG / MM (statutory_files.SCHEDULES)
+    "PAGIBIG": "epf", "PHILHEALTH": "health", "SSS": "socso_eis", "WHT": "mtd",
+    "CPF": "epf", "SDL": "hrdf", "SHG": "shg",
+    "SSB": "socso_eis", "PIT": "mtd",
+}
+
+# Statutory component → APEX scheme heads (2.6.x.10.y / Statutory Liabilities):
+#   epf       10.1  EPF, SSF, CPF, Pag-IBIG/HDMF
+#   health    10.2  BPJS Kesehatan, PhilHealth
+#   socso_eis 10.3  BPJS TK, SSC, SSS, SOCSO, EIS
+#   hrdf      10.4  HRDF, SDL
+#   shg       10.5  CDAC, SINDA, MBMF, FWL
+#   mtd       10.7  TDS, PCB/MTD, PIT
 
 _CSI_ACCOUNTS: dict = {
     # HSSB — Hexamatics Servcomm Sdn Bhd
@@ -1047,6 +1082,91 @@ _CSI_ACCOUNTS: dict = {
         "payable": "5216911000000400002",  # Consultant Salary Payable
         "bank":    "5216911000000091003",  # Cash at Bank - MBB
     },
+    # Philippines / Singapore / Myanmar (APEX push from 2026-10-02). Each maps
+    # only the statutory schemes that exist in its country, so an unexpected
+    # one (e.g. SDL on a PH run) stops the accrual instead of mis-posting.
+    # Liabilities reuse the payables finance already books PH/MM payroll to.
+    # HCI — Hexamatics Consulting Inc. (PHP)
+    "768663054": {
+        "apc": {
+            "basic":     "2981447000004015630",  # 2.6.1.1     APC - Consultant Salaries and Benefits
+            "bonus":     "2981447000004015638",  # 2.6.1.3     APC - Bonus, Commission, Incentive…
+            "ca_dedn":   "2981447000004015650",  # 2.6.1.6     APC - Cash Advance Deduction
+            "epf":       "2981447000004015670",  # 2.6.1.10.1  APC - EPF, SSF, CPF, Pag-IBIG/HDMF
+            "health":    "2981447000004015674",  # 2.6.1.10.2  APC - BPJS Kesehatan, PhilHealth
+            "socso_eis": "2981447000004015678",  # 2.6.1.10.3  APC - BPJS TK, SSC, SSS, SOCSO, EIS
+            "mtd":       "2981447000004015694",  # 2.6.1.10.7  APC - TDS, PCB/MTD, PIT
+        },
+        "cc": {
+            "basic":     "2981447000004015706",  # 2.6.2.1     CC - Consultant Salaries and Benefits
+            "bonus":     "2981447000004015714",  # 2.6.2.3     CC - Bonus, Commission, Incentive…
+            "ca_dedn":   "2981447000004015726",  # 2.6.2.6     CC - Cash Advance Deduction
+            "epf":       "2981447000004015746",  # 2.6.2.10.1  CC - EPF, SSF, CPF, Pag-IBIG/HDMF
+            "health":    "2981447000004015750",  # 2.6.2.10.2  CC - BPJS Kesehatan, PhilHealth
+            "socso_eis": "2981447000004015754",  # 2.6.2.10.3  CC - BPJS TK, SSC, SSS, SOCSO, EIS
+            "mtd":       "2981447000004015770",  # 2.6.2.10.7  CC - TDS, PCB/MTD, PIT
+        },
+        "statutory": {
+            "epf":       "2981447000001597033",  # HDMF Payable (Pag-IBIG)
+            "health":    "2981447000001597021",  # PHIC Payable (PhilHealth)
+            "socso_eis": "2981447000001597027",  # SSS Payable
+            "mtd":       "2981447000001597039",  # PIT Payable (withholding tax on compensation)
+        },
+        "payable": "2981447000002302007",  # Accrued Consultant Salary
+        "bank":    "2981447000001539001",  # Cash at Bank - MayBank (PHP; RCMS debit a/c 00885004416)
+    },
+    # HSPL — Hexamatics Singapore Pte. Ltd (SGD)
+    "753289306": {
+        "apc": {
+            "basic":     "2725179000005306659",  # 2.6.1.1
+            "bonus":     "2725179000005306667",  # 2.6.1.3
+            "ca_dedn":   "2725179000005306679",  # 2.6.1.6
+            "epf":       "2725179000005306699",  # 2.6.1.10.1  APC - EPF, SSF, CPF, Pag-IBIG/HDMF
+            "hrdf":      "2725179000005306711",  # 2.6.1.10.4  APC - HRDF, SDL
+            "shg":       "2725179000005306715",  # 2.6.1.10.5  APC - CDAC, SINDA, MBMF, FWL
+            "mtd":       "2725179000005306723",  # 2.6.1.10.7  APC - TDS, PCB/MTD, PIT
+        },
+        "cc": {
+            "basic":     "2725179000005306735",  # 2.6.2.1
+            "bonus":     "2725179000005306743",  # 2.6.2.3
+            "ca_dedn":   "2725179000005306755",  # 2.6.2.6
+            "epf":       "2725179000005306775",  # 2.6.2.10.1  CC - EPF, SSF, CPF, Pag-IBIG/HDMF
+            "hrdf":      "2725179000005306787",  # 2.6.2.10.4  CC - HRDF, SDL
+            "shg":       "2725179000005306791",  # 2.6.2.10.5  CC - CDAC, SINDA, MBMF, FWL
+            "mtd":       "2725179000005306799",  # 2.6.2.10.7  CC - TDS, PCB/MTD, PIT
+        },
+        "statutory": {   # created 2026-10-02 under "Statutory Liabilities"
+            "epf":       "2725179000005894002",  # Statutory Liabilities - EPF, SSF, CPF, Pag-IBIG/HDMF
+            "hrdf":      "2725179000005895002",  # Statutory Liabilities - HRDF, SDL
+            "shg":       "2725179000005896002",  # Statutory Liabilities - CDAC, SINDA, MBMF, FWL
+            "mtd":       "2725179000005897002",  # Statutory Liabilities - TDS, PCB/MTD, PIT
+        },
+        "payable": "2725179000003330011",  # Accrued Consultant Salary
+        "bank":    "2725179000000083058",  # HSPL-AC015  Cash at Bank - SC SGD
+    },
+    # HMCL — Hexamatics Myanmar Company Ltd (MMK)
+    "768663052": {
+        "apc": {
+            "basic":     "2981047000002801633",  # 2.6.1.1
+            "bonus":     "2981047000002801641",  # 2.6.1.3
+            "ca_dedn":   "2981047000002801653",  # 2.6.1.6
+            "socso_eis": "2981047000002801681",  # 2.6.1.10.3  APC - BPJS TK, SSC, SSS, SOCSO, EIS
+            "mtd":       "2981047000002801697",  # 2.6.1.10.7  APC - TDS, PCB/MTD, PIT
+        },
+        "cc": {
+            "basic":     "2981047000002801709",  # 2.6.2.1
+            "bonus":     "2981047000002801717",  # 2.6.2.3
+            "ca_dedn":   "2981047000002801729",  # 2.6.2.6
+            "socso_eis": "2981047000002801757",  # 2.6.2.10.3  CC - BPJS TK, SSC, SSS, SOCSO, EIS
+            "mtd":       "2981047000002801773",  # 2.6.2.10.7  CC - TDS, PCB/MTD, PIT
+        },
+        "statutory": {
+            "socso_eis": "2981047000000173189",  # HMCL-021  SSC Payable (Social Security Board)
+            "mtd":       "2981047000003233002",  # Statutory Liabilities - TDS, PCB/MTD, PIT (created 2026-10-02)
+        },
+        "payable": "2981047000001594001",  # Accrued Consultant Salary
+        "bank":    "2981047000000158001",  # Cash at Bank_CB Bank_MMK
+    },
 }
 
 
@@ -1059,10 +1179,12 @@ def _csi_components(emp: dict) -> list:
         ("bonus",     _round2(emp.get("bonus", 0))),
         ("ca_dedn",   _round2(emp.get("caDedn", 0))),
         ("epf",       _round2((emp.get("epfEmployee") or 0) + (emp.get("epfEmployer") or 0))),
+        ("health",    _round2((emp.get("healthEmployee") or 0) + (emp.get("healthEmployer") or 0))),
         ("socso_eis", _round2((emp.get("socsoEmployee") or 0) + (emp.get("socsoEmployer") or 0)
                               + (emp.get("eisEmployee") or 0) + (emp.get("eisEmployer") or 0)
                               + (emp.get("socsoLindung") or 0))),
         ("hrdf",      _round2(emp.get("hrdf", 0))),
+        ("shg",       _round2(emp.get("shg", 0))),
         ("mtd",       _round2(emp.get("mtd", 0))),
     ]
 
@@ -1431,6 +1553,59 @@ async def _auto_book_payment_payroll(kase: dict, db) -> dict:
     return {"success": len(failed) == 0, "posted": len(posted), "failed": len(failed), "expense_ids": exp_ids, "results": results}
 
 
+# ─── Client type (APC / CC) ──────────────────────────────────────────────────
+# Settings → Client Document Profiles is the source of truth for whether a
+# client is APC (advance paying) or CC (credit). HexaFlow's per-consultant
+# client_type is the fallback for a client with no profile (or no type set on
+# it), then CC. Decides the APC-/CC- expense accounts and whether revenue is
+# accrued (APC clients are billed in advance, so they never are).
+
+_ENTITY_PROFILE_ALIASES = {"HEDU": "KISB", "KISB": "HEDU"}
+
+
+def _profile_client_types(db, entity: str) -> dict:
+    """lower(client_name_csi) → 'APC' | 'CC' from active profiles. A profile
+    for the case's own entity wins over one for another entity; a name that
+    only other entities define, with conflicting types, is left out (falls
+    back to HexaFlow) rather than guessed."""
+    if db is None:
+        return {}
+    try:
+        rows = db.from_("client_document_profiles").select("*").execute().data or []
+    except Exception:
+        return {}
+    ent = (entity or "").upper()
+    own_entities = {ent, _ENTITY_PROFILE_ALIASES.get(ent, ent)}
+    own, other = {}, {}
+    for r in (rows if isinstance(rows, list) else []):
+        if not isinstance(r, dict):
+            continue
+        ctype = (r.get("client_type") or "").strip().upper()
+        name = (r.get("client_name_csi") or "").strip().lower()
+        if r.get("effective_to") is not None or ctype not in ("APC", "CC") or not name:
+            continue
+        bucket = own if (r.get("entity") or "").upper() in own_entities else other
+        bucket.setdefault(name, set()).add(ctype)
+    out = {n: t.pop() for n, t in other.items() if len(t) == 1}
+    out.update({n: t.pop() for n, t in own.items() if len(t) == 1})
+    return out
+
+
+def _with_client_types(employees: list, db, entity: str) -> list:
+    """Copies of the employee dicts with clientType resolved (profile →
+    HexaFlow → CC) and clientTypeSource recorded for the audit trail."""
+    profiles = _profile_client_types(db, entity)
+    out = []
+    for emp in employees:
+        client = (emp.get("costCentre") or "").strip().lower()
+        if client in profiles:
+            out.append({**emp, "clientType": profiles[client], "clientTypeSource": "profile"})
+        else:
+            ctype = "APC" if (emp.get("clientType") or "").upper() == "APC" else "CC"
+            out.append({**emp, "clientType": ctype, "clientTypeSource": "hexaflow" if emp.get("clientType") else "default"})
+    return out
+
+
 # ─── Auto accrual booking (Step 2 → 3) ───────────────────────────────────────
 
 async def _auto_book_accruals(kase: dict, db) -> dict:
@@ -1446,10 +1621,9 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
         return {"success": False, "error": f"No Zoho org ID for entity {kase.get('entity')}"}
 
     try:
-        _parse_period(kase.get("period", ""))
+        journal_date = _accrual_date(kase)
     except ValueError as e:
         return {"success": False, "error": str(e)}
-    journal_date = _compute_journal_date(kase.get("period", ""))
     mmm_yy       = _period_mmm_yy(kase.get("period", ""))
     entity_code  = kase.get("entity", "HSSB")
 
@@ -1458,10 +1632,22 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
         return {"success": False, "error": f"CSI account map not configured for org {org_id}. Add it to _CSI_ACCOUNTS."}
 
     entities = (kase.get("parsed_data") or {}).get("entities", [])
-    all_employees = [
+    all_employees = _with_client_types([
         {**emp, "entityName": ent["sheetName"]}
         for ent in entities for emp in ent.get("employees", [])
-    ]
+    ], db, kase.get("entity", ""))
+
+    # Every non-zero component must have both accounts mapped for this org —
+    # otherwise that cost would silently drop out of the accrual. Post nothing.
+    unmapped = sorted({
+        f"{'apc' if e['clientType'] == 'APC' else 'cc'}.{k}"
+        for e in all_employees for k, amt in _csi_components(e) if amt > 0
+        if not accts["apc" if e["clientType"] == "APC" else "cc"].get(k)
+        or (k in _STATUTORY_COMPONENTS and not accts["statutory"].get(k))
+    })
+    if unmapped:
+        return {"success": False, "error": f"No Zoho account mapped for {', '.join(unmapped)} in "
+                f"{kase.get('entity')} — add it to _CSI_ACCOUNTS (nothing posted)."}
 
     # ── Resolve the "Customer" reporting tag and Zoho contacts (mandatory) ────
     CUSTOMER_TAG = "Customer"
@@ -1557,15 +1743,18 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
         "zoho_journal_ids": journal_ids,
     }).eq("id", kase["id"]).execute()
     return {"success": len(failed) == 0, "journal_ids": journal_ids,
-            "posted": len(journal_ids), "failed": failed, "skipped": skipped}
+            "posted": len(journal_ids), "failed": failed, "skipped": skipped,
+            "journal_date": journal_date,
+            "client_types": {(e.get("costCentre") or ""): f"{e['clientType']} ({e['clientTypeSource']})"
+                             for e in all_employees}}
 
 
-# ─── Revenue accrual (7th payout, non-APC clients) ───────────────────────────
-# 7th-payout clients are invoiced after month end, so their revenue is accrued
-# at month end: DR Work In Progress_Sales / CR EOR revenue, per client, amount =
-# total billing before SST. Finance's invoice (DR AR / CR WIP) clears the WIP,
-# so the app posts no reversal. 25th/EOM payouts are invoiced before month end
-# and APC clients are billed in advance — neither is accrued here.
+# ─── Revenue accrual (every payout, non-APC clients) ─────────────────────────
+# Every payout's revenue is accrued on the same date as its cost accrual (25th
+# payout → the 25th; EOM/7th/15th → last day of the period month): DR Work In
+# Progress_Sales / CR EOR revenue, per client, amount = total billing before
+# SST. Finance's invoice (DR AR / CR WIP) clears the WIP, so the app posts no
+# reversal. APC clients are billed in advance and are never accrued.
 _REVENUE_ACCOUNTS: dict = {
     "762447369": {  # HSSB
         "wip":     "2877958000000096447",  # HSSB-009  Work In Progress_Sales
@@ -1582,6 +1771,18 @@ _REVENUE_ACCOUNTS: dict = {
     "853265884": {  # DATACRATS
         "wip":     "5216911000000402002",  # Work In Progress_Sales
         "revenue": "5216911000000402010",  # 1.6.2  Credit Clients - Revenue (under 1.6 EOR - Revenue)
+    },
+    "768663054": {  # HCI — WIP created 2026-10-02
+        "wip":     "2981447000004791002",  # Work In Progress_Sales
+        "revenue": "2981447000004015579",  # 1.6.2  Credit Clients - Revenue
+    },
+    "753289306": {  # HSPL — WIP created 2026-10-02
+        "wip":     "2725179000005892002",  # Work In Progress_Sales
+        "revenue": "2725179000005306610",  # 1.6.2  Credit Clients - Revenue
+    },
+    "768663052": {  # HMCL — WIP created 2026-10-02
+        "wip":     "2981047000003231002",  # Work In Progress_Sales
+        "revenue": "2981047000002801584",  # 1.6.2  Credit Clients - Revenue
     },
 }
 
@@ -1614,24 +1815,25 @@ def _revenue_accrual_by_client(employees: list) -> dict:
 
 
 async def _auto_book_revenue_accrual(kase: dict, db, already_posted: set = frozenset()) -> dict:
-    """One journal per non-APC client for a 7th-payout CSI case, dated the last
-    day of the period month. already_posted: clients booked by an earlier
+    """One journal per non-APC client for a CSI case, dated like the cost
+    accrual (_accrual_date). already_posted: clients booked by an earlier
     (partially failed) attempt — skipped so a retry never double-posts.
     Returns {"success", "not_applicable"?, "journal_ids", "posted_clients",
     "failed", "error"?}."""
-    if kase.get("type", "CSI") != "CSI" or _payout_cycle(kase) != "7TH":
+    if kase.get("type", "CSI") != "CSI":
         return {"success": True, "not_applicable": True}
 
     org_id = get_entity_org(kase.get("entity", "")).get("id")
     if not org_id:
         return {"success": False, "error": f"No Zoho org ID for entity {kase.get('entity')}"}
     try:
-        yr, mo, _cycle = _parse_period(kase.get("period", ""))
+        journal_date = _accrual_date(kase)
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
-    employees = [emp for ent in (kase.get("parsed_data") or {}).get("entities", [])
-                 for emp in ent.get("employees", [])]
+    employees = _with_client_types(
+        [emp for ent in (kase.get("parsed_data") or {}).get("entities", [])
+         for emp in ent.get("employees", [])], db, kase.get("entity", ""))
     by_client = {c: a for c, a in _revenue_accrual_by_client(employees).items()
                  if c not in already_posted}
     if not by_client:
@@ -1661,9 +1863,9 @@ async def _auto_book_revenue_accrual(kase: dict, db, already_posted: set = froze
     except Exception as e:
         return {"success": False, "error": f"Customer tag resolution failed (nothing posted): {e}"}
 
-    journal_date = f"{yr:04d}-{mo:02d}-{calendar.monthrange(yr, mo)[1]:02d}"
     mmm_yy       = _period_mmm_yy(kase.get("period", ""))
     entity_code  = kase.get("entity", "")
+    cycle        = _payout_cycle(kase) or "EOM"
     journal_ids, posted_clients, failed = [], [], []
     for n, (client, amount) in enumerate(sorted(by_client.items()), 1):
         extra = {"description": f"{entity_code}_EOR_Revenue_Accrual_{client}_{mmm_yy}",
@@ -1672,7 +1874,7 @@ async def _auto_book_revenue_accrual(kase: dict, db, already_posted: set = froze
             journal = await post_journal_entry(org_id, {
                 "journal_date":     journal_date,
                 "reference_number": f"REVACCR-{kase['period']}-{entity_code}-{n:03d}-{str(kase['id'])[-8:]}",
-                "notes": f"Revenue Accrual (7th payout) – {kase.get('period')} – {client} – Ref: {kase['reference']}",
+                "notes": f"Revenue Accrual ({cycle} payout) – {kase.get('period')} – {client} – Ref: {kase['reference']}",
                 "line_items": [
                     {"account_id": accts["wip"],     "debit_or_credit": "debit",  "amount": amount, **extra},
                     {"account_id": accts["revenue"], "debit_or_credit": "credit", "amount": amount, **extra},
@@ -1697,7 +1899,7 @@ async def _auto_book_revenue_accrual(kase: dict, db, already_posted: set = froze
         return {"success": False, "failed": failed, "posted_clients": [],
                 "error": f"No revenue accrual journals posted. First failure: {failed[0]}"}
     return {"success": not failed, "journal_ids": journal_ids, "posted": len(journal_ids),
-            "posted_clients": posted_clients,
+            "posted_clients": posted_clients, "journal_date": journal_date, "cycle": cycle,
             "failed": failed, "total": _round2(sum(by_client.values())),
             **({"error": f"{len(failed)} client journal(s) failed: {failed[0]}"} if failed else {})}
 
@@ -1738,6 +1940,10 @@ async def _auto_book_payment(kase: dict, db) -> dict:
     for fl in (check.get("idConflicts") or []):
         excluded_ids.add(str(fl.get("csiEmployeeId", "")))
     for fl in (check.get("excludedMissing") or []):
+        excluded_ids.add(str(fl.get("employeeId", "")))
+    # PH/SG/MM files leave out consultants with no bank account at all (MY
+    # keeps them in its file as unmatched rows), so they aren't paid either.
+    for fl in (check.get("excludedNoBank") or []):
         excluded_ids.add(str(fl.get("employeeId", "")))
 
     payment_rows = []  # list of (amount, description, reference, vendor_name)
@@ -3837,9 +4043,11 @@ async def download_bank_xlsx(case_id: str, request: Request):
         raise HTTPException(403, "Bank file is blocked by a failed control: "
                                  + "; ".join(gate["reasons"]) + ". Resolve it or obtain an audited override.")
     file_bytes = base64.b64decode(kase["bank_file_data"])
+    is_xlsm = (kase.get("bank_file_name") or "").lower().endswith(".xlsm")
     return Response(
         content=file_bytes,
-        media_type="application/vnd.ms-excel.sheet.macroEnabled.12",
+        media_type=("application/vnd.ms-excel.sheet.macroEnabled.12" if is_xlsm
+                    else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
         headers={"Content-Disposition": f'attachment; filename="{kase["bank_file_name"]}"'},
     )
 

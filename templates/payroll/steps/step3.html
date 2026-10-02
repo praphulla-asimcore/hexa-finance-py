@@ -107,13 +107,13 @@
   </div>
   {% endif %}
 
-  {# ── Revenue accrual (7th payout, non-APC) — own log + retry, independent of the cost accrual ── #}
+  {# ── Revenue accrual (every payout, non-APC) — own log + retry, independent of the cost accrual ── #}
   {% set _rev_logs = (logs | selectattr('event_type','equalto','ZOHO_REVENUE_ACCRUAL') | list) if logs else [] %}
   {% set rev_meta = ((_rev_logs | last).metadata or {}) if _rev_logs else none %}
   {% if rev_meta and not rev_meta.get('not_applicable') and not rev_meta.get('resubmission_skip') %}
     {% if rev_meta.get('success') %}
     <div class="pf-info-banner pf-banner-ok" style="margin-bottom:16px">
-      ✓ Revenue accrual posted (7th payout) — {{ rev_meta.get('posted', 0) }} client journal(s)
+      ✓ Revenue accrual posted{% if rev_meta.get('cycle') %} ({{ rev_meta.cycle }} payout{% if rev_meta.get('journal_date') %}, dated {{ rev_meta.journal_date }}{% endif %}){% endif %} — {{ rev_meta.get('posted', 0) }} client journal(s)
       {% if rev_meta.get('total') %}<span style="margin-left:8px">{{ fmt_rm(rev_meta.total) }}</span>{% endif %}
       {% if rev_meta.get('note') %}<span style="margin-left:8px;opacity:.7">{{ rev_meta.note }}</span>{% endif %}
     </div>

@@ -15,6 +15,17 @@
     <div><label class="label">Invoicing Currency</label>
       <input class="input" name="invoicing_currency" value="{{ (p.invoicing_currency or '') if p else 'MYR' }}"></div>
   </div>
+  <div class="cp-type">
+    <label class="label">Client Type (accounting)</label>
+    {% set ct = (p.client_type or '') if p else '' %}
+    <select class="input" name="client_type">
+      <option value="" {% if not ct %}selected{% endif %}>Not set (use HexaFlow's value, else CC)</option>
+      <option value="APC" {% if ct == 'APC' %}selected{% endif %}>APC (Advance Paying Client)</option>
+      <option value="CC" {% if ct == 'CC' %}selected{% endif %}>CC (Credit Client)</option>
+    </select>
+    <div class="cp-hint">APC: costs go to the APC- expense accounts and no revenue is accrued (billed in advance).
+      CC: costs go to the CC- accounts and revenue is accrued on every payout (DR WIP / CR Credit Clients - Revenue).</div>
+  </div>
   <div class="cp-checks">
     {% set checks = [
       ('work_order_required','Work Order'), ('timesheet_required','Timesheet'),
@@ -38,7 +49,7 @@
   <div class="cp-head">
     <div>
       <h1 class="cp-title">Client Document Profiles</h1>
-      <div class="cp-sub">{{ profiles|length }} active profile(s) — drives the per-client document gates.</div>
+      <div class="cp-sub">{{ profiles|length }} active profile(s) — drives the per-client document gates and the APC/CC accounting treatment.</div>
     </div>
     <button class="btn btn-primary" onclick="cpToggle('add-form')">+ Add New Client Profile</button>
   </div>
@@ -49,7 +60,7 @@
 
   <table class="admin-table cp-table">
     <thead><tr>
-      <th>Client (CSI)</th><th>Zoho Name</th><th>Entity</th><th>Cur</th>
+      <th>Client (CSI)</th><th>Zoho Name</th><th>Entity</th><th>Cur</th><th>Type</th>
       <th>WO</th><th>TS</th><th>PR</th><th>PO</th><th>HN</th><th>LH</th><th>WCN</th><th>AC</th>
       <th>Blocked</th><th>Actions</th>
     </tr></thead>
@@ -60,6 +71,7 @@
         <td style="font-size:12px;color:var(--text-muted)">{{ p.client_name_zoho or '—' }}</td>
         <td>{{ p.entity }}</td>
         <td>{{ p.invoicing_currency or '—' }}</td>
+        <td>{% if p.client_type %}<strong>{{ p.client_type }}</strong>{% else %}<span style="color:var(--text-muted)" title="Not set — HexaFlow value, else CC">—</span>{% endif %}</td>
         <td>{{ '✓' if p.work_order_required else '—' }}</td>
         <td>{{ '✓' if p.timesheet_required else '—' }}</td>
         <td>{{ '✓' if p.payroll_report_required else '—' }}</td>
@@ -78,13 +90,13 @@
         </td>
       </tr>
       <tr id="edit-{{ p.id }}" style="display:none">
-        <td colspan="14" class="cp-editcell">
+        <td colspan="15" class="cp-editcell">
           {{ profile_form('/admin/client-profiles/' ~ p.id ~ '/edit', p, 'Save Changes', 'edit-form-' ~ p.id) }}
         </td>
       </tr>
       {% endfor %}
       {% if not profiles %}
-      <tr><td colspan="14" style="color:var(--text-muted);padding:18px">No active profiles. Add one above.</td></tr>
+      <tr><td colspan="15" style="color:var(--text-muted);padding:18px">No active profiles. Add one above.</td></tr>
       {% endif %}
     </tbody>
   </table>
@@ -98,6 +110,8 @@
 .cp-addbox, .cp-editcell { background:var(--surface,#fff); border:1px solid var(--border); border-radius:10px; padding:14px; }
 .cp-addbox { margin-bottom:16px; }
 .cp-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:10px; }
+.cp-type { max-width:420px; margin:4px 0 6px; }
+.cp-hint { font-size:11px; color:var(--text-muted); margin-top:4px; line-height:1.5; }
 .cp-checks { display:flex; flex-wrap:wrap; gap:10px 18px; margin:10px 0 12px; }
 .cp-check { font-size:12px; color:var(--text-secondary); display:flex; align-items:center; gap:6px; }
 .cp-table th, .cp-table td { text-align:center; }

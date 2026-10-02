@@ -333,6 +333,69 @@ def generate_mtd_file(submission: dict, employer_mtd_no: str = "") -> dict:
     }
 
 
+# ─── PH / SG / MM — contribution schedules ─────────────────────────────────
+# APEX-ingested only. Amounts come straight from the payload (see
+# ingest._STAT_ALIASES); each schedule lists who owes what so finance can file
+# on the agency portal, and confirming its payment posts the remittance
+# journal (statutory._post_zoho). Not an agency upload format.
+# statutory_type → (title, employee field, employer field, currency)
+SCHEDULES: dict = {
+    "PAGIBIG":    ("Pag-IBIG (HDMF) Contribution Schedule", "epfEmployee",    "epfEmployer",    "PHP"),
+    "PHILHEALTH": ("PhilHealth Contribution Schedule",      "healthEmployee", "healthEmployer", "PHP"),
+    "SSS":        ("SSS Contribution Schedule",             "socsoEmployee",  "socsoEmployer",  "PHP"),
+    "WHT":        ("Withholding Tax on Compensation",       "mtd",            None,             "PHP"),
+    "CPF":        ("CPF Contribution Schedule",             "epfEmployee",    "epfEmployer",    "SGD"),
+    "SDL":        ("Skills Development Levy Schedule",      None,             "hrdf",           "SGD"),
+    "SHG":        ("SHG Funds / FWL Schedule",              "shg",            None,             "SGD"),
+    "SSB":        ("Social Security Board Contribution Schedule", "socsoEmployee", "socsoEmployer", "MMK"),
+    "PIT":        ("Personal Income Tax Withheld",          "mtd",            None,             "MMK"),
+}
+
+
+def _schedule_generator(stat_type: str):
+    title, ee_field, er_field, ccy = SCHEDULES[stat_type]
+
+    def generate(submission: dict, **_unused) -> dict:
+        employees  = submission.get("employee_data", [])
+        wage_month = submission.get("wage_month", "")
+        entity     = submission.get("entity", "")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = stat_type
+        data_row = _write_info_block(ws, title, [
+            ("Entity:",             submission.get("entity_name") or entity),
+            ("Wage Month:",         _month_label(wage_month)),
+            ("Contribution Month:", _month_label(submission.get("contribution_month", ""))),
+            ("Currency:",           ccy),
+        ])
+        _write_col_headers(ws, data_row, ["No.", "Employee ID", "Employee Name", "ID No.",
+                                          f"Employee ({ccy})", f"Employer ({ccy})", f"Total ({ccy})"])
+        tot_ee = tot_er = 0.0
+        rows = [e for e in employees
+                if _r2(e.get(ee_field) if ee_field else 0) or _r2(e.get(er_field) if er_field else 0)]
+        for i, emp in enumerate(rows, 1):
+            ee = _r2(emp.get(ee_field)) if ee_field else 0.0
+            er = _r2(emp.get(er_field)) if er_field else 0.0
+            tot_ee += ee; tot_er += er
+            for col, val in enumerate([i, emp.get("employeeId", ""), emp.get("name", ""),
+                                       emp.get("idNumber", ""), ee, er, _r2(ee + er)], 1):
+                ws.cell(row=data_row + i, column=col, value=val)
+        _write_total_row(ws, data_row + len(rows) + 1,
+                         ["", "", "TOTAL", "", round(tot_ee, 2), round(tot_er, 2), round(tot_ee + tot_er, 2)])
+        for col, w in [("A", 6), ("B", 14), ("C", 34), ("D", 20), ("E", 16), ("F", 16), ("G", 16)]:
+            ws.column_dimensions[col].width = w
+        data = _save(wb)
+        return {
+            "file_data":       base64.b64encode(data).decode(),
+            "file_name":       f"{stat_type}_{entity}_{wage_month}_{_ts()}.xlsx",
+            "file_hash":       _sha256(data),
+            "total_ee_amount": round(tot_ee, 2),
+            "total_er_amount": round(tot_er, 2),
+            "total_amount":    round(tot_ee + tot_er, 2),
+        }
+    return generate
+
+
 # ─── Country dispatch ──────────────────────────────────────────────────────
 # {country: {statutory_type: generator_fn}}. Indonesia/Nepal are deliberately
 # empty (not stubs that raise) -- a country with no filing-file generators
@@ -349,6 +412,9 @@ STATUTORY_FILE_GENERATORS: dict = {
     },
     "ID": {},  # BPJS Kesehatan, BPJS Ketenagakerjaan, PPh21 -- not yet implemented
     "NP": {},  # SSF or PF+Gratuity, TDS -- not yet implemented
+    "PH": {t: _schedule_generator(t) for t in ("PAGIBIG", "PHILHEALTH", "SSS", "WHT")},
+    "SG": {t: _schedule_generator(t) for t in ("CPF", "SDL", "SHG")},
+    "MM": {t: _schedule_generator(t) for t in ("SSB", "PIT")},
 }
 
 

@@ -1030,6 +1030,329 @@ async def generate_and_store_bank_files_np(kase: dict, db, triggered_by: str) ->
     )
 
 
+# ─── Philippines (HCI) — Maybank PH "RCMS Payroll Converter v2.0" ────────────
+# Mirrors the bank's macro workbook (RCMS Payroll Converter_v2.0 - HEXAMATICS 1.xls,
+# VBA by Maybank CMS): btnGenerate_Click writes the .txt below, ValidatePayrollFile
+# and CheckDigitAccountNumber are the validations. Only Maybank Philippines
+# account holders can go in this file; everyone else is paid manually and is
+# listed on the workbook's "Manual Payments" sheet instead.
+PH_RCMS_CORPORATE_ID   = "PHHEXAMATICS"               # HOME!E4
+PH_RCMS_CORPORATE_NAME = "HEXAMATICS CONSULTING INC"  # HOME!E5 (max 50, commas stripped)
+PH_RCMS_DEBIT_ACCOUNT  = "00885004416"                # HOME!E6 — Maybank PH, 11 digits
+PH_RCMS_PAYROLL_TYPE   = "Staff Payroll"              # HOME!E8
+PH_RCMS_INCLUDE_NAME   = False                        # HOME!E9 "No" → name field = account no.
+
+
+def ph_maybank_check_digit_ok(acct: str) -> bool:
+    """Maybank PH 11-digit account check digit (macro's CheckDigitAccountNumber):
+    weights 7643276543 over the first 10 digits, two-digit products summed
+    digit-wise, check = (10 - total mod 10) mod 10."""
+    if not (acct.isdigit() and len(acct) == 11):
+        return False
+    total = 0
+    for w, d in zip("7643276543", acct[:10]):
+        p = int(w) * int(d)
+        total += p // 10 + p % 10 if p > 9 else p
+    return (10 - total % 10) % 10 == int(acct[10])
+
+
+def _vba_round2(amount) -> "Decimal":
+    """VBA Round(x, 2) — banker's rounding, as the macro applies to Net Pay."""
+    from decimal import Decimal, ROUND_HALF_EVEN
+    return Decimal(str(amount or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN)
+
+
+def _fmt_ph_amount(d) -> str:
+    """VBA Format(x, "0000000000000.00") — 13 integer digits, 2 decimals."""
+    whole, frac = f"{d:.2f}".split(".")
+    return f"{int(whole):013d}.{frac}"
+
+
+def build_ph_rcms_txt(rows: list, crediting_date: str) -> tuple[str, str]:
+    """rows: [{"accountNumber", "name", "amount"}] (Maybank PH only, validated).
+    crediting_date: YYYY-MM-DD. Returns (filename, body) byte-identical to the
+    macro's output: LF-separated, no trailing newline, comma-delimited."""
+    yr, mo, dy = crediting_date.split("-")
+    corp_name = PH_RCMS_CORPORATE_NAME.replace(",", "")[:50]
+    lines = [f"00,{PH_RCMS_CORPORATE_ID.replace(',', '')},{mo}{dy}{yr[2:]},,,,,,"]
+    total = _vba_round2(0)
+    for n, r in enumerate(rows, 1):
+        amt = _vba_round2(r["amount"])
+        total += amt
+        acct = r["accountNumber"]
+        name = r["name"][:40] if PH_RCMS_INCLUDE_NAME else acct
+        lines.append(
+            f"01,IT,{PH_RCMS_PAYROLL_TYPE},PH,{dy}{mo}{yr},,{corp_name},{n:011d},Salary,Salary,PHP,"
+            f"{_fmt_ph_amount(amt)},Y,PHP,{PH_RCMS_DEBIT_ACCOUNT},{acct},,,,{name}"
+            + "," * 82 + "Salary,Salary,,,,,,,01" + "," * 12
+        )
+    lines.append(f"99,{len(rows):06d},{_fmt_ph_amount(total)},,,,,,")
+    return f"RC{mo}{dy}{yr}.txt", "\n".join(lines)
+
+
+def _payees_with_exclusions(kase: dict, db, triggered_by: str) -> dict:
+    """The CSI rows to pay, after the same per-row controls the Malaysian
+    generator applies (missing sighting, document gate, inconsistent Employee
+    ID) — minus the Maybank-MY Favourite Beneficiary Code, which only exists
+    in Maybank MY CMS. Bank details: the corroborated consultant record
+    (match_consultant), else the bank fields HexaFlow sent on this run."""
+    entities = (kase.get("parsed_data") or {}).get("entities", [])
+    check = kase.get("check_data") or {}
+    consultants = build_consultant_list(db, [])
+    try:
+        sighting_rows = db.from_("consultant_sighting").select("employee_id,status").eq(
+            "case_id", kase["id"]).execute().data or []
+    except Exception:
+        sighting_rows = []
+    missing_ids = {r["employee_id"] for r in sighting_rows if r["status"] == "missing"}
+    doc_gate_by_emp: dict = {}
+    if not check.get("bankGateOverride"):
+        for fl in (check.get("flags") or []):
+            if fl.get("code") in DOC_GATE_CODES:
+                k = str(fl.get("employeeId") or "").strip() or str(fl.get("employee") or "").strip()
+                doc_gate_by_emp.setdefault(k, set()).add(fl["code"])
+
+    out = {"payees": [], "excludedMissing": [], "excludedDocGate": [], "idConflicts": [], "noBank": []}
+    for ent in entities:
+        for emp in ent.get("employees", []):
+            emp_id = str(emp.get("employeeId", "")).strip()
+            base = {"name": emp.get("name", ""), "employeeId": emp_id, "entity": ent["sheetName"]}
+            if missing_ids and emp_id in missing_ids:
+                out["excludedMissing"].append(base)
+                continue
+            codes = doc_gate_by_emp.get(emp_id or str(emp.get("name") or "").strip())
+            if codes:
+                out["excludedDocGate"].append({**base, "reasons": sorted(codes)})
+                try:
+                    db.from_("payroll_audit_log").insert({
+                        "case_id": kase["id"], "event_type": "BANK_ROW_EXCLUDED_DOC_GATE",
+                        "performed_by": triggered_by, "user_id": None, "ip_address": None,
+                        "metadata": {**base, "reasons": sorted(codes)},
+                    }).execute()
+                except Exception:
+                    pass
+                continue
+            matched = match_consultant(emp, consultants)
+            if matched is None and consultants:
+                conflict = id_conflict(emp, consultants)
+                if conflict is not None:
+                    out["idConflicts"].append({
+                        "csiName": emp.get("name", ""), "csiEmployeeId": emp_id,
+                        "resolvedName": conflict.get("name", ""),
+                        "resolvedEmployeeId": conflict.get("employeeNumber") or conflict.get("employeeId", ""),
+                        "entity": ent["sheetName"],
+                    })
+                    continue
+            account = _strip_spaces_dashes((matched or {}).get("accountNo") or emp.get("bankAccountNumber") or "")
+            bank_name = ((matched or {}).get("bankName") or emp.get("bankName") or "").strip()
+            payee = {
+                **base,
+                "payeeName": ((matched or {}).get("bankAccountName") or (matched or {}).get("name") or emp.get("name", "")).strip(),
+                "costCentre": emp.get("costCentre", ""),
+                "amount": float(emp.get("netSalary") or 0),
+                "accountNumber": account, "bankName": bank_name,
+                "bankSource": "consultant_db" if matched and matched.get("accountNo") else "csi",
+            }
+            if payee["amount"] <= 0:
+                continue
+            if not account:
+                out["noBank"].append(base)
+                continue
+            out["payees"].append(payee)
+    return out
+
+
+def _payment_workbook(sheets: list) -> bytes:
+    """sheets: [(title, header_rows, column_headers, rows)] → .xlsx bytes."""
+    from openpyxl.styles import Font
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    for title, preamble, headers, rows in sheets:
+        ws = wb.create_sheet(title)
+        for line in preamble:
+            ws.append(line)
+        if preamble:
+            ws.append([])
+        ws.append(headers)
+        for c in ws[ws.max_row]:
+            c.font = Font(bold=True)
+        for r in rows:
+            ws.append(r)
+        for col in ws.columns:
+            width = max(len(str(c.value or "")) for c in col)
+            ws.column_dimensions[col[0].column_letter].width = min(max(width + 2, 10), 48)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _reconcile_payment_file(xlsx_bytes: bytes, expected: list, file_sheets: list) -> dict:
+    """Independent check: re-read the generated workbook (and .txt rows when
+    given) and confirm every payee/account/amount matches what was meant to be
+    paid — nothing dropped, added or altered. Same result shape as
+    bank_crosscheck so _bank_gate and Step 4 treat it identically."""
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes), data_only=True)
+        found = []
+        for title, acct_col, amt_col in file_sheets:
+            ws = wb[title]
+            header_row = next(r for r in range(1, ws.max_row + 1)
+                              if str(ws.cell(r, 1).value or "").strip() == "No.")
+            for r in range(header_row + 1, ws.max_row + 1):
+                if ws.cell(r, 1).value in (None, ""):
+                    continue
+                found.append((str(ws.cell(r, acct_col).value or ""), round(float(ws.cell(r, amt_col).value or 0), 2)))
+        want = sorted((p["accountNumber"], round(p["amount"], 2)) for p in expected)
+        issues = []
+        if sorted(found) != want:
+            issues.append({"level": "critical", "code": "FILE_MISMATCH",
+                           "message": f"Workbook rows ({len(found)}) do not match the payable CSI rows ({len(want)})."})
+        return {"ok": not issues, "ran": True, "issues": issues,
+                "fileRows": len(found), "csiPayable": len(want),
+                "fileTotal": round(sum(a for _, a in found), 2),
+                "expectedTotal": round(sum(a for _, a in want), 2),
+                "summary": "Bank file reconciles to the CSI" if not issues else "Bank file does NOT reconcile to the CSI"}
+    except Exception as e:
+        return {"ok": False, "ran": False, "summary": "Cross-check could not run — verify the bank file manually",
+                "error": str(e)[:200], "issues": []}
+
+
+async def _store_payment_file(kase: dict, db, triggered_by: str, *, bank_format: str, xlsx_name: str,
+                              xlsx_bytes: bytes, sel: dict, manual: list, crosscheck: dict,
+                              bank_txt: dict | None) -> dict:
+    now = datetime.now(timezone.utc).isoformat()
+    payable = sel["payees"]
+    existing_check = dict(kase.get("check_data") or {})
+    existing_check.update({
+        "bankFormat":          bank_format,
+        "missingBankAccounts": sel["noBank"],
+        "excludedNoBank":      sel["noBank"],
+        "excludedNoFavourite": [],
+        "idConflicts":         sel["idConflicts"],
+        "excludedDocGate":     sel["excludedDocGate"],
+        "excludedMissing":     sel["excludedMissing"],
+        "manualPayments":      manual,
+        "crosscheck":          crosscheck,
+        "bankTxt":             bank_txt,
+        "bankTxtError":        None,
+    })
+    breakdown = {"missingDocs": len(sel["excludedMissing"]), "noFavouriteCode": 0,
+                 "docGate": len(sel["excludedDocGate"]), "idConflict": len(sel["idConflicts"]),
+                 "noBankAccount": len(sel["noBank"])}
+    existing_check["paymentApproval"] = {
+        "payableCount": len(payable),
+        "payableTotal": round(sum(p["amount"] for p in payable), 2),
+        "notApprovedCount": sum(breakdown.values()),
+        "notApprovedBreakdown": breakdown,
+        "manualCount": len(manual),
+        "manualTotal": round(sum(m["amount"] for m in manual), 2),
+    }
+    db.from_("payroll_cases").update({
+        "status":                 "bank_file_generated",
+        "bank_file_name":         xlsx_name,
+        "bank_file_hash":         _sha256(xlsx_bytes),
+        "bank_file_data":         base64.b64encode(xlsx_bytes).decode(),
+        "bank_file_generated_at": now,
+        "bank_file_triggered_by": triggered_by,
+        "bank_receipt_name":      None,
+        "bank_receipt_data":      None,
+        "check_data":             existing_check,
+    }).eq("id", kase["id"]).execute()
+    return {"xlsxName": xlsx_name, "xlsxBytes": xlsx_bytes, "matched": len(payable),
+            "total": len(payable) + sum(breakdown.values()), "missing": sel["noBank"],
+            "excludedNoFavourite": []}
+
+
+async def generate_and_store_bank_files_ph(kase: dict, db, triggered_by: str) -> dict:
+    """HCI: Maybank PH holders → RCMS .txt (+ the converter's sheets, for the
+    maker to cross-check against the macro if wanted); everyone else →
+    'Manual Payments' sheet, to be paid by hand from the same account."""
+    sel = _payees_with_exclusions(kase, db, triggered_by)
+    if sel["excludedDocGate"] and not sel["payees"]:
+        raise ValueError("No consultants cleared document gates — bank file cannot be generated")
+    pay_date = kase.get("payment_date") or datetime.now(timezone.utc).date().isoformat()
+
+    maybank, manual = [], []
+    for p in sel["payees"]:
+        is_maybank = "maybank" in p["bankName"].lower()
+        if is_maybank and ph_maybank_check_digit_ok(p["accountNumber"]):
+            maybank.append(p)
+        else:
+            reason = ("Maybank account fails the 11-digit check-digit validation — verify the account"
+                      if is_maybank else f"Not a Maybank PH account ({p['bankName'] or 'bank not given'})")
+            manual.append({**p, "reason": reason})
+
+    issues = []
+    accts = [p["accountNumber"] for p in maybank]
+    dupes = sorted({a for a in accts if accts.count(a) > 1})
+    if dupes:   # the macro refuses the whole file on a duplicate account
+        issues.append({"level": "critical", "code": "DUPLICATE_ACCOUNT",
+                       "message": f"Same Maybank account on more than one row: {', '.join(dupes)}"})
+
+    txt_name, txt_body = build_ph_rcms_txt(
+        [{"accountNumber": p["accountNumber"], "name": p["payeeName"], "amount": p["amount"]} for p in maybank],
+        pay_date) if maybank else (None, None)
+    yr, mo, dy = pay_date.split("-")
+    home = [["RCMS PAYROLL GENERATOR (Maybank Philippines)"],
+            ["Corporate ID", PH_RCMS_CORPORATE_ID], ["Corporate Name", PH_RCMS_CORPORATE_NAME],
+            ["Account Number", PH_RCMS_DEBIT_ACCOUNT], ["Crediting Date", f"{mo}/{dy}/{yr}"],
+            ["Payroll Type", PH_RCMS_PAYROLL_TYPE], ["Include Name (Y/N)?", "Yes" if PH_RCMS_INCLUDE_NAME else "No"],
+            ["Case", kase.get("reference", "")], ["Upload file", txt_name or "— (no Maybank PH payees)"]]
+    xlsx = _payment_workbook([
+        ("Payroll Converter", home, ["No.", "Account Name (max 40)", "Account No. (11 digit)", "Net Pay"],
+         [[n, p["payeeName"][:40], p["accountNumber"], float(_vba_round2(p["amount"]))] for n, p in enumerate(maybank, 1)]),
+        ("Manual Payments", [["Pay these by hand (not Maybank PH holders, or failed validation)."]],
+         ["No.", "Consultant", "Employee ID", "Client", "Bank", "Account No.", "Amount (PHP)", "Reason"],
+         [[n, m["payeeName"], m["employeeId"], m["costCentre"], m["bankName"], m["accountNumber"],
+           round(m["amount"], 2), m["reason"]] for n, m in enumerate(manual, 1)]),
+    ])
+    crosscheck = _reconcile_payment_file(
+        xlsx, sel["payees"], [("Payroll Converter", 3, 4), ("Manual Payments", 6, 7)])
+    if txt_body is not None:
+        body_rows = [ln.split(",") for ln in txt_body.split("\n") if ln.startswith("01,")]
+        txt_total = round(sum(float(r[11]) for r in body_rows), 2)
+        want_total = round(sum(float(_vba_round2(p["amount"])) for p in maybank), 2)
+        if len(body_rows) != len(maybank) or abs(txt_total - want_total) > 0.005:
+            issues.append({"level": "critical", "code": "TXT_MISMATCH",
+                           "message": f"RCMS .txt has {len(body_rows)} row(s) / {txt_total:,.2f}; expected {len(maybank)} / {want_total:,.2f}."})
+    if issues:
+        crosscheck = {**crosscheck, "ok": False, "issues": (crosscheck.get("issues") or []) + issues,
+                      "summary": "Bank file does NOT pass validation"}
+    bank_txt = ({"name": txt_name, "runNumber": None, "format": "RCMS_PH",
+                 "data": base64.b64encode(txt_body.encode("utf-8")).decode()} if txt_body else None)
+    return await _store_payment_file(
+        kase, db, triggered_by, bank_format="RCMS_PH",
+        xlsx_name=f"RCMS_PH_Payroll_{kase['reference']}_{dy}{mo}{yr}.xlsx", xlsx_bytes=xlsx,
+        sel=sel, manual=manual, crosscheck=crosscheck, bank_txt=bank_txt)
+
+
+async def generate_and_store_bank_files_manual(kase: dict, db, triggered_by: str) -> dict:
+    """HSPL / HMCL: no bank bulk-upload template on file yet, so every payee is
+    listed for manual payment. Same per-row controls and cross-check as the
+    templated countries, so the workflow (approval, Zoho payment) is unchanged."""
+    from app.config import get_entity_currency
+    sel = _payees_with_exclusions(kase, db, triggered_by)
+    if sel["excludedDocGate"] and not sel["payees"]:
+        raise ValueError("No consultants cleared document gates — bank file cannot be generated")
+    pay_date = kase.get("payment_date") or datetime.now(timezone.utc).date().isoformat()
+    yr, mo, dy = pay_date.split("-")
+    ccy = get_entity_currency(kase.get("entity", ""))
+    manual = [{**p, "reason": "Manual bank payment"} for p in sel["payees"]]
+    xlsx = _payment_workbook([
+        ("Manual Payments",
+         [[f"Payment list — {kase.get('entity', '')} — {kase.get('reference', '')}"], ["Payment date", pay_date],
+          ["Currency", ccy]],
+         ["No.", "Consultant", "Employee ID", "Client", "Bank", "Account No.", f"Amount ({ccy})", "Reference"],
+         [[n, m["payeeName"], m["employeeId"], m["costCentre"], m["bankName"], m["accountNumber"],
+           round(m["amount"], 2), f"Salary {mo}/{yr}"] for n, m in enumerate(manual, 1)]),
+    ])
+    crosscheck = _reconcile_payment_file(xlsx, sel["payees"], [("Manual Payments", 6, 7)])
+    return await _store_payment_file(
+        kase, db, triggered_by, bank_format="MANUAL",
+        xlsx_name=f"Payment_List_{kase['reference']}_{dy}{mo}{yr}.xlsx", xlsx_bytes=xlsx,
+        sel=sel, manual=manual, crosscheck=crosscheck, bank_txt=None)
+
+
 # CSI bank-file generator, selected by the case's entity → country (see
 # app.config.get_entity_country). Fail loud on an unrecognised/unconfigured
 # country -- generating a payment file against the wrong country's rules
@@ -1038,6 +1361,9 @@ BANK_FILE_GENERATORS: dict = {
     "MY": generate_and_store_bank_files,
     "ID": generate_and_store_bank_files_id,
     "NP": generate_and_store_bank_files_np,
+    "PH": generate_and_store_bank_files_ph,
+    "SG": generate_and_store_bank_files_manual,
+    "MM": generate_and_store_bank_files_manual,
 }
 
 

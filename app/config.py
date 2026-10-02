@@ -72,9 +72,9 @@ PUBLIC_DIR: Path = BASE_DIR / "public"
 ORGS: dict = {
     "HCSSB": {"id": "897668064", "name": "Hexa Consulting Services Sdn Bhd", "country": "MY"},
     "APHHR": {"id": "883796614", "name": "HexaHR Sdn Bhd", "country": "MY"},
-    # "Inc." doesn't disambiguate MY vs elsewhere -- unconfirmed, kept distinct
-    # from "MY" so it doesn't silently inherit Malaysian statutory/bank rules.
-    "HCI":   {"id": "768663054", "name": "Hexamatics Consulting Inc.", "country": "UNKNOWN"},
+    # Zoho org 768663054 is a PHP / Philippines org (confirmed via the Zoho
+    # organizations API, 2026-10-02).
+    "HCI":   {"id": "768663054", "name": "Hexamatics Consulting Inc.", "country": "PH"},
     "HMCL":  {"id": "768663052", "name": "Hexamatics Myanmar Company Ltd", "country": "MM"},
     "HNPL":  {"id": "804163623", "name": "Hexamatics Nepal Private Limited", "country": "NP"},
     "HSSB":  {"id": "762447369", "name": "Hexamatics Servcomm Sdn Bhd", "country": "MY"},
@@ -92,6 +92,7 @@ COUNTRY_CURRENCY: dict = {
     "NP": "NPR",
     "MM": "MMK",
     "SG": "SGD",
+    "PH": "PHP",
 }
 
 _DEFAULT_COUNTRY = "MY"  # every entity processed before multi-country rollout was Malaysian

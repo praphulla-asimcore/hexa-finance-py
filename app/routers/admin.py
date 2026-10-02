@@ -48,10 +48,38 @@ _PROFILE_BOOLS = [
 ]
 
 
+_client_type_column_ready = False
+
+
+def _ensure_client_type_column() -> None:
+    """Idempotently add client_document_profiles.client_type (see
+    db/add_client_type_to_client_document_profiles.sql) — same self-provisioning
+    pattern as bank_files.next_rcgen_run_number's app_counters table, so the
+    APC/CC setting works on first deploy without a manual migration."""
+    global _client_type_column_ready
+    if _client_type_column_ready:
+        return
+    from app.config import DATABASE_URL
+    if not DATABASE_URL:
+        return
+    try:
+        with psycopg.connect(DATABASE_URL, autocommit=True) as conn:
+            conn.prepare_threshold = None   # PgBouncer transaction-pool safe
+            conn.execute(
+                "ALTER TABLE client_document_profiles ADD COLUMN IF NOT EXISTS client_type varchar(3) "
+                "CHECK (client_type IS NULL OR client_type IN ('APC', 'CC'))")
+        _client_type_column_ready = True
+    except Exception:
+        pass
+
+
 def _profile_form_to_dict(form) -> dict:
     """Map the add/edit form into a client_document_profiles row. Checkboxes are
-    present ('on') only when ticked; absent → false."""
+    present ('on') only when ticked; absent → false. client_type: APC / CC, or
+    blank (= not set; the accrual falls back to HexaFlow's value)."""
+    ctype = (form.get("client_type") or "").strip().upper()
     d = {
+        "client_type":        ctype if ctype in ("APC", "CC") else None,
         "client_name_csi":    (form.get("client_name_csi") or "").strip(),
         "client_name_zoho":   (form.get("client_name_zoho") or "").strip() or None,
         "entity":             (form.get("entity") or "HSSB").strip() or "HSSB",
@@ -70,6 +98,7 @@ async def client_profiles(request: Request):
         return RedirectResponse("/", status_code=302)
     db = get_db()
     profiles = []
+    _ensure_client_type_column()
     if db:
         resp = db.from_("client_document_profiles").select("*").order(
             "client_name_csi").order("invoicing_currency").execute()
@@ -85,13 +114,22 @@ async def client_profiles_new(request: Request):
     if user.get("role") != "admin":
         return RedirectResponse("/", status_code=302)
     db = get_db()
+    _ensure_client_type_column()
     if db:
         row = _profile_form_to_dict(await request.form())
         if row["client_name_csi"]:
             try:
                 db.from_("client_document_profiles").insert(row).execute()
             except Exception:
-                pass  # e.g. an active (client, currency) already exists (unique index)
+                # e.g. an active (client, currency) already exists (unique index),
+                # or the client_type column couldn't be provisioned — keep the
+                # document-gate settings working without it.
+                try:
+                    if not _client_type_column_ready:
+                        row.pop("client_type", None)
+                        db.from_("client_document_profiles").insert(row).execute()
+                except Exception:
+                    pass
     return RedirectResponse("/admin/client-profiles", status_code=303)
 
 
@@ -101,12 +139,18 @@ async def client_profiles_edit(profile_id: str, request: Request):
     if user.get("role") != "admin":
         return RedirectResponse("/", status_code=302)
     db = get_db()
+    _ensure_client_type_column()
     if db:
         row = _profile_form_to_dict(await request.form())
         try:
             db.from_("client_document_profiles").update(row).eq("id", profile_id).execute()
         except Exception:
-            pass
+            try:
+                if not _client_type_column_ready:
+                    row.pop("client_type", None)
+                    db.from_("client_document_profiles").update(row).eq("id", profile_id).execute()
+            except Exception:
+                pass
     return RedirectResponse("/admin/client-profiles", status_code=303)
 
 

@@ -27,7 +27,8 @@ def test_every_apex_entity_has_a_complete_account_map(entity):
     accts = pc._CSI_ACCOUNTS[org_id]
     for side in ("apc", "cc"):
         assert set(accts[side]) == set(COMPONENTS)
-    assert set(accts["statutory"]) == set(pc._STATUTORY_COMPONENTS)
+    # Malaysia has no PhilHealth (health) or SHG/FWL (shg) scheme.
+    assert set(accts["statutory"]) == {"epf", "socso_eis", "hrdf", "mtd"}
     assert accts["payable"] and accts["bank"]
     ids = [*accts["apc"].values(), *accts["cc"].values(), *accts["statutory"].values(),
            accts["payable"], accts["bank"]]
@@ -76,7 +77,8 @@ def test_payroll_statutory_credits_same_liabilities_as_csi():
     assert maps["statutory"] == pc._CSI_ACCOUNTS[ORGS["HSSB"]["id"]]["statutory"]
 
 
-@pytest.mark.parametrize("stat_type,component", sorted(pc._STATUTORY_TYPE_COMPONENT.items()))
+@pytest.mark.parametrize("stat_type,component",
+                         [("EPF", "epf"), ("SOCSO_EIS", "socso_eis"), ("HRDF", "hrdf"), ("MTD", "mtd")])
 def test_remittance_debits_the_statutory_liability(monkeypatch, stat_type, component):
     posted = {}
 
@@ -109,7 +111,7 @@ def test_apex_entity_spelling_resolves_to_mapped_org(apex_entity):
     assert get_entity_org(apex_entity)["id"] in pc._CSI_ACCOUNTS
 
 
-# ── Revenue accrual (7th payout, non-APC) ────────────────────────────────────
+# ── Revenue accrual (every payout, non-APC) ──────────────────────────────────
 def _case(cycle_code="7TH", entity="HSSB", employees=None):
     return {"id": "case-00000001", "type": "CSI", "entity": entity, "period": "2026-08",
             "reference": "REF", "parsed_data": {"cycle_code": cycle_code, "entities": [
@@ -129,9 +131,17 @@ def test_revenue_grouped_per_non_apc_client():
     assert pc._revenue_accrual_by_client(EMPS) == {"AcmeCo": 1500.25, "GammaCo": 300.0}
 
 
-@pytest.mark.parametrize("cycle", ["25TH", "EOM"])
-def test_revenue_not_accrued_outside_7th_payout(cycle):
-    res = asyncio.run(pc._auto_book_revenue_accrual(_case(cycle, employees=EMPS), db=None))
+@pytest.mark.parametrize("cycle,date", [("25TH", "2026-08-25"), ("EOM", "2026-08-31"),
+                                        ("7TH", "2026-08-31"), ("15TH", "2026-08-31")])
+def test_revenue_accrued_every_payout_on_the_cost_accrual_date(zoho, cycle, date):
+    kase = _case(cycle, employees=EMPS)
+    res = asyncio.run(pc._auto_book_revenue_accrual(kase, _FakeDB()))
+    assert res["success"] and res["posted"] == 2 and res["cycle"] == cycle
+    assert {j["journal_date"] for j in zoho} == {date} == {pc._accrual_date(kase)}
+
+
+def test_payroll_case_gets_no_revenue_accrual():
+    res = asyncio.run(pc._auto_book_revenue_accrual({**_case(), "type": "PAYROLL"}, db=None))
     assert res == {"success": True, "not_applicable": True}
 
 

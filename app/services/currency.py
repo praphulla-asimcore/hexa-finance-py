@@ -9,6 +9,9 @@ CURRENCY_PREFIX: dict = {
     "MYR": "RM",
     "IDR": "Rp",
     "NPR": "NPR",
+    "SGD": "S$",
+    "PHP": "₱",
+    "MMK": "MMK",
 }
 
 

@@ -98,13 +98,13 @@ def build_check_report_pdf(kase: dict) -> bytes:
     statutory = check.get("statutory") or {}
     if statutory:
         story.append(Paragraph("STATUTORY BREAKDOWN", s["h3"]))
-        story.append(_kv_table([
-            ("EPF (Employer)", _fmt_rm(statutory.get("epf"))),
-            ("EIS (Employer)", _fmt_rm(statutory.get("eis"))),
-            ("SOCSO (Employer)", _fmt_rm(statutory.get("socso"))),
-            ("HRDF", _fmt_rm(statutory.get("hrdf"))),
-            ("MTD / PCB", _fmt_rm(statutory.get("mtd"))),
-        ]))
+        my_labels = {"epf": "EPF (Employer)", "eis": "EIS (Employer)", "socso": "SOCSO (Employer)",
+                     "hrdf": "HRDF", "mtd": "MTD / PCB"}
+        if set(statutory) <= set(my_labels):
+            rows = [(lbl, _fmt_rm(statutory.get(k))) for k, lbl in my_labels.items()]
+        else:   # other countries: their own keys (e.g. SG cpf/sdl/shg, PH sss/philhealth)
+            rows = [(k.upper(), _fmt_rm(v)) for k, v in statutory.items()]
+        story.append(_kv_table(rows))
         story.append(Spacer(1, 8))
 
     # Flags

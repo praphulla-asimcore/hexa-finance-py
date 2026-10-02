@@ -70,6 +70,35 @@ def _safe_float(v, default=0.0):
         return default
 
 
+# Statutory payload fields per internal employee key. Malaysia's names come
+# first; the others let PH/SG/MM runs send their own scheme names. Each key
+# takes the FIRST alias present (so one figure is never counted twice), except
+# the _ADDITIVE ones below, which are separate charges summed into the bucket.
+_STAT_ALIASES: dict = {
+    "epfEmployee":    ("epf_employee", "cpf_employee", "pagibig_employee", "hdmf_employee"),
+    "epfEmployer":    ("epf_employer", "cpf_employer", "pagibig_employer", "hdmf_employer"),
+    "socsoEmployee":  ("socso_employee", "sss_employee", "ssb_employee", "ssc_employee"),
+    "socsoEmployer":  ("socso_employer", "sss_employer", "ssb_employer", "ssc_employer"),
+    "healthEmployee": ("philhealth_employee", "phic_employee"),
+    "healthEmployer": ("philhealth_employer", "phic_employer"),
+    "hrdf":           ("hrdf", "sdl"),
+    "mtd":            ("mtd", "pcb", "pit", "withholding_tax", "wht", "income_tax"),
+}
+_ADDITIVE: dict = {
+    "socsoEmployer": ("sss_ec", "ec_employer"),                    # PH SSS Employees' Compensation
+    "shg":           ("shg", "cdac", "sinda", "mbmf", "ecf", "fwl"),  # SG self-help groups + FWL
+}
+
+
+def _stat_value(c: dict, key: str) -> float:
+    total = 0.0
+    for alias in _STAT_ALIASES.get(key, ()):
+        if c.get(alias) not in (None, ""):
+            total = _safe_float(c.get(alias))
+            break
+    return total + sum(_safe_float(c.get(a)) for a in _ADDITIVE.get(key, ()))
+
+
 def _validate(body: dict) -> list[str]:
     """All required fields present and well-formed. Returns a list of problems
     (empty ⇒ valid). Drives the 422 in step 1."""
@@ -308,8 +337,8 @@ async def apex_ingest(request: Request):
                         "ctcHexa":      _safe_float(c.get("ctc_hexa")),
                         "ctcHexaFile":  _safe_float(c.get("ctc_hexa")),
                         "ctcClient":    _safe_float(c.get("ctc_client")),
-                        "epfEmployee":  _safe_float(c.get("epf_employee")),
-                        "epfEmployer":  _safe_float(c.get("epf_employer")),
+                        "epfEmployee":  _stat_value(c, "epfEmployee"),
+                        "epfEmployer":  _stat_value(c, "epfEmployer"),
                         "epfBasis":     (c.get("epf_basis") or (
                                             "contractor" if c.get("category") == "Contractor"
                                             else "foreign" if (
@@ -317,15 +346,19 @@ async def apex_ingest(request: Request):
                                                 or not is_local_national(c.get("nationality"))
                                             ) else "local_under_60"
                                         )),
-                        "socsoEmployee":_safe_float(c.get("socso_employee")),
-                        "socsoEmployer":_safe_float(c.get("socso_employer")),
+                        "socsoEmployee":_stat_value(c, "socsoEmployee"),
+                        "socsoEmployer":_stat_value(c, "socsoEmployer"),
                         "eisEmployee":  _safe_float(c.get("eis_employee")),
                         "eisEmployer":  _safe_float(c.get("eis_employer")),
                         # E-SOCSO Lindung (L24) — employer-borne, accrued and
                         # remitted with SOCSO. Optional; older payloads omit it.
                         "socsoLindung": _safe_float(c.get("socso_lindung")),
-                        "mtd":          _safe_float(c.get("mtd")),
-                        "hrdf":         _safe_float(c.get("hrdf")),
+                        "mtd":          _stat_value(c, "mtd"),
+                        "hrdf":         _stat_value(c, "hrdf"),
+                        # PhilHealth (PH) and SG self-help-group/FWL — zero for MY.
+                        "healthEmployee": _stat_value(c, "healthEmployee"),
+                        "healthEmployer": _stat_value(c, "healthEmployer"),
+                        "shg":          _stat_value(c, "shg"),
                         "totalBilling": _safe_float(c.get("total_billing")),
                         "mgmtFee":      _safe_float(c.get("mgmt_fee")),
                         "bankAccountNumber": c.get("bank_account", ""),
