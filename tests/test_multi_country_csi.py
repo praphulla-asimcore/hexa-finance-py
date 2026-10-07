@@ -304,7 +304,7 @@ def test_ph_duplicate_maybank_account_blocks_file():
     assert pc._bank_gate({"check_data": cd})["blocked"]
 
 
-@pytest.mark.parametrize("country,entity", [("SG", "HSPL"), ("MM", "HMCL")])
+@pytest.mark.parametrize("country,entity", [("SG", "HSPL")])
 def test_manual_payment_list(country, entity):
     emps = [{"employeeId": "S1", "name": "Tan Ah Kow", "netSalary": 4321.5, "bankName": "DBS",
              "bankAccountNumber": "123-456-789", "costCentre": "Subex (Asia Pacific)"}]
@@ -314,6 +314,61 @@ def test_manual_payment_list(country, entity):
     assert cd["bankFormat"] == "MANUAL" and cd["bankTxt"] is None
     assert cd["manualPayments"][0]["accountNumber"] == "123456789"
     assert cd["crosscheck"]["ok"] and cd["paymentApproval"]["payableTotal"] == 4321.5
+
+
+MM_EMPS = [
+    {"employeeId": "M1", "name": "Aung Kyaw Min", "netSalary": 1500000.0,
+     "bankName": "CB Bank", "bankAccountNumber": "0010 1001 0001 2345", "costCentre": "Bank Negara Malaysia"},
+    {"employeeId": "M2", "name": "Su Su Hlaing", "netSalary": 980000.6,
+     "bankName": "Co-operative Bank Ltd", "bankAccountNumber": "9999000011112222", "costCentre": "Nokia"},
+    {"employeeId": "M3", "name": "Thura Zaw", "netSalary": 700000.0,
+     "bankName": "KBZ Bank", "bankAccountNumber": "99930199912345601", "costCentre": "Nokia"},
+    {"employeeId": "M4", "name": "Hla Hla", "netSalary": 400000.0,
+     "bankName": "CB Bank", "bankAccountNumber": "12345678", "costCentre": "Nokia"},   # not 16 digits
+]
+
+
+def test_mm_cb_bank_file_splits_cbb_and_manual():
+    db = _BankDB()
+    res = asyncio.run(bf.get_bank_file_generator("MM")(_bank_case("HMCL", MM_EMPS), db, "tester"))
+    cd = db.updates[-1]["check_data"]
+    assert cd["bankFormat"] == "CBB_MM"
+    assert cd["bankTxt"]["name"] == "HMCL300926.xls" and len(cd["bankTxt"]["name"]) <= 15
+    assert {m["employeeId"] for m in cd["manualPayments"]} == {"M3", "M4"}
+    assert cd["crosscheck"]["ok"], cd["crosscheck"]
+    assert [i["code"] for i in cd["crosscheck"]["issues"]] == ["MMK_ROUNDING"]
+    assert cd["paymentApproval"]["payableTotal"] == 3580000.6
+
+    import xlrd
+    ws = xlrd.open_workbook(file_contents=base64.b64decode(cd["bankTxt"]["data"])).sheet_by_index(0)
+    assert ws.name == "Sheet1" and ws.nrows == 3
+    assert ws.row_values(0) == ["Description", "Account Number", "Currency", "Amount"]
+    assert ws.row_values(1) == ["BNM_Aung_Kyaw_0926", "0010100100012345", "MMK", 1500000.0]
+    assert ws.row_values(2) == ["Nokia_Su_Su_0926", "9999000011112222", "MMK", 980001.0]  # whole MMK
+    assert ws.cell(1, 1).ctype == xlrd.XL_CELL_TEXT        # account kept as text, all 16 digits
+    wb = openpyxl.load_workbook(io.BytesIO(res["xlsxBytes"]))
+    assert wb.sheetnames == ["CB Bank Upload", "Manual Payments"]
+
+
+def test_mm_duplicate_cbb_account_blocks_file():
+    emps = [dict(MM_EMPS[0]), {**MM_EMPS[0], "employeeId": "M9", "name": "Other Person"}]
+    db = _BankDB()
+    asyncio.run(bf.get_bank_file_generator("MM")(_bank_case("HMCL", emps), db, "tester"))
+    cd = db.updates[-1]["check_data"]
+    assert not cd["crosscheck"]["ok"]
+    assert pc._bank_gate({"check_data": cd})["blocked"]
+
+
+def test_mm_no_cbb_payees_gives_manual_list_only():
+    db = _BankDB()
+    asyncio.run(bf.get_bank_file_generator("MM")(_bank_case("HMCL", [MM_EMPS[2]]), db, "tester"))
+    cd = db.updates[-1]["check_data"]
+    assert cd["bankTxt"] is None and len(cd["manualPayments"]) == 1 and cd["crosscheck"]["ok"]
+
+
+def test_mm_cbb_description_fits_template():
+    d = bf._mm_cbb_description("Very Long Client Name Holdings Berhad", "Maung Maung Kyaw O'Brien", "0926")
+    assert len(d) <= 35 and "'" not in d
 
 
 def test_stat_fields_for_check_summary():

@@ -1327,7 +1327,7 @@ async def generate_and_store_bank_files_ph(kase: dict, db, triggered_by: str) ->
 
 
 async def generate_and_store_bank_files_manual(kase: dict, db, triggered_by: str) -> dict:
-    """HSPL / HMCL: no bank bulk-upload template on file yet, so every payee is
+    """HSPL: no bank bulk-upload template on file yet, so every payee is
     listed for manual payment. Same per-row controls and cross-check as the
     templated countries, so the workflow (approval, Zoho payment) is unchanged."""
     from app.config import get_entity_currency
@@ -1353,6 +1353,154 @@ async def generate_and_store_bank_files_manual(kase: dict, db, triggered_by: str
         sel=sel, manual=manual, crosscheck=crosscheck, bank_txt=None)
 
 
+# ─── Myanmar (HMCL) — CB Bank "Payroll and Bulk Simple File" ─────────────────
+# Mirrors HMCL_Payroll and Bulk Simple File.xls: Sheet1, header row then one row
+# per transfer — Description (mandatory, max 35), Account Number (credit account
+# or ATM card, 16 digits), Currency (3, upper case), Amount (no decimal for MMK);
+# no empty row in the middle; file name max 15 characters. There is no bank-code
+# column, so it is CB Bank → CB Bank only (HMCL pays from Cash at Bank_CB Bank_MMK);
+# everyone else is paid manually and listed on the "Manual Payments" sheet.
+MM_CBB_HEADERS    = ["Description", "Account Number", "Currency", "Amount"]
+MM_CBB_ACCOUNT_LEN = 16
+MM_CBB_DESC_MAX   = 35
+_MM_CBB_BANK_RE   = re.compile(r"\bcb\b|co-?operative", re.I)   # "CB Bank", "Co-operative Bank Ltd"
+
+
+def mm_cbb_account_ok(acct: str) -> bool:
+    return acct.isdigit() and len(acct) == MM_CBB_ACCOUNT_LEN
+
+
+def _mm_cbb_amount(amount, ccy: str):
+    """Whole units for MMK (the template allows no decimal), 2dp otherwise."""
+    from decimal import Decimal, ROUND_HALF_UP
+    q = Decimal("1") if ccy == "MMK" else Decimal("0.01")
+    d = Decimal(str(amount or 0)).quantize(q, rounding=ROUND_HALF_UP)
+    return int(d) if ccy == "MMK" else float(d)
+
+
+def _mm_cbb_description(client: str, name: str, mmyy: str) -> str:
+    desc = re.sub(r"[^A-Za-z0-9 _-]", "", _advice_detail(client, name, mmyy))
+    return desc[:MM_CBB_DESC_MAX] or f"Salary {mmyy}"
+
+
+def build_mm_cbb_xls(rows: list) -> bytes:
+    """rows: [{"description", "accountNumber", "currency", "amount"}] → .xls
+    (BIFF8, as the bank's template). Account Number is a TEXT cell: a 16-digit
+    number stored as a float loses digits past 2^53."""
+    import xlwt
+    wb = xlwt.Workbook()
+    ws = wb.add_sheet("Sheet1")
+    text = xlwt.easyxf(num_format_str="@")
+    bold = xlwt.easyxf("font: bold on")
+    for c, h in enumerate(MM_CBB_HEADERS):
+        ws.write(0, c, h, bold)
+    for r, row in enumerate(rows, 1):
+        ws.write(r, 0, row["description"], text)
+        ws.write(r, 1, row["accountNumber"], text)
+        ws.write(r, 2, row["currency"], text)
+        ws.write(r, 3, row["amount"], xlwt.easyxf(num_format_str="0" if row["currency"] == "MMK" else "0.00"))
+    for c, w in enumerate((36, 20, 10, 14)):
+        ws.col(c).width = 256 * w
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _validate_mm_cbb_xls(xls_bytes: bytes, expected: list) -> list:
+    """Re-read the generated .xls on its own and check it against the bank's
+    rules and the rows that were meant to go in it. Returns critical issues."""
+    import xlrd
+    issues = []
+    ws = xlrd.open_workbook(file_contents=xls_bytes).sheet_by_index(0)
+    if [str(ws.cell_value(0, c)) for c in range(4)] != MM_CBB_HEADERS:
+        issues.append({"level": "critical", "code": "XLS_LAYOUT", "message": "Bank file header row is not the CB Bank template's."})
+    found = []
+    for r in range(1, ws.nrows):
+        desc, acct, ccy, amt = (ws.cell_value(r, c) for c in range(4))
+        if not desc or len(desc) > MM_CBB_DESC_MAX or not mm_cbb_account_ok(str(acct)) \
+                or not (len(ccy) == 3 and ccy.isupper()) or (ccy == "MMK" and amt != int(amt)):
+            issues.append({"level": "critical", "code": "XLS_ROW_INVALID",
+                           "message": f"Bank file row {r + 1} breaks the CB Bank template rules."})
+        found.append((str(acct), round(float(amt or 0), 2)))
+    want = sorted((e["accountNumber"], round(float(e["amount"]), 2)) for e in expected)
+    if sorted(found) != want:
+        issues.append({"level": "critical", "code": "XLS_MISMATCH",
+                       "message": f"CB Bank .xls has {len(found)} row(s) / {sum(a for _, a in found):,.2f}; "
+                                  f"expected {len(want)} / {sum(a for _, a in want):,.2f}."})
+    return issues
+
+
+async def generate_and_store_bank_files_mm(kase: dict, db, triggered_by: str) -> dict:
+    """HMCL: CB Bank holders with a 16-digit account → CB Bank bulk .xls;
+    everyone else → 'Manual Payments' sheet, paid by hand from the same account."""
+    from app.config import get_entity_currency
+    sel = _payees_with_exclusions(kase, db, triggered_by)
+    if sel["excludedDocGate"] and not sel["payees"]:
+        raise ValueError("No consultants cleared document gates — bank file cannot be generated")
+    pay_date = kase.get("payment_date") or datetime.now(timezone.utc).date().isoformat()
+    yr, mo, dy = pay_date.split("-")
+    ccy = get_entity_currency(kase.get("entity", ""))
+
+    cbb, manual = [], []
+    for p in sel["payees"]:
+        is_cbb = bool(_MM_CBB_BANK_RE.search(p["bankName"]))
+        if is_cbb and mm_cbb_account_ok(p["accountNumber"]):
+            cbb.append(p)
+        else:
+            reason = (f"CB Bank account is not {MM_CBB_ACCOUNT_LEN} digits — verify the account"
+                      if is_cbb else f"Not a CB Bank account ({p['bankName'] or 'bank not given'})")
+            manual.append({**p, "reason": reason})
+
+    upload_rows = [{"description": _mm_cbb_description(p["costCentre"], p["payeeName"], f"{mo}{yr[2:]}"),
+                    "accountNumber": p["accountNumber"], "currency": ccy,
+                    "amount": _mm_cbb_amount(p["amount"], ccy)} for p in cbb]
+    xls_name = f"HMCL{dy}{mo}{yr[2:]}.xls"   # 14 chars — bank limit is 15
+    xls = build_mm_cbb_xls(upload_rows) if cbb else None
+
+    xlsx = _payment_workbook([
+        ("CB Bank Upload",
+         [["CB BANK PAYROLL AND BULK SIMPLE FILE (Myanmar)"], ["Entity", kase.get("entity", "")],
+          ["Payment date", pay_date], ["Currency", ccy], ["Case", kase.get("reference", "")],
+          ["Upload file", xls_name if cbb else "— (no CB Bank payees)"]],
+         ["No.", "Consultant", "Account No. (16 digit)", f"CSI Net Pay ({ccy})", "Upload Amount", "Description"],
+         [[n, p["payeeName"], p["accountNumber"], round(p["amount"], 2), u["amount"], u["description"]]
+          for n, (p, u) in enumerate(zip(cbb, upload_rows), 1)]),
+        ("Manual Payments", [["Pay these by hand (not CB Bank holders, or failed validation)."]],
+         ["No.", "Consultant", "Employee ID", "Client", "Bank", "Account No.", f"Amount ({ccy})", "Reason"],
+         [[n, m["payeeName"], m["employeeId"], m["costCentre"], m["bankName"], m["accountNumber"],
+           round(m["amount"], 2), m["reason"]] for n, m in enumerate(manual, 1)]),
+    ])
+    crosscheck = _reconcile_payment_file(
+        xlsx, sel["payees"], [("CB Bank Upload", 3, 4), ("Manual Payments", 6, 7)])
+
+    issues, notes = [], []
+    accts = [p["accountNumber"] for p in cbb]
+    dupes = sorted({a for a in accts if accts.count(a) > 1})
+    if dupes:
+        issues.append({"level": "critical", "code": "DUPLICATE_ACCOUNT",
+                       "message": f"Same CB Bank account on more than one row: {', '.join(dupes)}"})
+    if xls is not None:
+        try:
+            issues += _validate_mm_cbb_xls(xls, upload_rows)
+        except Exception as e:
+            issues.append({"level": "critical", "code": "XLS_UNREADABLE", "message": f"CB Bank .xls could not be re-read: {str(e)[:120]}"})
+    rounding = round(sum(u["amount"] for u in upload_rows) - sum(p["amount"] for p in cbb), 2)
+    if rounding:
+        notes.append({"level": "warning", "code": "MMK_ROUNDING",
+                      "message": f"CSI net pay has decimals; the CB Bank file pays whole {ccy} "
+                                 f"(difference {rounding:+,.2f} {ccy} across the file)."})
+    if issues or notes:
+        crosscheck = {**crosscheck, "issues": (crosscheck.get("issues") or []) + issues + notes}
+    if issues:
+        crosscheck = {**crosscheck, "ok": False, "summary": "Bank file does NOT pass validation"}
+    bank_txt = ({"name": xls_name, "runNumber": None, "format": "CBB_MM",
+                 "data": base64.b64encode(xls).decode()} if xls else None)
+    return await _store_payment_file(
+        kase, db, triggered_by, bank_format="CBB_MM",
+        xlsx_name=f"CBB_MM_Payroll_{kase['reference']}_{dy}{mo}{yr}.xlsx", xlsx_bytes=xlsx,
+        sel=sel, manual=manual, crosscheck=crosscheck, bank_txt=bank_txt)
+
+
 # CSI bank-file generator, selected by the case's entity → country (see
 # app.config.get_entity_country). Fail loud on an unrecognised/unconfigured
 # country -- generating a payment file against the wrong country's rules
@@ -1363,7 +1511,7 @@ BANK_FILE_GENERATORS: dict = {
     "NP": generate_and_store_bank_files_np,
     "PH": generate_and_store_bank_files_ph,
     "SG": generate_and_store_bank_files_manual,
-    "MM": generate_and_store_bank_files_manual,
+    "MM": generate_and_store_bank_files_mm,
 }
 
 

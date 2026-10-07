@@ -4068,7 +4068,7 @@ async def download_bank_txt(case_id: str, request: Request):
     file_bytes = base64.b64decode(bank_txt["data"])
     return Response(
         content=file_bytes,
-        media_type="text/plain",
+        media_type=("application/vnd.ms-excel" if bank_txt["name"].lower().endswith(".xls") else "text/plain"),
         headers={"Content-Disposition": f'attachment; filename="{bank_txt["name"]}"'},
     )
 
