@@ -21,8 +21,12 @@
     <div><label class="label">Bank Name</label>
       <select class="input" name="bank_name">
         <option value="">—</option>
-        {% for b in bank_names %}
-        <option value="{{ b }}" {% if o and o.bank_name and o.bank_name|lower == b|lower %}selected{% endif %}>{{ b }}</option>
+{% for country, label, names in bank_groups %}
+        <optgroup label="{{ label }}" data-country="{{ country }}">
+          {% for b in names %}
+          <option value="{{ b }}" {% if o and o.bank_name and o.bank_name|lower == b|lower %}selected{% endif %}>{{ b }}</option>
+          {% endfor %}
+        </optgroup>
         {% endfor %}
       </select></div>
     <div><label class="label">Bank Account Number</label>

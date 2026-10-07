@@ -5,10 +5,10 @@ import psycopg
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from app.config import TEMPLATES_DIR, ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN
+from app.config import TEMPLATES_DIR, ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, get_entity_country
 from app.deps import get_current_user
 from app.services.db import get_db
-from app.services.bank_files import MY_BANK_CODES, bank_name_to_code
+from app.services.bank_files import BANK_NAMES_BY_COUNTRY, bank_name_to_code
 from app.services.consultant_master_import import (
     fetch_missing_fav_code_rows, set_fav_code_for_consultant,
     upsert_consultant_master, _parse_date,
@@ -201,7 +201,7 @@ async def bank_overrides(request: Request):
         overrides = resp.data or []
     return templates.TemplateResponse(request, "admin/bank_overrides.html", {
         "user": user, "section": "admin", "overrides": overrides,
-        "bank_names": sorted({n.title() for n in MY_BANK_CODES}),
+        "bank_groups": BANK_NAME_GROUPS,
     })
 
 
@@ -277,7 +277,11 @@ async def missing_fav_codes_set(apex_employee_id: str, request: Request):
 # ─── Manual consultant_master entry (add someone the Talenox export doesn't
 #     have, or fix one row, without a full re-import) ─────────────────────────
 
-CONSULTANT_ENTITIES = ("HSSB", "HCSSB", "HEDU", "DATACRATS")
+CONSULTANT_ENTITIES = ("HSSB", "HCSSB", "HEDU", "DATACRATS", "HMCL")
+_COUNTRY_LABELS = {"MY": "Malaysia", "MM": "Myanmar"}
+# [(country, label, bank names)] for the Bank Name <optgroup>s; the consultant
+# form shows only the group matching the chosen entity's country.
+BANK_NAME_GROUPS = [(c, _COUNTRY_LABELS[c], names) for c, names in BANK_NAMES_BY_COUNTRY.items()]
 _HEX_ID_RE = re.compile(r"^HEX-\d+$", re.IGNORECASE)
 
 
@@ -349,7 +353,8 @@ async def consultants_list(request: Request, q: str = ""):
     return templates.TemplateResponse(request, "admin/consultants.html", {
         "user": user, "section": "admin", "consultants": rows, "q": q, "total": total,
         "entities": CONSULTANT_ENTITIES,
-        "bank_names": sorted({n.title() for n in MY_BANK_CODES}),
+        "entity_country": {e: get_entity_country(e) for e in CONSULTANT_ENTITIES},
+        "bank_groups": BANK_NAME_GROUPS,
         "fav_by_apex_id": fav_by_apex_id,
     })
 

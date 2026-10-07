@@ -387,3 +387,18 @@ def test_cost_accrual_refuses_unmapped_component(monkeypatch):
                 {"name": "A", "costCentre": "X", "netSalary": 100, "healthEmployer": 5}]}]}}
     res = asyncio.run(pc._auto_book_accruals(kase, None))
     assert not res["success"] and "cc.health" in res["error"]
+
+
+def test_mm_bank_names_route_correctly():
+    assert "Kanbawza Bank Ltd" in bf.BANK_NAMES_BY_COUNTRY["MM"]
+    cbb = {b for b in bf.BANK_NAMES_BY_COUNTRY["MM"] if bf._MM_CBB_BANK_RE.search(b)}
+    assert cbb == {"CB Bank"}            # Kanbawza is paid manually, never in the CB Bank file
+
+
+def test_hmcl_consultant_can_be_added_with_myanmar_bank():
+    from app.routers import admin
+    assert "HMCL" in admin.CONSULTANT_ENTITIES
+    row = admin._consultant_form_to_row({"entity": "hmcl", "employee_id": "HEX-1", "consultant_name": "Aung",
+                                         "bank_name": "Kanbawza Bank Ltd", "bank_account_number": "9993 0199 9123"})
+    assert row["entity"] == "HMCL" and row["bank_name"] == "Kanbawza Bank Ltd"
+    assert row["bank_account_number"] == "99930199" "9123" and row["bank_code"] == ""

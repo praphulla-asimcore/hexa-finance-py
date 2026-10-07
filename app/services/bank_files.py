@@ -67,6 +67,17 @@ BANK_CODES: dict = {
 }
 
 
+# Bank-name choices for consultant bank details, by country. Malaysia comes
+# from MY_BANK_CODES; Myanmar has no bank-code scheme (the CB Bank bulk file
+# carries none), so its banks are listed by name. Keep "CB Bank" matching
+# _MM_CBB_BANK_RE, or HMCL consultants drop out of the CB Bank upload file.
+MM_BANK_NAMES = ("CB Bank", "Kanbawza Bank Ltd")
+BANK_NAMES_BY_COUNTRY: dict = {
+    "MY": sorted({n.title() for n in MY_BANK_CODES}),
+    "MM": sorted(MM_BANK_NAMES),
+}
+
+
 def bank_name_to_code(name: str, country: str = "MY") -> str:
     if not name:
         return ""

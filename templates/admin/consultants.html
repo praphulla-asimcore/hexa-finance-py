@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% macro consultant_form(action, c, submit_label, form_id, lock_keys, fav_code) %}
-<form method="post" action="{{ action }}" id="{{ form_id }}" class="cm-form">
+<form method="post" action="{{ action }}" id="{{ form_id }}" class="cm-form" data-bank-filter>
   <div class="cm-section">
     <div class="cm-section-title">Identity</div>
     <div class="cm-grid">
@@ -10,7 +10,7 @@
         <input class="input" value="{{ c.entity }}" disabled>
         <input type="hidden" name="entity" value="{{ c.entity }}">
         {% else %}
-        <select class="input" name="entity" required>
+        <select class="input" name="entity" required onchange="cmFilterBanks(this.form)">
           <option value="">—</option>
           {% for e in entities %}
           <option value="{{ e }}" {% if c and c.entity == e %}selected{% endif %}>{{ e }}</option>
@@ -46,8 +46,12 @@
       <div><label class="label">Bank Name</label>
         <select class="input" name="bank_name">
           <option value="">—</option>
-          {% for b in bank_names %}
-          <option value="{{ b }}" {% if c and c.bank_name and c.bank_name|lower == b|lower %}selected{% endif %}>{{ b }}</option>
+{% for country, label, names in bank_groups %}
+          <optgroup label="{{ label }}" data-country="{{ country }}">
+            {% for b in names %}
+            <option value="{{ b }}" {% if c and c.bank_name and c.bank_name|lower == b|lower %}selected{% endif %}>{{ b }}</option>
+            {% endfor %}
+          </optgroup>
           {% endfor %}
         </select></div>
       <div><label class="label">Bank Account Name</label>
@@ -163,5 +167,18 @@
 </style>
 <script>
 function cpToggle(id){ var e=document.getElementById(id); e.style.display=(e.style.display==='none'?'':'none'); }
+// Bank Name lists only the banks of the chosen entity's country (all, until one is chosen).
+var CM_ENTITY_COUNTRY = {{ entity_country|tojson }};
+function cmFilterBanks(form){
+  var country = CM_ENTITY_COUNTRY[form.elements['entity'].value] || '';
+  var sel = form.elements['bank_name'];
+  sel.querySelectorAll('optgroup').forEach(function(g){
+    var off = !!country && g.dataset.country !== country;
+    g.hidden = off; g.disabled = off;
+  });
+  var opt = sel.options[sel.selectedIndex];
+  if (opt && opt.parentNode.disabled) sel.value = '';
+}
+document.querySelectorAll('form[data-bank-filter]').forEach(cmFilterBanks);
 </script>
 {% endblock %}
