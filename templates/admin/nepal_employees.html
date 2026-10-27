@@ -27,7 +27,16 @@
     <div class="cm-section-title">Bank Details</div>
     <div class="cm-grid">
       <div><label class="label">Bank Name</label>
-        <input class="input" name="bank_name" value="{{ (e.bank_name or '') if e else '' }}"></div>
+        {% set cur_bank = (e.bank_name or '') if e else '' %}
+        <select class="input" name="bank_name">
+          <option value="">—</option>
+          {% if cur_bank and cur_bank not in np_banks|map(attribute=1)|list %}
+          <option value="{{ cur_bank }}" selected>{{ cur_bank }} (as entered — pick from the list)</option>
+          {% endif %}
+          {% for code, name, branch in np_banks|sort(attribute=1) %}
+          <option value="{{ name }}" {% if cur_bank == name %}selected{% endif %}>{{ name }} — {{ code }}</option>
+          {% endfor %}
+        </select></div>
       <div><label class="label">Bank Account Name</label>
         <input class="input" name="bank_account_name" value="{{ (e.bank_account_name or '') if e else '' }}"></div>
       <div><label class="label">Bank Account Number</label>
@@ -87,7 +96,7 @@
         <td style="text-align:left">{{ e.employee_name }}</td>
         <td>{{ e.employee_ledger_code or '—' }}</td>
         <td>{{ e.apex_employee_id or '—' }}</td>
-        <td>{{ e.bank_name or '—' }}</td>
+        <td>{{ e.bank_name or '—' }}{% if e.ips_bank %} <span style="color:var(--text-muted)">({{ e.ips_bank[0] }})</span>{% elif e.bank_name %} <span style="color:#b45309" title="Not on the Nepal IPS list — this person goes on the manual payment list">⚠ not on IPS list</span>{% endif %}</td>
         <td>{{ e.bank_account_number or '—' }}</td>
         <td>{{ e.ssf_number or '—' }}</td>
         <td style="white-space:nowrap">

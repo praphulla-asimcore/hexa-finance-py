@@ -55,15 +55,122 @@ MY_BANK_CODES = {
     "bsn": "BSNAMYK1", "bank simpanan nasional": "BSNAMYK1",
 }
 
-# Country-keyed bank-code maps. Indonesia (BCA/Mandiri/BNI/BRI) and Nepal
-# banks are empty until a real bank list is provided -- bank_name_to_code
-# just returns "" for them (same as an unrecognised MY bank name today),
-# rather than raising, since a blank bank code is already a handled/flagged
-# case throughout the bank-file pipeline.
+# Nepal IPS bank list (NCHL "IPS AND RTGS CODES July 2022.xlsx", IPS CODES
+# sheet): (bank code, official name, head-office branch code). The HNPL bulk
+# upload file carries both codes per payee, and every row of the Sep-2026
+# upload used the bank's head-office branch from this list.
+NP_BANKS: tuple = (
+    ("0001", "Nepal Rastra Bank", "1200"),
+    ("0101", "Nepal Bank Limited", "1"),
+    ("0201", "Rastriya Banijya Bank Limited", "143"),
+    ("0301", "Agriculture Development Bank Ltd", "2"),
+    ("0401", "Nabil Bank Ltd.", "99"),
+    ("0501", "Nepal Investment Mega Bank Limited", "1"),
+    ("0601", "Standard Chartered Bank Nepal Limited", "11"),
+    ("0701", "Himalayan Bank Limited", "1"),
+    ("0801", "Nepal SBI Bank Limited", "177"),
+    ("1001", "Everest Bank Limited", "10"),
+    ("1101", "Bank of Kathmandu Limited", "1000"),
+    ("1201", "Nepal Credit and Commerce Bank Limited", "3"),
+    ("1501", "Machhapuchre Bank Limited", "1"),
+    ("1601", "Kumari Bank Ltd.", "9900"),
+    ("2201", "Laxmi Sunrise Bank Ltd", "1"),
+    ("1801", "Siddhartha Bank Limited", "1"),
+    ("1901", "Global IME Bank Limited", "75"),
+    ("2001", "Citizens Bank International Limited", "1"),
+    ("2101", "Prime Commercial Bank Limited", "1"),
+    ("2301", "NIC Asia Bank Limited", "32"),
+    ("2501", "NMB Bank Limited", "9"),
+    ("2601", "Prabhu Bank Limited", "999"),
+    ("3001", "Civil Bank Ltd.", "1"),
+    ("3101", "Century Commercial Bank Limited", "1"),
+    ("4501", "Sanima Bank Ltd.", "1"),
+    ("5401", "Lumbini Bikas Bank Ltd", "1"),
+    ("5901", "Saptakoshi Development Bank Ltd.", "1"),
+    ("6001", "Jyoti Bikash Bank Ltd", "1"),
+    ("6401", "Sindhu Bikash Bank Ltd.", "2"),
+    ("6601", "Garima Bikas Bank Limited", "999"),
+    ("6801", "Kamana Sewa Bikas Bank Ltd", "999"),
+    ("7201", "Muktinath Bikas Bank Limited", "13"),
+    ("7301", "Shangrila Development Bank Limited", "1"),
+    ("7401", "Tinau Bikas Bank Limited", "111"),
+    ("7502", "Excel Development Bank Ltd", "1"),
+    ("7509", "Miteri Development Bank Limited", "1"),
+    ("7514", "Hamro Bikas Bank Limited", "1"),
+    ("7515", "Kankai Bikas Bank Ltd", "1"),
+    ("7516", "Best Finance Company Ltd", "999"),
+    ("7517", "Green Development Bank Ltd", "1"),
+    ("7518", "Nepal Infrastructure Bank Ltd.", "1"),
+    ("7519", "City Express Finance Company Ltd.", "1"),
+    ("7602", "Nepal Community Development Bank Ltd", "1"),
+    ("7604", "Janaki Finance Company Ltd.", "1"),
+    ("7606", "Sahara Bikash Bank Limited", "1"),
+    ("8101", "Shine Resunga Development Bank Ltd.", "1"),
+    ("8201", "Srijana Finance Limited", "1"),
+    ("8301", "Gurkhas Finance Limited", "1"),
+    ("9001", "Goodwill Finance Limited", "1"),
+    ("9201", "Shree Investment", "1"),
+    ("9701", "Lalitpur Finance Co. Ltd", "1"),
+    ("9801", "United Finance Ltd.", "999"),
+    ("9902", "Progressive Finance Co. Ltd.", "1"),
+    ("9905", "Pokhara Finance Ltd.", "1"),
+    ("9906", "Central Finance Ltd", "1"),
+    ("9915", "Guheshwori Merchant Banking and Finance Limited", "10"),
+    ("9919", "ICFC Finance Limited", "1"),
+    ("9931", "Mahalaxmi Bikash Bank Ltd.", "999"),
+    ("9935", "Manjushree Finance Limited", "1"),
+    ("9936", "Mission Development Bank Limited", "1001"),
+    ("9939", "Reliance Finance Ltd.", "10"),
+)
+
+_NP_NAME_NOISE = re.compile(r"\b(limited|ltd|co|company|international)\b")
+# Spellings seen in HNPL's own bank files that differ from the IPS list.
+_NP_BANK_ALIASES = {
+    "machhapuchchhre bank": "1501",
+    "citizen bank": "2001",
+    "sunrise bank": "2201",
+    "laxmi bank": "2201",
+    "mega bank": "0501",
+    "nepal investment bank": "0501",
+}
+
+
+def _np_bank_key(name: str) -> str:
+    s = re.sub(r"[^a-z0-9 ]", " ", (name or "").lower())
+    return " ".join(_NP_NAME_NOISE.sub(" ", s).split())
+
+
+_NP_BANK_BY_KEY = {_np_bank_key(n): (c, n, b) for c, n, b in NP_BANKS}
+_NP_BANK_BY_CODE = {c: (c, n, b) for c, n, b in NP_BANKS}
+
+
+def np_bank_lookup(name: str = "", code: str = "") -> tuple | None:
+    """(bank code, official name, branch code) for a Nepal bank, by IPS code
+    or by name as people actually write it ("Nabil Bank", "NMB Bank",
+    "Machhapuchchhre Bank Limited"); None when it isn't recognised."""
+    code = str(code or "").strip()
+    if code:
+        hit = _NP_BANK_BY_CODE.get(code.zfill(4))
+        if hit:
+            return hit
+    key = _np_bank_key(name)
+    if not key:
+        return None
+    if key in _NP_BANK_BY_KEY:
+        return _NP_BANK_BY_KEY[key]
+    if key in _NP_BANK_ALIASES:
+        return _NP_BANK_BY_CODE[_NP_BANK_ALIASES[key]]
+    return None
+
+
+# Country-keyed bank-code maps. Indonesia (BCA/Mandiri/BNI/BRI) is empty
+# until a real bank list is provided -- bank_name_to_code just returns ""
+# (same as an unrecognised MY bank name today), rather than raising, since a
+# blank bank code is already a handled/flagged case throughout the bank-file
+# pipeline. Nepal resolves through np_bank_lookup (spelling-tolerant).
 BANK_CODES: dict = {
     "MY": MY_BANK_CODES,
     "ID": {},
-    "NP": {},
 }
 
 
@@ -75,12 +182,16 @@ MM_BANK_NAMES = ("CB Bank", "Kanbawza Bank Ltd")
 BANK_NAMES_BY_COUNTRY: dict = {
     "MY": sorted({n.title() for n in MY_BANK_CODES}),
     "MM": sorted(MM_BANK_NAMES),
+    "NP": sorted(n for _c, n, _b in NP_BANKS),
 }
 
 
 def bank_name_to_code(name: str, country: str = "MY") -> str:
     if not name:
         return ""
+    if (country or "").upper() == "NP":
+        hit = np_bank_lookup(name)
+        return hit[0] if hit else ""
     codes = BANK_CODES.get((country or "MY").upper(), MY_BANK_CODES)
     return codes.get(name.strip().lower(), "")
 
@@ -1033,12 +1144,221 @@ async def generate_and_store_bank_files_id(kase: dict, db, triggered_by: str) ->
     )
 
 
+# ─── Nepal (HNPL) — bulk salary upload (Cash at Bank - SCB) ──────────────────
+# Mirrors HNPL_Bulk Upload Template.xlsx (Sep-2026 upload): one sheet named for
+# the month, row 1 left empty, then one row per payee — Date (DD/MM/YYYY),
+# Name, Bank, Bank Code, Branch Code, Acc No, Net Salary, Remarks
+# ("<client>_<Mon>'<YY>", e.g. GW_Sep'26). Every cell is text except the
+# amount, so leading zeros in codes and account numbers survive. Bank details
+# come from nepal_employee_master (CSI and internal payroll alike); a payee
+# whose bank isn't on the IPS list, or who has no account, goes on the
+# "Manual Payments" sheet instead.
+NP_BULK_HEADERS = ["Date", "Name", "Bank", "Bank Code", "Branch Code", "Acc No", "Net Salary", "Remarks"]
+_NP_CLIENT_CODES = {"time energy": "TE", "guardware": "GW", "sbc and co": "SBC"}
+
+
+def _np_client_code(sheet_name: str, internal: bool) -> str:
+    if internal:
+        return "HNPL"
+    key = " ".join(re.sub(r"[^a-z0-9 ]", " ", (sheet_name or "").lower()).split())
+    return _NP_CLIENT_CODES.get(key) or _client_initials(sheet_name) or "CSI"
+
+
+def _np_period_label(period: str) -> str:
+    """'202609-EOM' / '2026-09' → "Sep'26"."""
+    digits = re.sub(r"\D", "", period or "")[:6]
+    if len(digits) < 6:
+        return ""
+    return datetime(int(digits[:4]), int(digits[4:6]), 1).strftime("%b'%y")
+
+
+def fetch_nepal_employees(db) -> list[dict]:
+    try:
+        return db.from_("nepal_employee_master").select("*").execute().data or []
+    except Exception:
+        return []
+
+
+def match_nepal_employee(emp: dict, master: list[dict]):
+    """RigoHR ledger code / EIN first, then APEX id, then exact (normalised)
+    name — Nepal files carry no IC number to corroborate on."""
+    emp_id = str(emp.get("employeeId") or "").strip()
+    for key in ("employee_ledger_code", "apex_employee_id"):
+        if emp_id:
+            hit = [m for m in master if str(m.get(key) or "").strip().lower() == emp_id.lower()]
+            if len(hit) == 1:
+                return hit[0]
+    name = _norm_name(emp.get("name") or "")
+    hit = [m for m in master if name and _norm_name(m.get("employee_name") or "") == name]
+    return hit[0] if len(hit) == 1 else None
+
+
+def _np_payees(kase: dict, db, triggered_by: str) -> dict:
+    """Same per-row controls as _payees_with_exclusions (missing sighting,
+    document gate), with bank details from nepal_employee_master."""
+    entities = (kase.get("parsed_data") or {}).get("entities", [])
+    check = kase.get("check_data") or {}
+    master = fetch_nepal_employees(db)
+    try:
+        sighting_rows = db.from_("consultant_sighting").select("employee_id,status").eq(
+            "case_id", kase["id"]).execute().data or []
+    except Exception:
+        sighting_rows = []
+    missing_ids = {r["employee_id"] for r in sighting_rows if r["status"] == "missing"}
+    doc_gate_by_emp: dict = {}
+    if not check.get("bankGateOverride"):
+        for fl in (check.get("flags") or []):
+            if fl.get("code") in DOC_GATE_CODES:
+                k = str(fl.get("employeeId") or "").strip() or str(fl.get("employee") or "").strip()
+                doc_gate_by_emp.setdefault(k, set()).add(fl["code"])
+
+    out = {"payees": [], "excludedMissing": [], "excludedDocGate": [], "idConflicts": [], "noBank": []}
+    for ent in entities:
+        for emp in ent.get("employees", []):
+            emp_id = str(emp.get("employeeId", "")).strip()
+            base = {"name": emp.get("name", ""), "employeeId": emp_id, "entity": ent["sheetName"]}
+            if missing_ids and emp_id in missing_ids:
+                out["excludedMissing"].append(base)
+                continue
+            codes = doc_gate_by_emp.get(emp_id or str(emp.get("name") or "").strip())
+            if codes:
+                out["excludedDocGate"].append({**base, "reasons": sorted(codes)})
+                continue
+            amount = float(emp.get("netSalary") or 0)
+            if amount <= 0:
+                continue
+            m = match_nepal_employee(emp, master) or {}
+            account = _strip_spaces_dashes(m.get("bank_account_number") or emp.get("bankAccountNumber") or "")
+            if not account:
+                out["noBank"].append(base)
+                continue
+            out["payees"].append({
+                **base,
+                "payeeName": (m.get("bank_account_name") or m.get("employee_name") or emp.get("name", "")).strip(),
+                "costCentre": emp.get("costCentre", ""),
+                "amount": amount, "accountNumber": account,
+                "bankName": (m.get("bank_name") or emp.get("bankName") or "").strip(),
+                "bankCode": (m.get("bank_code") or "").strip(),
+                "bankSource": "nepal_employee_master" if m else "csi",
+            })
+    return out
+
+
+def build_np_bulk_xlsx(rows: list, sheet_title: str) -> bytes:
+    """rows: [{"date", "name", "bank", "bankCode", "branchCode", "accountNumber",
+    "amount", "remarks"}] → .xlsx in the HNPL bulk-upload layout."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = sheet_title or "Sheet1"
+    for r, row in enumerate(rows, 2):   # row 1 stays empty, as in the template
+        values = [row["date"], row["name"], row["bank"], row["bankCode"], row["branchCode"],
+                  row["accountNumber"], row["amount"], row["remarks"]]
+        for c, v in enumerate(values, 1):
+            cell = ws.cell(r, c, v)
+            if c == 7:
+                cell.number_format = "#,##0.00"
+            else:
+                cell.number_format = "@"
+    for col, width in zip("ABCDEFGH", (12, 24, 36, 10, 12, 22, 16, 12)):
+        ws.column_dimensions[col].width = width
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _validate_np_bulk_xlsx(xlsx_bytes: bytes, expected: list) -> list:
+    """Re-read the upload file on its own: layout, codes present, and every
+    account/amount exactly as meant to be paid. Returns critical issues."""
+    issues = []
+    ws = openpyxl.load_workbook(io.BytesIO(xlsx_bytes)).worksheets[0]
+    if any(ws.cell(1, c).value not in (None, "") for c in range(1, 9)):
+        issues.append({"level": "critical", "code": "XLSX_LAYOUT", "message": "Row 1 of the bulk upload file must be empty."})
+    found = []
+    for r in range(2, ws.max_row + 1):
+        vals = [ws.cell(r, c).value for c in range(1, 9)]
+        if all(v in (None, "") for v in vals):
+            continue
+        date, name, bank, bcode, brcode, acct, amt, remarks = vals
+        if not all(isinstance(v, str) and v for v in (date, name, bank, bcode, brcode, acct, remarks)) \
+                or not isinstance(amt, (int, float)) or amt <= 0:
+            issues.append({"level": "critical", "code": "XLSX_ROW_INVALID",
+                           "message": f"Bulk upload row {r} is incomplete or has a non-text code/account."})
+        found.append((str(acct), round(float(amt or 0), 2)))
+    want = sorted((e["accountNumber"], round(float(e["amount"]), 2)) for e in expected)
+    if sorted(found) != want:
+        issues.append({"level": "critical", "code": "XLSX_MISMATCH",
+                       "message": f"Bulk upload file has {len(found)} row(s) / {sum(a for _, a in found):,.2f}; "
+                                  f"expected {len(want)} / {sum(a for _, a in want):,.2f}."})
+    return issues
+
+
 async def generate_and_store_bank_files_np(kase: dict, db, triggered_by: str) -> dict:
-    raise NotImplementedError(
-        "Nepal (HNPL) bank payment file generation is not yet configured — "
-        "no bank/format template has been entered for this entity "
-        "(Maybank's RCGEN2 format only applies to Malaysia)."
-    )
+    """HNPL (CSI and internal payroll): payees whose bank is on the IPS list →
+    bulk upload .xlsx; everyone else → 'Manual Payments' sheet."""
+    sel = _np_payees(kase, db, triggered_by)
+    if sel["excludedDocGate"] and not sel["payees"]:
+        raise ValueError("No consultants cleared document gates — bank file cannot be generated")
+    pay_date = kase.get("payment_date") or datetime.now(timezone.utc).date().isoformat()
+    yr, mo, dy = pay_date.split("-")
+    label = _np_period_label(kase.get("period", "")) or datetime(int(yr), int(mo), 1).strftime("%b'%y")
+    internal = (kase.get("type") or "").upper() == "PAYROLL"
+
+    bulk, upload_rows, manual = [], [], []
+    for p in sel["payees"]:
+        bank = np_bank_lookup(p["bankName"], p.get("bankCode", ""))
+        if bank is None:
+            manual.append({**p, "reason": f"Bank not on the Nepal IPS list ({p['bankName'] or 'bank not given'})"})
+            continue
+        code, bank_name, branch = bank
+        bulk.append(p)
+        upload_rows.append({
+            "date": f"{dy}/{mo}/{yr}", "name": p["payeeName"], "bank": bank_name,
+            "bankCode": code, "branchCode": branch, "accountNumber": p["accountNumber"],
+            "amount": round(p["amount"], 2),
+            "remarks": f"{_np_client_code(p['entity'], internal)}_{label}",
+        })
+
+    month = label.split("'")[0] or "Sheet1"
+    upload_name = f"HNPL_Bulk_Upload_{kase['reference']}_{dy}{mo}{yr}.xlsx"
+    upload = build_np_bulk_xlsx(upload_rows, month) if upload_rows else None
+
+    xlsx = _payment_workbook([
+        ("Bulk Upload",
+         [["HNPL BULK SALARY UPLOAD (Nepal) — paid from Cash at Bank - SCB"], ["Entity", kase.get("entity", "")],
+          ["Payment date", pay_date], ["Currency", "NPR"], ["Case", kase.get("reference", "")],
+          ["Upload file", upload_name if upload else "— (no payees with a recognised bank)"]],
+         ["No."] + NP_BULK_HEADERS,
+         [[n, u["date"], u["name"], u["bank"], u["bankCode"], u["branchCode"], u["accountNumber"],
+           u["amount"], u["remarks"]] for n, u in enumerate(upload_rows, 1)]),
+        ("Manual Payments", [["Pay these by hand (bank not recognised)."]],
+         ["No.", "Employee", "Employee ID", "Client", "Bank", "Account No.", "Amount (NPR)", "Reason"],
+         [[n, m["payeeName"], m["employeeId"], m["costCentre"], m["bankName"], m["accountNumber"],
+           round(m["amount"], 2), m["reason"]] for n, m in enumerate(manual, 1)]),
+    ])
+    crosscheck = _reconcile_payment_file(
+        xlsx, sel["payees"], [("Bulk Upload", 7, 8), ("Manual Payments", 6, 7)])
+
+    issues = []
+    accts = [p["accountNumber"] for p in bulk]
+    dupes = sorted({a for a in accts if accts.count(a) > 1})
+    if dupes:
+        issues.append({"level": "critical", "code": "DUPLICATE_ACCOUNT",
+                       "message": f"Same account on more than one row: {', '.join(dupes)}"})
+    if upload is not None:
+        try:
+            issues += _validate_np_bulk_xlsx(upload, bulk)
+        except Exception as e:
+            issues.append({"level": "critical", "code": "XLSX_UNREADABLE",
+                           "message": f"Bulk upload file could not be re-read: {str(e)[:120]}"})
+    if issues:
+        crosscheck = {**crosscheck, "ok": False, "issues": (crosscheck.get("issues") or []) + issues,
+                      "summary": "Bank file does NOT pass validation"}
+    bank_txt = ({"name": upload_name, "runNumber": None, "format": "NP_BULK",
+                 "data": base64.b64encode(upload).decode()} if upload else None)
+    return await _store_payment_file(
+        kase, db, triggered_by, bank_format="NP_BULK",
+        xlsx_name=f"HNPL_Payment_{kase['reference']}_{dy}{mo}{yr}.xlsx", xlsx_bytes=xlsx,
+        sel=sel, manual=manual, crosscheck=crosscheck, bank_txt=bank_txt)
 
 
 # ─── Philippines (HCI) — Maybank PH "RCMS Payroll Converter v2.0" ────────────

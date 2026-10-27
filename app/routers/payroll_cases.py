@@ -21,8 +21,9 @@ from app.services.statutory import get_statutory_module
 from app.services.zoho import (
     post_journal_entry, create_expense, attach_journal_document,
     delete_journal_entry, delete_expense, fetch_contacts, create_contact,
-    fetch_reporting_tags, fetch_tag_options, create_tag_option,
+    fetch_reporting_tags, fetch_tag_options, create_tag_option, fetch_accounts,
 )
+from app.services.np_accounting import np_journal_lines, resolve_np_accounts
 from app.services.bank_files import (
     generate_and_store_bank_files_payroll, get_bank_file_generator,
     fetch_airtable_consultants, build_consultant_list, match_consultant,
@@ -1209,6 +1210,126 @@ def _accrual_lines(components: list, expense_map: dict, salary_payable: str,
     return lines, unmapped
 
 
+# ─── HNPL (Nepal) accrual — CSI and internal payroll ─────────────────────────
+# Rules and account names: app/services/np_accounting.py.
+
+async def _np_accounts(org_id: str, keys) -> tuple[dict, str | None]:
+    """HNPL account IDs by name from the org's chart of accounts."""
+    try:
+        accounts = await fetch_accounts(org_id)
+    except Exception as e:
+        return {}, f"Could not read the HNPL chart of accounts: {e}"
+    ids, problems = resolve_np_accounts(accounts, keys)
+    if problems:
+        return {}, ("HNPL Zoho account(s) not found (nothing posted): " + "; ".join(problems)
+                    + ". Check the account names in Zoho, or pin the ID in np_accounting.NP_ACCOUNT_IDS.")
+    return ids, None
+
+
+async def _auto_book_accruals_np(kase: dict, db, internal: bool) -> dict:
+    """One balanced journal per person (consultant or HNPL staff) — see
+    np_accounting. Everything is checked before anything is posted: every row
+    must balance, every account must resolve, every person needs a contact."""
+    org_id = get_entity_org(kase.get("entity", "")).get("id")
+    if not org_id:
+        return {"success": False, "error": f"No Zoho org ID for entity {kase.get('entity')}"}
+    try:
+        yr, mo, _cycle = _parse_period(kase.get("period", ""))
+        journal_date = _compute_journal_date(kase.get("period", "")) if internal else _accrual_date(kase)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    mmm_yy, entity_code = _period_mmm_yy(kase.get("period", "")), kase.get("entity", "HNPL")
+
+    people = [{**emp, "entityName": ent["sheetName"]}
+              for ent in (kase.get("parsed_data") or {}).get("entities", []) for emp in ent.get("employees", [])]
+    if not people:
+        return {"success": False, "error": "No employees in the case data."}
+
+    planned, problems = [], []
+    for emp in people:
+        lines, problem = np_journal_lines(emp, internal)
+        if problem:
+            problems.append(problem)
+        elif lines:
+            planned.append((emp, lines))
+    if problems:
+        return {"success": False, "error": "Accrual not posted — " + "; ".join(problems[:6])
+                + (f" (+{len(problems) - 6} more)" if len(problems) > 6 else "")}
+
+    ids, err = await _np_accounts(org_id, {k for _e, lines in planned for k, *_ in lines})
+    if err:
+        return {"success": False, "error": err}
+
+    # Contacts are mandatory (as for every entity); the Customer reporting tag
+    # is used when HNPL's Zoho has one.
+    try:
+        contacts = await fetch_contacts(org_id)
+        tags = await fetch_reporting_tags(org_id)
+    except Exception as e:
+        return {"success": False, "error": f"Could not read Zoho contacts/tags: {e}"}
+    cust_tag = next((t for t in tags if t["tag_name"].lower() == "customer"), None)
+    tag_options = {}
+    if cust_tag:
+        try:
+            tag_options = await fetch_tag_options(org_id, cust_tag["tag_id"])
+        except Exception as e:
+            return {"success": False, "error": f"Could not read Customer tag options: {e}"}
+
+    def tag_label(emp):
+        return _payroll_tag_option(emp, f"{yr:04d}{mo:02d}") if internal else (emp.get("costCentre") or "").strip()
+
+    errors = []
+    for emp, _lines in planned:
+        cons = (emp.get("name") or emp.get("employeeId") or "").strip()
+        if cons.lower() not in contacts:
+            try:
+                contacts[cons.lower()] = await create_contact(org_id, cons, "vendor")
+            except Exception as e:
+                errors.append(f"contact '{cons}': {e}")
+        label = tag_label(emp)
+        if cust_tag and label and label.lower() not in tag_options:
+            try:
+                tag_options[label.lower()] = await create_tag_option(org_id, cust_tag["tag_id"], label)
+            except Exception as e:
+                errors.append(f"Customer tag '{label}': {e}")
+    if errors:
+        return {"success": False, "error": "Pre-resolution failed (nothing posted): " + "; ".join(errors[:6])}
+
+    journal_ids, failed = [], []
+    for emp, lines in planned:
+        cons   = (emp.get("name") or emp.get("employeeId") or "").strip()
+        client = (emp.get("costCentre") or "").strip()
+        desc   = (f"{entity_code}_Salary_Internal_{cons.replace(' ', '_')}_{mmm_yy}" if internal
+                  else f"{entity_code}_CSI_{client}_{cons}_{mmm_yy}")
+        option = tag_options.get(tag_label(emp).lower()) if cust_tag else None
+        extra  = {"customer_id": contacts.get(cons.lower()),
+                  **({"tags": [{"tag_id": cust_tag["tag_id"], "tag_option_id": option}]} if option else {})}
+        emp_ref = _re.sub(r"[^A-Za-z0-9]", "", str(emp.get("employeeId") or cons))[:16]
+        try:
+            journal = await post_journal_entry(org_id, {
+                "journal_date":     journal_date,
+                "reference_number": f"ACCR-{kase['period']}-{entity_code}-{emp_ref}-{str(kase['id'])[-8:]}",
+                "notes": (f"{'Payroll' if internal else 'CSI Payroll'} Accrual – {kase.get('period')} – "
+                          f"{'Internal' if internal else client} – {cons} – Ref: {kase['reference']}"),
+                "line_items": [{"account_id": ids[k], "debit_or_credit": dc, "amount": amt,
+                                "description": f"{desc} – {label}", **extra} for k, dc, amt, label in lines],
+            })
+            if journal.get("journal_id"):
+                journal_ids.append(journal["journal_id"])
+        except Exception as e:
+            failed.append({"employee": cons, "error": str(e)})
+
+    if not journal_ids:
+        return {"success": False, "failed": failed,
+                "error": f"No accrual journals posted. First failure: {failed[0] if failed else 'none'}"}
+    db.from_("payroll_cases").update({
+        "zoho_org_id":      org_id,
+        "zoho_journal_ids": journal_ids,
+    }).eq("id", kase["id"]).execute()
+    return {"success": not failed, "journal_ids": journal_ids, "posted": len(journal_ids),
+            "failed": failed, "skipped": 0, "journal_date": journal_date}
+
+
 # ─── Payroll (internal employee) account IDs (HSSB org 762447369) ────────────
 # Sourced from Chart_of_Accounts.csv (verified active in Zoho). The payroll
 # accrual mirrors the CSI logic: one journal PER employee, each component
@@ -1334,6 +1455,8 @@ async def _auto_book_accruals_payroll(kase: dict, db) -> dict:
     employee's Zoho contact (customer_id) and the "Customer" reporting tag
     option "Internal_<Employee Name>_<YYYYMM>".
     """
+    if get_entity_country(kase.get("entity", "")) == "NP":
+        return await _auto_book_accruals_np(kase, db, internal=True)
     org_cfg = get_entity_org(kase.get("entity", ""))
     org_id  = org_cfg.get("id")
     if not org_id:
@@ -1459,7 +1582,13 @@ async def _auto_book_payment_payroll(kase: dict, db) -> dict:
     if not org_id:
         return {"success": False, "error": f"No Zoho org ID for entity {kase.get('entity')}"}
 
-    maps = _PAYROLL_ORG_MAP.get(org_id)
+    if get_entity_country(kase.get("entity", "")) == "NP":
+        np_ids, err = await _np_accounts(org_id, ("payable", "bank"))
+        if err:
+            return {"success": False, "error": err}
+        maps = {"net_pay": np_ids["payable"], "bank": np_ids["bank"]}
+    else:
+        maps = _PAYROLL_ORG_MAP.get(org_id)
     if not maps:
         return {"success": False, "error": f"Payroll account map not configured for org {org_id}."}
 
@@ -1615,6 +1744,8 @@ async def _auto_book_accruals(kase: dict, db) -> dict:
     - <scheme> for statutory ones (see _CSI_ACCOUNTS / _accrual_lines).
     Returns {"success": bool, "journal_ids": list, "error": str|None, "skipped": int}
     """
+    if get_entity_country(kase.get("entity", "")) == "NP":
+        return await _auto_book_accruals_np(kase, db, internal=False)
     org_cfg = get_entity_org(kase.get("entity", ""))
     org_id  = org_cfg.get("id")
     if not org_id:
@@ -1822,6 +1953,9 @@ async def _auto_book_revenue_accrual(kase: dict, db, already_posted: set = froze
     "failed", "error"?}."""
     if kase.get("type", "CSI") != "CSI":
         return {"success": True, "not_applicable": True}
+    if get_entity_country(kase.get("entity", "")) == "NP":
+        # HNPL invoices in the same month — no revenue accrual (finance, 2026-10-27).
+        return {"success": True, "not_applicable": True}
 
     org_id = get_entity_org(kase.get("entity", "")).get("id")
     if not org_id:
@@ -1924,7 +2058,13 @@ async def _auto_book_payment(kase: dict, db) -> dict:
     mmm_yy      = _period_mmm_yy(kase.get("period", ""))
     entity_code = kase.get("entity", "HSSB")
 
-    accts = _CSI_ACCOUNTS.get(org_id)
+    if get_entity_country(kase.get("entity", "")) == "NP":
+        np_ids, err = await _np_accounts(org_id, ("payable", "bank"))
+        if err:
+            return {"success": False, "error": err}
+        accts = {"payable": np_ids["payable"], "bank": np_ids["bank"]}
+    else:
+        accts = _CSI_ACCOUNTS.get(org_id)
     if not accts:
         return {"success": False, "error": f"CSI account map not configured for org {org_id}. Add it to _CSI_ACCOUNTS."}
     payable_id, bank_id = accts["payable"], accts["bank"]
@@ -2390,7 +2530,7 @@ async def _upload_case_inner(
 
     content = await file.read()
     try:
-        if type_up == "PAYROLL":
+        if type_up == "PAYROLL" and get_entity_country(entity_code) != "NP":
             parsed_entities = parse_payroll_excel_buffer(content)
         else:
             parsed_entities = parse_excel_buffer(content, get_entity_country(entity_code))
@@ -2573,8 +2713,12 @@ async def gen_check(case_id: str, request: Request):
         except Exception:
             pass
 
+    country = get_entity_country(kase.get("entity", ""))
     check_data = (
         _build_check_data_payroll(entities)
+        if case_type == "PAYROLL" and country != "NP"
+        # HNPL internal staff: Nepal's checks, without the consultant document gates
+        else _build_check_data(entities, None, currency=get_entity_currency(kase.get("entity", "")), country=country)
         if case_type == "PAYROLL"
         else _build_check_data(entities, airtable_list, case_id=case_id, db=db,
                                currency=get_entity_currency(kase.get("entity", "")), country=get_entity_country(kase.get("entity", "")))
@@ -3631,7 +3775,7 @@ async def reupload_case(
 
     content = await file.read()
     try:
-        if kase.get("type") == "PAYROLL":
+        if kase.get("type") == "PAYROLL" and get_entity_country(kase.get("entity", "")) != "NP":
             parsed_entities = parse_payroll_excel_buffer(content)
         else:
             parsed_entities = parse_excel_buffer(content, get_entity_country(kase.get("entity", "")))
@@ -3661,7 +3805,7 @@ async def reupload_case(
 
     check_data = (
         _build_check_data_payroll(parsed_entities)
-        if kase.get("type") == "PAYROLL"
+        if kase.get("type") == "PAYROLL" and get_entity_country(kase.get("entity", "")) != "NP"
         else _build_check_data(parsed_entities, airtable_list,
                                currency=get_entity_currency(kase.get("entity", "")), country=get_entity_country(kase.get("entity", "")))
     )
@@ -3997,7 +4141,7 @@ async def email_approve(token: str, action: str = "approve"):
     fresh_kase = {**kase, "check_final_approver_name": tok["approver_name"], "check_approval_cert": cert}
     bank_msg = "Log in to generate the bank upload file (Step 4)."
     try:
-        if kase.get("type") == "PAYROLL":
+        if kase.get("type") == "PAYROLL" and get_entity_country(kase.get("entity", "")) != "NP":
             result = await generate_and_store_bank_files_payroll(fresh_kase, db, tok["approver_name"])
             bank_msg = f"Payroll bank files auto-generated ({result['matched']}/{result['total']} employees with bank accounts). Log in to download and proceed to Step 5."
         else:
@@ -4068,7 +4212,9 @@ async def download_bank_txt(case_id: str, request: Request):
     file_bytes = base64.b64decode(bank_txt["data"])
     return Response(
         content=file_bytes,
-        media_type=("application/vnd.ms-excel" if bank_txt["name"].lower().endswith(".xls") else "text/plain"),
+        media_type=("application/vnd.ms-excel" if bank_txt["name"].lower().endswith(".xls")
+                    else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    if bank_txt["name"].lower().endswith(".xlsx") else "text/plain"),
         headers={"Content-Disposition": f'attachment; filename="{bank_txt["name"]}"'},
     )
 
@@ -4107,7 +4253,7 @@ async def gen_bank_file(case_id: str, request: Request):
 
     try:
         triggered_by = user.get("name") or user.get("email", "")
-        if kase.get("type") == "PAYROLL":
+        if kase.get("type") == "PAYROLL" and get_entity_country(kase.get("entity", "")) != "NP":
             await generate_and_store_bank_files_payroll(kase, db, triggered_by)
         else:
             await get_bank_file_generator(get_entity_country(kase.get("entity", "")))(kase, db, triggered_by)

@@ -140,11 +140,14 @@ def _parse_employee_np(row, col_map) -> dict | None:
     EIN (Employee Identification Number) is the canonical identifier,
     confirmed over EID (a per-file internal row number) — only EIN is stable
     enough to eventually match nepal_employee_master.employee_ledger_code.
+    The internal pay calculation export (HNPL "<Month> Pay Calculation")
+    has no EIN column at all, so there the employee name is the identifier.
     """
-    ein_idx = col_map.get("EIN")
-    if ein_idx is None or ein_idx >= len(row):
-        return None
-    ein_val = row[ein_idx]
+    if "EIN" in col_map:
+        ein_idx = col_map["EIN"]
+        ein_val = row[ein_idx] if ein_idx < len(row) else None
+    else:
+        ein_val = _get_str(row, col_map, "Employee")
     if ein_val is None or str(ein_val).strip() == "":
         return None
 
@@ -185,6 +188,18 @@ def _parse_employee_np(row, col_map) -> dict | None:
         "deductionPF":     _get(row, col_map, "Deduction PF"),
         "incomePF":        _get(row, col_map, "Income PF"),
         "totalDeduction":  _get(row, col_map, "Total Deduction"),
+        # Split out for the HNPL accrual (APEX Required Accounting Entries
+        # HNPL): GW books travel/education allowance on their own lines, the
+        # tax adjustment goes to TDS Payable, the advance to Employee Advance;
+        # unpaid leave / absences / salary deduction reduce the salary cost.
+        "travelAllowance":    _get(row, col_map, "Travel Allowance"),
+        "educationAllowance": _get(row, col_map, "Education Allowance"),
+        "taxAdjustment":      _get(row, col_map, "Tax adjustment deduction"),
+        "advanceDeduction":   _get(row, col_map, "Advance Pay deduction"),
+        "unpaidLeave":        _get(row, col_map, "Unpaid Leave"),
+        "absences":           _get(row, col_map, "Absences"),
+        "salaryDeduction":    _get(row, col_map, "Salary Deduction"),
+        "forexTranslation":   _get(row, col_map, "Forex Translation"),
         # No confirmed Nepal margin/billing model yet -- this file has no
         # CTC Client/Total Billing/Mgmt Fee columns like Malaysia's CSI does.
         # ctcHexa is structurally required downstream (totalCTC summation),
@@ -236,7 +251,7 @@ def _get_csi_parser(country: str):
 # "Employee ID"/"CTC Hexa" column names (and vice versa).
 REQUIRED_COLUMNS: dict = {
     "MY": ["Employee ID", "CTC Hexa", "Gross Salary", "Net Salary"],
-    "NP": ["EIN", "Employee", "Gross Income", "Net Salary"],
+    "NP": ["Employee", "Gross Income", "Net Salary"],   # EIN: CSI files only
 }
 
 

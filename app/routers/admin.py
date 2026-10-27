@@ -8,7 +8,7 @@ from fastapi.templating import Jinja2Templates
 from app.config import TEMPLATES_DIR, ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, get_entity_country
 from app.deps import get_current_user
 from app.services.db import get_db
-from app.services.bank_files import BANK_NAMES_BY_COUNTRY, bank_name_to_code
+from app.services.bank_files import BANK_NAMES_BY_COUNTRY, NP_BANKS, bank_name_to_code, np_bank_lookup
 from app.services.consultant_master_import import (
     fetch_missing_fav_code_rows, set_fav_code_for_consultant,
     upsert_consultant_master, _parse_date,
@@ -278,7 +278,7 @@ async def missing_fav_codes_set(apex_employee_id: str, request: Request):
 #     have, or fix one row, without a full re-import) ─────────────────────────
 
 CONSULTANT_ENTITIES = ("HSSB", "HCSSB", "HEDU", "DATACRATS", "HMCL")
-_COUNTRY_LABELS = {"MY": "Malaysia", "MM": "Myanmar"}
+_COUNTRY_LABELS = {"MY": "Malaysia", "MM": "Myanmar", "NP": "Nepal"}
 # [(country, label, bank names)] for the Bank Name <optgroup>s; the consultant
 # form shows only the group matching the chosen entity's country.
 BANK_NAME_GROUPS = [(c, _COUNTRY_LABELS[c], names) for c, names in BANK_NAMES_BY_COUNTRY.items()]
@@ -405,6 +405,7 @@ def _nepal_employee_form_to_row(form) -> dict:
         "pan_number":           (form.get("pan_number") or "").strip() or None,
         "nationality":          (form.get("nationality") or "").strip() or "Nepali",
         "bank_name":            (form.get("bank_name") or "").strip() or None,
+        "bank_code":            bank_name_to_code(form.get("bank_name") or "", "NP") or None,
         "bank_account_name":    (form.get("bank_account_name") or "").strip() or None,
         "bank_account_number":  (form.get("bank_account_number") or "").strip().replace(" ", "") or None,
         "ssf_number":           (form.get("ssf_number") or "").strip() or None,
@@ -448,7 +449,9 @@ async def nepal_employees_list(request: Request, q: str = ""):
         else:
             rows = sorted(all_rows, key=lambda r: (r.get("employee_name") or "").lower())
     return templates.TemplateResponse(request, "admin/nepal_employees.html", {
-        "user": user, "section": "admin", "employees": rows, "q": q, "total": total,
+        "user": user, "section": "admin", "q": q, "total": total, "np_banks": NP_BANKS,
+        "employees": [{**r, "ips_bank": np_bank_lookup(r.get("bank_name") or "", r.get("bank_code") or "")}
+                      for r in rows],
     })
 
 
