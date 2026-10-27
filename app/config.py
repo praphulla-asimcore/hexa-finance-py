@@ -11,9 +11,11 @@ EMAIL_FROM: str = os.getenv("EMAIL_FROM", "noreply@hexamatics.finance")
 RESEND_API_KEY: str = os.getenv("RESEND_API_KEY", "")
 SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")
-# When set, the app uses this Postgres database (DigitalOcean) instead of
-# Supabase. Unsetting it falls back to Supabase — instant rollback.
-DATABASE_URL: str = os.getenv("DATABASE_URL", "")
+# Postgres database (Neon, via the Vercel integration, since 2026-10-27; the
+# DigitalOcean one was lost). The integration was connected with the env prefix
+# "DATABASE_URL", so Vercel injects DATABASE_URL_DATABASE_URL (pooled) rather
+# than DATABASE_URL — accept either. If neither is set, falls back to Supabase.
+DATABASE_URL: str = os.getenv("DATABASE_URL") or os.getenv("DATABASE_URL_DATABASE_URL", "")
 ZOHO_CLIENT_ID: str = os.getenv("ZOHO_CLIENT_ID", "")
 ZOHO_CLIENT_SECRET: str = os.getenv("ZOHO_CLIENT_SECRET", "")
 ZOHO_REFRESH_TOKEN: str = os.getenv("ZOHO_REFRESH_TOKEN", "")
