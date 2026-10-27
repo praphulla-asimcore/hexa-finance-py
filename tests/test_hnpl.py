@@ -60,6 +60,13 @@ STAFF = {"name": "Hari Example", "employeeId": "Hari Example", "grossSalary": 10
          "tds": 3000, "netSalary": 68750}
 
 
+@pytest.fixture
+def unpinned(monkeypatch):
+    """Resolve accounts by name (as for an org with no pinned IDs)."""
+    monkeypatch.setattr(npa, "NP_ACCOUNT_IDS", {})
+    monkeypatch.setattr(pc, "NP_ACCOUNT_IDS", npa.NP_ACCOUNT_IDS)
+
+
 def _totals(lines):
     dr = round(sum(a for _k, dc, a, _l in lines if dc == "debit"), 2)
     cr = round(sum(a for _k, dc, a, _l in lines if dc == "credit"), 2)
@@ -95,14 +102,21 @@ def test_internal_accrual_uses_staff_expense_and_employee_advance():
     assert _totals(lines) == (100000, 100000)
 
 
+def test_cit_and_pf_credit_their_payables():
+    lines, problem = npa.np_journal_lines(
+        {**SBC, "cit": 500, "deductionPF": 300, "netSalary": 34800}, internal=False)
+    assert problem is None and _totals(lines) == (48000, 48000)
+    assert ("cit", "credit", 500, "CIT") in lines and ("pf", "credit", 300, "Deduction PF") in lines
+
+
 def test_unmapped_or_unbalanced_rows_are_refused():
-    _l, problem = npa.np_journal_lines({**SBC, "cit": 500, "netSalary": 35100}, internal=False)
-    assert problem and "CIT" in problem
+    _l, problem = npa.np_journal_lines({**SBC, "forexTranslation": 500, "netSalary": 35100}, internal=False)
+    assert problem and "Forex" in problem
     _l, problem = npa.np_journal_lines({**SBC, "netSalary": 30000}, internal=False)
     assert problem and "differ" in problem
 
 
-def test_resolve_accounts_by_name():
+def test_resolve_accounts_by_name(unpinned):
     accounts = [{"id": "1", "name": "Staff Salaries and Wages"}, {"id": "2", "name": "SSF Payable"},
                 {"id": "3", "name": "Cash at Bank - SCB"}, {"id": "4", "name": "SST Payable"},
                 {"id": "5", "name": "SST Payable"}]
@@ -151,7 +165,7 @@ def _zoho(monkeypatch, posted):
     monkeypatch.setattr(pc, "post_journal_entry", post)
 
 
-def test_hnpl_csi_accrual_posts_one_balanced_journal_per_consultant(monkeypatch):
+def test_hnpl_csi_accrual_posts_one_balanced_journal_per_consultant(monkeypatch, unpinned):
     posted = []
     _zoho(monkeypatch, posted)
     kase = {"id": "c-00000001", "type": "CSI", "entity": "HNPL", "period": "202609-EOM", "reference": "R",
@@ -171,7 +185,7 @@ def test_hnpl_csi_accrual_posts_one_balanced_journal_per_consultant(monkeypatch)
     assert db.updates[-1]["zoho_journal_ids"] == ["J1", "J2"]
 
 
-def test_hnpl_internal_payroll_accrual(monkeypatch):
+def test_hnpl_internal_payroll_accrual(monkeypatch, unpinned):
     posted = []
     _zoho(monkeypatch, posted)
     kase = {"id": "c-00000002", "type": "PAYROLL", "entity": "HNPL", "period": "202608-EOM", "reference": "R",
@@ -181,7 +195,7 @@ def test_hnpl_internal_payroll_accrual(monkeypatch):
     assert {l["account_id"] for l in posted[0]["line_items"]} == {"A1", "A2", "A3", "A5", "A6"}
 
 
-def test_hnpl_accrual_stops_before_zoho_on_missing_account(monkeypatch):
+def test_hnpl_accrual_stops_before_zoho_on_missing_account(monkeypatch, unpinned):
     posted = []
     _zoho(monkeypatch, posted)
     async def accounts(_org):
@@ -191,6 +205,24 @@ def test_hnpl_accrual_stops_before_zoho_on_missing_account(monkeypatch):
             "parsed_data": {"entities": [{"sheetName": "GW", "employees": [GW]}]}}
     res = asyncio.run(pc._auto_book_accruals(kase, _CaseDB()))
     assert not res["success"] and "SST Payable" in res["error"] and not posted
+
+
+def test_pinned_hnpl_ids_post_without_reading_the_chart(monkeypatch):
+    posted = []
+    _zoho(monkeypatch, posted)
+    async def no_chart(_org):
+        raise AssertionError("chart of accounts must not be needed")
+    monkeypatch.setattr(pc, "fetch_accounts", no_chart)
+    kase = {"id": "c-00000004", "type": "CSI", "entity": "HNPL", "period": "202609-EOM", "reference": "R",
+            "parsed_data": {"entities": [{"sheetName": "GW", "employees": [GW]}]}}
+    res = asyncio.run(pc._auto_book_accruals(kase, _CaseDB()))
+    assert res["success"], res
+    by_label = {l["description"].split(" – ")[-1]: l["account_id"] for l in posted[0]["line_items"]}
+    assert by_label == {
+        "Salary": "3424587000001025336", "Travel Allowance": "3424587000001025336",
+        "Education Allowance": "3424587000001025336", "SSF Contribution": "3424587000001025336",
+        "Net Salary": "3424587000000365013", "SSF Deduction": "3424587000001080011",
+        "SST": "3424587000000505073", "TDS": "3424587000000505065"}
 
 
 def test_hnpl_has_no_revenue_accrual():

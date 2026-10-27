@@ -14,14 +14,15 @@ share one shape; only the expense account differs:
     CR TDS Payable- Staff            TDS + tax adjustment deduction
                                      (finance's own GW entry books it there)
     CR Employee Advance              Advance Pay deduction (internal)
+    CR CIT Payable / Provident Fund Payable   CIT / Deduction PF (not in the
+                                     finance sheet; HNPL's own payable accounts)
 
 Payment: DR Salary and Wages Payable / CR Cash at Bank - SCB (net salary).
 No revenue accrual — HNPL invoices in the same month.
 
-HNPL's Zoho account IDs were not to hand when this was written, so accounts
-are resolved by name from the org's chart of accounts at posting time.
-NP_ACCOUNT_IDS pins an ID when the name lookup can't find one (Zoho's
-chartofaccounts list omits some sub-accounts).
+Account IDs are pinned in NP_ACCOUNT_IDS (from HNPL_Chart_of_Accounts.csv,
+2026-10-27) — several are sub-accounts, which Zoho's chartofaccounts list can
+omit. A key without a pinned ID is resolved by name from the live chart.
 """
 import re
 
@@ -36,10 +37,23 @@ NP_ACCOUNT_NAMES: dict = {
     "tds":           ("TDS Payable- Staff",),
     "advance":       ("Employee Advance", "Deposits and Advances"),
     "bank":          ("Cash at Bank - SCB",),
+    "cit":           ("CIT Payable",),
+    "pf":            ("Provident Fund Payable",),
 }
 
-# key → Zoho account_id, overriding the name lookup. Empty until needed.
-NP_ACCOUNT_IDS: dict = {}
+# key → Zoho account_id (HNPL org 804163623), overriding the name lookup.
+NP_ACCOUNT_IDS: dict = {
+    "csi_expense":   "3424587000001025336",  # Hx-5001  Consultant Salaries and Benefits
+    "staff_expense": "3424587000000325099",  # Hx-6000  Staff Salaries & Wages
+    "payable":       "3424587000000365013",  # Salary and Wages Payable
+    "ssf":           "3424587000001080011",  # SSF Contribution Payable (under Salary and Wages Payable)
+    "sst":           "3424587000000505073",  # SST Payable (under TDS Payable)
+    "tds":           "3424587000000505065",  # TDS Payable- Staff (under TDS Payable)
+    "advance":       "3424587000000035001",  # Employee Advance
+    "bank":          "3424587000000148001",  # Cash at Bank - SCB
+    "cit":           "3424587000001310432",  # CIT Payable (under Salary and Wages Payable)
+    "pf":            "3424587000000586364",  # Provident Fund Payable
+}
 
 
 def _r2(x) -> float:
@@ -79,11 +93,9 @@ def np_journal_lines(emp: dict, internal: bool) -> tuple[list, str | None]:
     ([], problem) when the row can't be booked as specified — a deduction
     with no account in the HNPL entries, or a row that doesn't balance."""
     name = emp.get("name") or emp.get("employeeId") or "?"
-    unmapped = {"CIT": _r2(emp.get("cit")), "Deduction PF": _r2(emp.get("deductionPF")),
-                "Forex Translation": _r2(emp.get("forexTranslation"))}
-    unmapped = {k: v for k, v in unmapped.items() if v}
-    if unmapped:
-        return [], (f"{name}: {', '.join(f'{k} {v:,.2f}' for k, v in unmapped.items())} — "
+    forex = _r2(emp.get("forexTranslation"))
+    if forex:
+        return [], (f"{name}: Forex Translation {forex:,.2f} — "
                     "no account for it in the HNPL accounting entries")
 
     ssf_c   = _r2(emp.get("ssfContribution"))
@@ -99,7 +111,9 @@ def np_journal_lines(emp: dict, internal: bool) -> tuple[list, str | None]:
           ("ssf", _r2(emp.get("ssfDeduction")), "SSF Deduction"),
           ("sst", _r2(emp.get("sst")), "SST"),
           ("tds", _r2(_r2(emp.get("tds")) + _r2(emp.get("taxAdjustment"))), "TDS"),
-          ("advance", _r2(emp.get("advanceDeduction")), "Advance Pay deduction")]
+          ("advance", _r2(emp.get("advanceDeduction")), "Advance Pay deduction"),
+          ("cit", _r2(emp.get("cit")), "CIT"),
+          ("pf", _r2(emp.get("deductionPF")), "Deduction PF")]
     if any(a < 0 for _k, a, _l in dr + cr):
         return [], f"{name}: negative amount in the pay row — check the file"
 

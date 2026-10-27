@@ -23,7 +23,7 @@ from app.services.zoho import (
     delete_journal_entry, delete_expense, fetch_contacts, create_contact,
     fetch_reporting_tags, fetch_tag_options, create_tag_option, fetch_accounts,
 )
-from app.services.np_accounting import np_journal_lines, resolve_np_accounts
+from app.services.np_accounting import NP_ACCOUNT_IDS, np_journal_lines, resolve_np_accounts
 from app.services.bank_files import (
     generate_and_store_bank_files_payroll, get_bank_file_generator,
     fetch_airtable_consultants, build_consultant_list, match_consultant,
@@ -1214,11 +1214,13 @@ def _accrual_lines(components: list, expense_map: dict, salary_payable: str,
 # Rules and account names: app/services/np_accounting.py.
 
 async def _np_accounts(org_id: str, keys) -> tuple[dict, str | None]:
-    """HNPL account IDs by name from the org's chart of accounts."""
-    try:
-        accounts = await fetch_accounts(org_id)
-    except Exception as e:
-        return {}, f"Could not read the HNPL chart of accounts: {e}"
+    """HNPL account IDs: pinned ones, else by name from the org's chart."""
+    accounts = []
+    if any(not NP_ACCOUNT_IDS.get(k) for k in keys):
+        try:
+            accounts = await fetch_accounts(org_id)
+        except Exception as e:
+            return {}, f"Could not read the HNPL chart of accounts: {e}"
     ids, problems = resolve_np_accounts(accounts, keys)
     if problems:
         return {}, ("HNPL Zoho account(s) not found (nothing posted): " + "; ".join(problems)
