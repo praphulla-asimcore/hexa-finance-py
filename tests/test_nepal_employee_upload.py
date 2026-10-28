@@ -51,36 +51,15 @@ def test_unknown_bank_is_rejected():
     assert only(plan_for([["Anil BK", "", "", "Bank of Nowhere", "123"]]))["action"] == "REJECT"
 
 
-def test_matches_existing_by_ledger_code_and_blank_never_erases():
-    item = only(plan_for([["", "123-109", "", "", ""]], [ON_FILE]))
-    assert item["action"] == "UNCHANGED"
-
-
-def test_name_match_fills_missing_ledger_code():
-    on_file = {**ON_FILE, "employee_ledger_code": None}
-    item = only(plan_for([["Bhumika Shah", "123-109", "", "", ""]], [on_file]))
-    assert item["action"] == "UPDATE" and item["payload"] == {"employee_ledger_code": "123-109"}
-
-
-def test_upload_never_rekeys_an_employee():
-    item = only(plan_for([["Bhumika Shah", "999-999", "", "", ""]], [ON_FILE]))
-    assert item["action"] == "REJECT" and "123-109" in item["reason"]
-
-
-def test_ledger_code_pointing_at_someone_else_by_name_is_rejected():
-    item = only(plan_for([["Sneha Mandal", "123-109", "", "", ""]], [ON_FILE]))
-    assert item["action"] == "REJECT" and "Bhumika Shah" in item["reason"]
-
-
-def test_keys_pointing_at_two_different_employees_is_rejected():
-    other = {"id": "u2", "employee_name": "Anil BK", "pan_number": "555"}
-    item = only(plan_for([["Bhumika Shah", "123-109", "555", "", ""]], [ON_FILE, other]))
-    assert item["action"] == "REJECT"
-
-
-def test_account_change_is_flagged_sensitive():
-    plan = plan_for([["", "123-109", "", "Laxmi Sunrise Limited", "1111111111"]], [ON_FILE])
-    assert plan["sensitive"] == 1 and only(plan)["action"] == "UPDATE"
+def test_any_key_or_name_on_file_is_already_in_database():
+    """Ledger code, PAN, HEX id or exact name — and never updated, even with new details."""
+    for row in (["", "123-109", "", "", ""],
+                ["Someone", "", "130314620", "", ""],
+                ["BHUMIKA SHAH", "", "", "NIMB", "1111111111"],
+                ["Sneha Mandal", "123-109", "", "", ""]):
+        item = only(plan_for([row], [ON_FILE]))
+        assert item["action"] == "EXISTS" and item["reason"] == "Already in database", row
+        assert item["name"] == "Bhumika Shah"
 
 
 def test_duplicate_in_file_is_rejected():
@@ -109,14 +88,14 @@ def test_resign_date_formats():
     assert only(plan_for([["Anil BK", "soon"]], header=["Employee Name", "Resign Date"]))["action"] == "REJECT"
 
 
-def test_apply_inserts_and_updates_by_id():
-    db = FakeDB(nepal_employee_master=[{**ON_FILE, "employee_ledger_code": None}])
+def test_apply_inserts_only_new_rows():
+    db = FakeDB(nepal_employee_master=[ON_FILE])
     buf = io.StringIO()
-    csv.writer(buf).writerows([HEADER, ["Bhumika Shah", "123-109", "", "", ""], ["Anil BK", "", "", "NIMB", "1"]])
+    csv.writer(buf).writerows([HEADER, ["Bhumika Shah", "", "", "", ""], ["Anil BK", "", "", "NIMB", "1"]])
     plan = plan_changes(parse_upload("u.csv", buf.getvalue().encode()), db)
-    assert apply_plan(plan, db) == {"NEW": 1, "UPDATE": 1}
-    ops = {(w[0], w[2].get("_where")) for w in db.writes}
-    assert ("update", ("id", "u1")) in ops and ("insert", None) in ops
+    assert plan["counts"] == {"REJECT": 0, "NEW": 1, "EXISTS": 1}
+    assert apply_plan(plan, db) == {"NEW": 1}
+    assert [w[0] for w in db.writes] == ["insert"]
 
 
 def test_original_master_csv_round_trips_and_catches_its_corrupted_accounts():
@@ -150,6 +129,7 @@ def test_master_csv_bank_spellings_resolve():
 
 
 def test_not_required_placeholders_are_treated_as_blank():
-    item = only(plan_for([["Bhumika Shah", "0", "No SSF (Intern)"]], [ON_FILE],
+    item = only(plan_for([["Anil BK", "0", "No SSF (Intern)"]],
                          header=["Employee Name", "Citizenship Number", "SSF Number"]))
-    assert item["action"] == "UNCHANGED"
+    assert item["action"] == "NEW"
+    assert "citizenship_number" not in item["payload"] and "ssf_number" not in item["payload"]

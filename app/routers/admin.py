@@ -357,10 +357,6 @@ async def _upload_apply(request: Request, cfg: dict):
     # Re-plan against the live DB: never trust the preview the browser sends back,
     # and pick up anything another user changed in between.
     plan = cfg["plan"](fmt, rows, db)
-    if plan["sensitive"] and form.get("confirm_sensitive") != "yes":
-        return _upload_page(request, user, cfg, plan=plan, fmt=fmt, filename=form.get("filename"),
-                            rows_json=json.dumps(data),
-                            error="Tick the box to confirm the account-number changes before applying.")
     done = cfg["apply"](plan, db, user.get("name") or user.get("email", ""))
     return _upload_page(request, user, cfg, result=done)
 

@@ -127,49 +127,39 @@ def test_bad_inputs_are_rejected():
     assert plan["counts"]["REJECT"] == 4
 
 
-def test_blank_cell_never_erases_and_unchanged_row_is_reported():
-    db = FakeDB(consultant_bank_overrides=[{
-        "employee_id": "HEX-0284", "consultant_name": "Nooralif Bin Mohd Rahim",
-        "bank_code": "MBBEMYKL", "bank_name": "Maybank", "bank_account_number": "164123456789",
-        "favourite_beneficiary_code": "HS372"}])
-    item = only(plan_for([["HEX-0284", "", "", "", "", "HS372"]], db))
-    assert item["action"] == "UNCHANGED"
+ON_FILE = {"employee_id": "HEX-0284", "consultant_name": "Nooralif Bin Mohd Rahim",
+           "bank_code": "MBBEMYKL", "bank_name": "Maybank", "bank_account_number": "164123456789"}
 
 
-def test_adding_fav_code_to_existing_row_is_an_update_not_sensitive():
-    db = FakeDB(consultant_bank_overrides=[{
-        "employee_id": "HEX-0284", "consultant_name": "Nooralif Bin Mohd Rahim",
-        "bank_code": "MBBEMYKL", "bank_account_number": "164123456789"}])
-    plan = plan_for([["HEX-0284", "", "", "", "", "HS372"]], db)
-    item = only(plan)
-    assert item["action"] == "UPDATE"
-    assert item["payload"] == {"favourite_beneficiary_code": "HS372"}
-    assert plan["sensitive"] == 0
+def test_existing_hex_id_is_already_in_database_and_not_changed():
+    """Even a new favourite code or a different account: uploads only add people."""
+    for row in (["HEX-0284", "", "", "", "", "HS372"],
+                ["HEX-0284", "", "", "Maybank", "999999999999", ""]):
+        item = only(plan_for([row], FakeDB(consultant_bank_overrides=[ON_FILE])))
+        assert item["action"] == "EXISTS" and item["reason"] == "Already in database"
 
 
-def test_account_number_change_is_flagged_sensitive():
-    db = FakeDB(consultant_bank_overrides=[{
-        "employee_id": "HEX-0284", "consultant_name": "Nooralif Bin Mohd Rahim",
-        "bank_code": "MBBEMYKL", "bank_account_number": "164123456789"}])
-    plan = plan_for([["HEX-0284", "", "", "Maybank", "999999999999", ""]], db)
-    assert plan["sensitive"] == 1
-    assert any(c[3] for c in only(plan)["changes"])
+def test_existing_name_under_another_hex_id_is_already_in_database():
+    item = only(plan_for([["HEX-0999", "NOORALIF BIN MOHD RAHIM", "", "Maybank", "1", ""]],
+                         FakeDB(consultant_bank_overrides=[ON_FILE])))
+    assert item["action"] == "EXISTS" and item["employee_id"] == "HEX-0284"
 
 
-def test_name_spelling_variant_does_not_overwrite_name_on_file():
-    db = FakeDB(consultant_bank_overrides=[{"employee_id": "HEX-0284", "consultant_name": "Nooralif Bin Mohd Rahim"}])
-    item = only(plan_for([["HEX-0284", "NOORALIF BIN MOHD RAHIM", "", "", "", "HS372"]], db))
-    assert "consultant_name" not in item["payload"]
+def test_existing_company_account_name_is_already_in_database():
+    on_file = {**ON_FILE, "bank_account_name": "Nooralif Enterprise"}
+    item = only(plan_for([["HEX-0999", "Nooralif Enterprise", "", "", "", ""]],
+                         FakeDB(consultant_bank_overrides=[on_file])))
+    assert item["action"] == "EXISTS"
 
 
-def test_apply_writes_only_new_and_updated_rows():
+def test_apply_inserts_only_new_rows():
     db = FakeDB(payroll_cases=[CASE], consultant_bank_overrides=[
         {"employee_id": "HEX-0027", "consultant_name": "Muhammad Nazarul"}])
     plan = plan_for([["HEX-0284", "Nooralif Bin Mohd Rahim", "", "Maybank", "164123456789", "HS372"],
-                     ["HEX-0027", "", "", "", "", "HS020"],
-                     ["HEX-0027", "Azeean", "", "", "", ""]], db)  # duplicate id -> both rejected
-    done = apply_plan(plan, db, "tester")
-    assert done == {"NEW": 1, "UPDATE": 0}
+                     ["HEX-0027", "", "", "", "", "HS020"],                 # already in database
+                     ["HEX-0300", "", "", "", "", ""]], db)                 # no name -> rejected
+    assert plan["counts"] == {"REJECT": 1, "NEW": 1, "EXISTS": 1}
+    assert apply_plan(plan, db, "tester") == {"NEW": 1}
     assert [w[0] for w in db.writes] == ["insert"]
     assert db.writes[0][2]["source"] == "BULK_UPLOAD" and db.writes[0][2]["updated_by"] == "tester"
 
@@ -274,7 +264,7 @@ def test_tracker_code_already_on_file_resolves_to_its_owner():
                                     "bank_account_number": "11410100336010"}])
     fmt, rows = parse_upload("t.xlsx", tracker_xlsx([("HS256", "Chia Kit Yau", "N", "", "11410100336010", "RHBBMYKL")]))
     item = only(plan_changes(fmt, rows, db))
-    assert item["employee_id"] == "HEX-0230" and item["action"] != "REJECT"
+    assert item["employee_id"] == "HEX-0230" and item["action"] == "EXISTS"
 
 
 def test_ic_and_account_pointing_at_different_people_is_ambiguous():
@@ -294,11 +284,10 @@ def test_new_row_whose_registered_name_differs_from_name_on_file_is_rejected():
     assert item["action"] == "REJECT" and "Test Employee 01" in item["reason"]
 
 
-def test_existing_row_whose_registered_name_differs_is_only_warned():
+def test_tracker_row_already_on_file_is_already_in_database():
     """A company account already on file (HS160 'Farihan Gigabyte Enterprise')."""
     db = FakeDB(consultant_bank_overrides=[{"employee_id": "HEX-0088", "consultant_name": "Mohd Asrul Farihan Bin Md Nor",
                                             "favourite_beneficiary_code": "HS160", "bank_code": "CIBBMYKL",
                                             "bank_account_number": "8010225797"}])
     fmt, rows = parse_upload("t.xlsx", tracker_xlsx([("HS160", "Farihan Gigabyte Enterprise", "N", "", "8010225797", "CIBBMYKL")]))
-    item = only(plan_changes(fmt, rows, db))
-    assert item["action"] != "REJECT" and item["warnings"]
+    assert only(plan_changes(fmt, rows, db))["action"] == "EXISTS"

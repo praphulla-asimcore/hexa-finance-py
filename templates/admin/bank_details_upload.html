@@ -5,7 +5,8 @@
   <div class="cp-head">
     <div>
       <h1 class="cp-title">{{ page.title }}</h1>
-      <div class="cp-sub">{{ page.intro }} You'll see exactly what will change before anything is saved.</div>
+      <div class="cp-sub">{{ page.intro }} Only new people are added — anyone already in APEX is skipped as
+        "Already in database". You'll see the result before anything is saved.</div>
     </div>
     <a href="{{ page.back_url }}" class="btn btn-secondary btn-sm">{{ page.back_label }} →</a>
   </div>
@@ -14,7 +15,7 @@
 
   {% if result %}
   <div class="bdu-done">
-    Saved: <strong>{{ result.NEW }}</strong> new, <strong>{{ result.UPDATE }}</strong> updated.
+    Added <strong>{{ result.NEW }}</strong> new.
     <a href="{{ page.back_url }}">View {{ page.back_label }} →</a>
   </div>
   {% endif %}
@@ -27,7 +28,7 @@
     </form>
     <div class="bdu-help">
       <a href="{{ page.base }}/template">Download the {{ page.template_name }} (.xlsx)</a>
-      — {{ page.template_help }} Blank cells never erase what's already on file.
+      — {{ page.template_help }}
     </div>
   </div>
   {% else %}
@@ -35,25 +36,17 @@
   <div class="bdu-summary">
     <div class="bdu-file">{{ filename }} · {{ 'Maybank Beneficiary Code Tracker' if fmt == 'tracker' else page.template_name }}</div>
     <span class="bdu-chip bdu-new">{{ plan.counts.NEW }} new</span>
-    <span class="bdu-chip bdu-upd">{{ plan.counts.UPDATE }} update</span>
-    <span class="bdu-chip bdu-same">{{ plan.counts.UNCHANGED }} unchanged</span>
+    <span class="bdu-chip bdu-same">{{ plan.counts.EXISTS }} already in database</span>
     <span class="bdu-chip bdu-rej">{{ plan.counts.REJECT }} rejected</span>
   </div>
 
-  {% set to_write = plan.counts.NEW + plan.counts.UPDATE %}
+  {% set to_write = plan.counts.NEW %}
   <form method="post" action="{{ page.base }}/apply" class="bdu-confirm">
     <input type="hidden" name="rows_json" value="{{ rows_json }}">
     <input type="hidden" name="filename" value="{{ filename }}">
-    {% if plan.sensitive %}
-    <label class="warn-msg bdu-check">
-      <input type="checkbox" name="confirm_sensitive" value="yes">
-      I've checked the <strong>{{ plan.sensitive }}</strong> account-number change(s) marked in red below —
-      these redirect where the consultant is paid.
-    </label>
-    {% endif %}
     <div class="bdu-actions">
       <button type="submit" class="btn btn-primary btn-sm" {% if not to_write %}disabled{% endif %}>
-        Save {{ to_write }} change(s)
+        Add {{ to_write }} new
       </button>
       <a href="{{ page.base }}" class="btn btn-secondary btn-sm">Cancel</a>
       {% if plan.counts.REJECT %}<span class="bdu-note">Rejected rows are skipped — fix them in the file and upload again.</span>{% endif %}
@@ -66,16 +59,13 @@
       {% for i in plan['items'] %}
       <tr class="bdu-row-{{ i.action|lower }}">
         <td>{{ i.row_no }}</td>
-        <td><span class="bdu-chip bdu-{{ {'NEW':'new','UPDATE':'upd','UNCHANGED':'same','REJECT':'rej'}[i.action] }}">{{ i.action|title }}</span></td>
+        <td><span class="bdu-chip bdu-{{ {'NEW':'new','EXISTS':'same','REJECT':'rej'}[i.action] }}">{{ {'NEW':'New','EXISTS':'Already in database','REJECT':'Rejected'}[i.action] }}</span></td>
         <td><strong>{{ i.employee_id or '—' }}</strong></td>
         <td>{{ i.name }}{% if i.fav %} <span class="bdu-fav">{{ i.fav }}</span>{% endif %}</td>
         <td>
           {% if i.action == 'REJECT' %}<span class="bdu-reason">{{ i.reason }}</span>{% endif %}
-          {% for label, old, new, sensitive in i.changes %}
-          <div class="bdu-change {% if sensitive %}bdu-sensitive{% endif %}">
-            <span class="bdu-label">{{ label }}</span>
-            {% if old %}<s>{{ old }}</s> → {% endif %}<strong>{{ new }}</strong>
-          </div>
+          {% for label, value in i.changes %}
+          <div class="bdu-change"><span class="bdu-label">{{ label }}</span><strong>{{ value }}</strong></div>
           {% endfor %}
           {% for w in i.warnings %}<div class="bdu-warn">⚠ {{ w }}</div>{% endfor %}
         </td>
@@ -103,20 +93,17 @@
 .bdu-file { font-size:13px; font-weight:600; color:var(--text-primary); margin-right:8px; }
 .bdu-chip { display:inline-block; font-size:11px; font-weight:700; border-radius:999px; padding:2px 9px; border:1px solid; }
 .bdu-new { background:var(--success-bg); color:var(--success); border-color:var(--success-border); }
-.bdu-upd { background:var(--warning-bg); color:#92400e; border-color:var(--warning-border); }
 .bdu-same { color:var(--text-muted); border-color:var(--border); }
 .bdu-rej { background:var(--danger-bg); color:var(--danger); border-color:var(--danger-border); }
 .bdu-confirm { margin-bottom:16px; }
-.bdu-check { display:flex; gap:8px; align-items:center; margin-bottom:10px; cursor:pointer; }
 .bdu-actions { display:flex; gap:10px; align-items:center; }
 .bdu-note { font-size:12px; color:var(--text-muted); }
 .bdu-table td { vertical-align:top; font-size:12px; }
-.bdu-row-unchanged td { color:var(--text-muted); }
+.bdu-row-exists td { color:var(--text-muted); }
 .bdu-fav { font-size:11px; color:var(--text-muted); margin-left:4px; }
 .bdu-reason { color:var(--danger); }
 .bdu-change { line-height:1.6; }
 .bdu-label { display:inline-block; min-width:90px; color:var(--text-muted); }
-.bdu-sensitive { color:var(--danger); font-weight:600; }
 .bdu-warn { color:#92400e; }
 </style>
 {% endblock %}

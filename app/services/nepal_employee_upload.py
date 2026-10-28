@@ -3,11 +3,10 @@ the Nepal (HNPL) counterpart of app/services/bank_details_upload.py, with the
 same preview-then-confirm flow and the same plan shape so one page template
 serves both.
 
-Nepal has no IC number to corroborate on, so an uploaded row is lined up with
-an existing employee the way bank_files.match_nepal_employee pays them:
-RigoHR ledger code, PAN, HEX id, then exact name. If those point at different
-employees, or a matched employee already has a DIFFERENT ledger code / PAN /
-HEX id / name, the row is rejected — a bulk upload never re-keys someone.
+Uploads only ever ADD employees. Nepal has no IC number to corroborate on, so
+a row counts as already on file when its RigoHR ledger code, PAN, HEX id or
+exact name matches an existing employee (the keys bank_files.match_nepal_employee
+pays by); it is then skipped as "Already in database", never updated.
 
 Account numbers typed into Excel as numbers are rejected: Excel drops leading
 zeros (Anil BK's 09205080041317) and turns 15+ digit numbers into 9.10011E+14,
@@ -22,7 +21,7 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill
 
 from app.services.bank_details_upload import UploadError, _header_key, _rows_from_file, _s
-from app.services.bank_files import _names_agree, _norm_name, np_bank_lookup
+from app.services.bank_files import _norm_name, np_bank_lookup
 
 SOURCE = "BULK_UPLOAD"
 
@@ -41,8 +40,7 @@ FIELD_LABELS = {
     "cit_number": "CIT no.",
     "resign_date": "Resign date",
 }
-SENSITIVE_FIELDS = {"bank_account_number", "bank_code"}
-# Identity keys: filled in if blank on file, never changed by an upload.
+# Identity keys: any of these (or the exact name) already on file means "Already in database".
 _KEYS = ("employee_ledger_code", "pan_number", "apex_employee_id")
 
 TEMPLATE_HEADERS = [
@@ -140,8 +138,10 @@ def _normalise(row: dict) -> tuple[dict, str]:
 
 
 def plan_changes(rows: list[dict], db) -> dict:
-    """Same shape as bank_details_upload.plan_changes; UPDATE items carry
-    ``row_id`` (nepal_employee_master.id)."""
+    """Same shape as bank_details_upload.plan_changes. Uploads only ever ADD
+    employees: a row whose ledger code, PAN, HEX id or exact name is already
+    in nepal_employee_master is EXISTS ("Already in database") and left alone
+    — changes go through the Nepal Employees edit form."""
     try:
         existing = db.from_("nepal_employee_master").select("*").execute().data or []
     except Exception:
@@ -155,10 +155,18 @@ def plan_changes(rows: list[dict], db) -> dict:
                 index[k][str(e[k]).strip().upper()].add(str(e["id"]))
         index["name"][_norm_name(e.get("employee_name") or "")].add(str(e["id"]))
 
+    def on_file(v) -> set:
+        hits = set(index["name"].get(_norm_name(v["employee_name"]), set())) if v["employee_name"] else set()
+        for k in _KEYS:
+            if v[k]:
+                hits |= index[k].get(v[k].upper(), set())
+        return hits
+
     cleaned = [(r["row_no"], *_normalise(r)) for r in rows]
+    cleaned = [(n, v, reason, on_file(v)) for n, v, reason in cleaned]
     seen = defaultdict(int)
-    for _, v, reason in cleaned:
-        if not reason:
+    for _, v, reason, hits in cleaned:
+        if not reason and not hits:
             for k in _KEYS:
                 if v[k]:
                     seen[(k, v[k].upper())] += 1
@@ -166,80 +174,40 @@ def plan_changes(rows: list[dict], db) -> dict:
                 seen[("name", _norm_name(v["employee_name"]))] += 1
 
     items = []
-    for row_no, v, reason in cleaned:
+    for row_no, v, reason, hits in cleaned:
         item = {"row_no": row_no, "employee_id": v["employee_ledger_code"] or v["apex_employee_id"] or "",
                 "name": v["employee_name"], "fav": "", "changes": [], "warnings": [], "reason": reason}
+        if hits:
+            names = ", ".join(sorted(by_id[h].get("employee_name") or "?" for h in hits))
+            items.append({**item, "action": "EXISTS", "name": names, "reason": "Already in database"})
+            continue
+        if not reason and not v["employee_name"]:
+            reason = "Employee Name is required"
         if not reason:
             dupes = [k for k in _KEYS if v[k] and seen[(k, v[k].upper())] > 1]
-            if v["employee_name"] and seen[("name", _norm_name(v["employee_name"]))] > 1:
+            if seen[("name", _norm_name(v["employee_name"]))] > 1:
                 dupes.append("name")
             if dupes:
                 reason = f"Same {', '.join(FIELD_LABELS.get(d, d) for d in dupes)} appears more than once in this file"
-        candidates = set()
-        if not reason:
-            for k in _KEYS:
-                if v[k]:
-                    candidates |= index[k].get(v[k].upper(), set())
-            if not candidates and v["employee_name"]:
-                candidates = set(index["name"].get(_norm_name(v["employee_name"]), set()))
-            if len(candidates) > 1:
-                names = sorted(by_id[c].get("employee_name") or "?" for c in candidates)
-                reason = f"Matches more than one employee on file ({', '.join(names)}) — fix it on the Nepal Employees page"
-        current = by_id[next(iter(candidates))] if not reason and candidates else None
-        if not reason and not current and not v["employee_name"]:
-            reason = "Employee Name is required for someone not on file yet"
-        if not reason and current:
-            on_file = current.get("employee_name") or ""
-            if v["employee_name"] and not _names_agree(_norm_name(v["employee_name"]), _norm_name(on_file)):
-                reason = f"Name doesn't match the employee on file ({on_file}) — check the ledger code / PAN / HEX ID"
-            for k in _KEYS:
-                if not reason and v[k] and current.get(k) and str(current[k]).strip().upper() != v[k].upper():
-                    reason = (f"{FIELD_LABELS[k]} on file for {on_file} is {current[k]}, not {v[k]} — "
-                              "change it on the Nepal Employees page")
         if reason:
             items.append({**item, "action": "REJECT", "reason": reason})
             continue
+        payload = {f: v[f] for f in FIELD_LABELS if v[f]}
+        changes = [(FIELD_LABELS[f], v[f]) for f in FIELD_LABELS if v[f]]
+        items.append({**item, "action": "NEW", "payload": {"entity": "HNPL", **payload}, "changes": changes})
 
-        payload, changes = {}, []
-        for f in FIELD_LABELS:
-            new = v[f]
-            if not new:
-                continue   # blank never erases
-            old = _s((current or {}).get(f))
-            if f == "resign_date" and old:
-                old = _parse_date(old).isoformat()
-            if f == "employee_name" and current and _names_agree(_norm_name(old), _norm_name(new)):
-                continue
-            if old.upper() != new.upper():
-                payload[f] = new
-                changes.append((FIELD_LABELS[f], old, new, bool(current) and bool(old) and f in SENSITIVE_FIELDS))
-        item["name"] = (current or {}).get("employee_name") or v["employee_name"]
-        if not current:
-            items.append({**item, "action": "NEW", "payload": {"entity": "HNPL", **payload}, "changes": changes})
-        elif payload:
-            items.append({**item, "action": "UPDATE", "row_id": str(current["id"]), "payload": payload, "changes": changes})
-        else:
-            items.append({**item, "action": "UNCHANGED"})
-
-    order = {"REJECT": 0, "UPDATE": 1, "NEW": 2, "UNCHANGED": 3}
+    order = {"REJECT": 0, "NEW": 1, "EXISTS": 2}
     items.sort(key=lambda i: (order[i["action"]], i["row_no"]))
-    counts = {a: sum(1 for i in items if i["action"] == a) for a in order}
-    sensitive = sum(1 for i in items if i["action"] == "UPDATE" and any(c[3] for c in i["changes"]))
-    return {"items": items, "counts": counts, "sensitive": sensitive}
+    return {"items": items, "counts": {a: sum(1 for i in items if i["action"] == a) for a in order}}
 
 
 def apply_plan(plan: dict, db) -> dict:
     now = datetime.now(timezone.utc).isoformat()
-    done = {"NEW": 0, "UPDATE": 0}
+    done = {"NEW": 0}
     for item in plan["items"]:
         if item["action"] == "NEW":
             db.from_("nepal_employee_master").insert({**item["payload"], "source": SOURCE, "imported_at": now}).execute()
-        elif item["action"] == "UPDATE":
-            db.from_("nepal_employee_master").update({**item["payload"], "source": SOURCE, "imported_at": now}).eq(
-                "id", item["row_id"]).execute()
-        else:
-            continue
-        done[item["action"]] += 1
+            done["NEW"] += 1
     return done
 
 
@@ -265,13 +233,13 @@ def build_template() -> bytes:
         ["How to fill the Nepal Employees sheet"],
         [],
         ["Employee Name", "Required for someone new."],
-        ["Ledger Code / PAN / HEX ID", "Used to find the employee if they're already on file. Never changed by an upload."],
+        ["Ledger Code / PAN / HEX ID", "If any of these, or the name, is already in APEX, the row is skipped as 'Already in database'."],
         ["Bank Name", "As on the Nepal IPS list, e.g. 'Nabil Bank Ltd.' — common spellings like 'NIMB' work too."],
         ["Account Number", "Type it in this sheet (the column is Text). Don't paste numbers from another sheet — "
                            "Excel drops leading zeros."],
         ["Resign Date", "e.g. 26-Apr-26 or 2026-04-26. Leave blank if still employed."],
         [],
-        ["Blank cells never erase what's already on file — leave a cell blank to keep it."],
+        ["To change someone already in APEX, edit them on the Nepal Employees page."],
     ):
         notes.append(line)
     notes["A1"].font = Font(bold=True, size=13)

@@ -21,7 +21,8 @@ someone else, and duplicate HEX ids within one file. Nothing is written until
 the user confirms the preview, and apply_plan() re-plans against the live DB
 rather than trusting what the browser sends back.
 
-Blank cells never erase: a blank field on an existing row means "leave as is".
+Uploads only add new consultants: anyone already on file is skipped as "Already in
+database"; changes to them go through the Bank Overrides edit form.
 """
 import csv
 import io
@@ -54,9 +55,6 @@ FIELD_LABELS = {
     "bank_account_name": "Account name",
     "favourite_beneficiary_code": "Fav. code",
 }
-# A change to one of these on an existing consultant redirects their money, so
-# the preview makes the user tick an extra confirmation before applying it.
-SENSITIVE_FIELDS = {"bank_account_number", "bank_code"}
 
 TEMPLATE_HEADERS = [
     ("employee_id", "HEX Employee ID"),
@@ -330,10 +328,15 @@ def _normalise(row: dict) -> tuple[dict, str]:
 def plan_changes(fmt: str, rows: list[dict], db) -> dict:
     """Work out what an upload would do, without writing anything.
 
-    -> {"items": [...], "counts": {...}, "sensitive": n}. Each item has
-    ``action`` NEW / UPDATE / UNCHANGED / REJECT, ``row_no``, ``employee_id``,
-    ``name``, ``changes`` [(label, old, new, sensitive)], ``payload`` (fields to
-    write) and ``reason`` / ``warnings``."""
+    Uploads only ever ADD consultants: a row whose HEX id or name is already
+    in consultant_bank_overrides is reported as EXISTS ("Already in
+    database") and left alone — changes to someone on file go through the
+    Bank Overrides edit form, one person at a time.
+
+    -> {"items": [...], "counts": {...}}. Each item has ``action`` NEW /
+    EXISTS / REJECT, ``row_no``, ``employee_id``, ``name``, ``changes``
+    [(label, value)], ``payload`` (fields to write) and
+    ``reason`` / ``warnings``."""
     ctx = _load_context(db)
     items = []
     if fmt == "tracker":
@@ -342,15 +345,23 @@ def plan_changes(fmt: str, rows: list[dict], db) -> dict:
                    "name": r.get("consultant_name", ""), "fav": r.get("favourite_beneficiary_code", ""),
                    "reason": r["reason"], "changes": [], "warnings": []} for r in rejected]
 
+    name_owner = {}
+    for eid, o in ctx["overrides"].items():
+        for n in (o.get("consultant_name"), o.get("bank_account_name")):
+            if n:
+                name_owner.setdefault(_norm_name(n), eid)
+
     cleaned = []
     for row in rows:
         v, reason = _normalise(row)
-        cleaned.append((row["row_no"], v, reason, row.get("warnings", [])))
+        exists_as = v["employee_id"] if v["employee_id"] in ctx["overrides"] else \
+            name_owner.get(_norm_name(v["consultant_name"])) if v["consultant_name"] else None
+        cleaned.append((row["row_no"], v, reason, row.get("warnings", []), exists_as))
 
     id_count = defaultdict(int)
     fav_owner_in_file = defaultdict(set)
-    for _, v, reason, _ in cleaned:
-        if not reason:
+    for _, v, reason, _, exists_as in cleaned:
+        if not reason and not exists_as:
             id_count[v["employee_id"]] += 1
             if v["favourite_beneficiary_code"]:
                 fav_owner_in_file[v["favourite_beneficiary_code"]].add(v["employee_id"])
@@ -360,71 +371,52 @@ def plan_changes(fmt: str, rows: list[dict], db) -> dict:
         if o.get("bank_account_number"):
             acct_owner_db[o["bank_account_number"]].add(eid)
 
-    for row_no, v, reason, warnings in cleaned:
+    for row_no, v, reason, warnings, exists_as in cleaned:
         eid, fav = v["employee_id"], v["favourite_beneficiary_code"]
-        current = ctx["overrides"].get(eid)
-        known = ctx["known_names"].get(eid, set())
-        name = v["consultant_name"] or (current or {}).get("consultant_name", "")
-        item = {"row_no": row_no, "employee_id": eid, "name": name, "fav": fav,
+        item = {"row_no": row_no, "employee_id": eid, "name": v["consultant_name"], "fav": fav,
                 "changes": [], "warnings": list(warnings), "reason": reason}
+        if exists_as:
+            on_file = ctx["overrides"][exists_as]
+            items.append({**item, "action": "EXISTS", "employee_id": exists_as,
+                          "name": on_file.get("consultant_name") or v["consultant_name"],
+                          "reason": "Already in database", "warnings": []})
+            continue
+        known = ctx["known_names"].get(eid, set())
         if not reason and id_count[eid] > 1:
             reason = f"{eid} appears more than once in this file"
-        if not reason and not current and not v["consultant_name"]:
-            reason = "Consultant Name is required for someone not on file yet"
-        if not reason and v["consultant_name"] and known and not any(
+        if not reason and not v["consultant_name"]:
+            reason = "Consultant Name is required"
+        if not reason and known and not any(
                 _names_agree(_norm_name(v["consultant_name"]), _norm_name(k)) for k in known):
             reason = f"Name doesn't match {eid}, who is on file as {sorted(known)[0]} — check the HEX ID"
         if not reason and fav and len(fav_owner_in_file[fav]) > 1:
             reason = f"Favourite code {fav} is given to more than one consultant in this file"
-        if not reason and fav and fav_owner_db.get(fav, eid) != eid:
+        if not reason and fav and fav in fav_owner_db:
             reason = f"Favourite code {fav} already belongs to {fav_owner_db[fav]}"
         if reason:
             items.append({**item, "action": "REJECT", "reason": reason})
             continue
 
         acct = v["bank_account_number"]
-        if acct and acct_owner_db.get(acct, set()) - {eid}:
-            item["warnings"].append(f"Account {acct} is also on file for "
-                                    f"{', '.join(sorted(acct_owner_db[acct] - {eid}))}")
-        payload, changes = {}, []
-        for f in FIELD_LABELS:
-            new = v[f]
-            if not new:
-                continue   # blank never erases
-            old = _s((current or {}).get(f))
-            if f == "consultant_name" and current and _names_agree(_norm_name(old), _norm_name(new)):
-                continue   # spelling/format variant of the same name — keep what's on file
-            if old.upper() != new.upper():
-                payload[f] = new
-                changes.append((FIELD_LABELS[f], old, new, bool(current) and bool(old) and f in SENSITIVE_FIELDS))
-        if not current:
-            payload["employee_id"] = eid
-            items.append({**item, "action": "NEW", "payload": payload, "changes": changes})
-        elif payload:
-            items.append({**item, "action": "UPDATE", "payload": payload, "changes": changes})
-        else:
-            items.append({**item, "action": "UNCHANGED"})
+        if acct and acct_owner_db.get(acct):
+            item["warnings"].append(f"Account {acct} is also on file for {', '.join(sorted(acct_owner_db[acct]))}")
+        payload = {f: v[f] for f in FIELD_LABELS if v[f]}
+        changes = [(FIELD_LABELS[f], v[f]) for f in FIELD_LABELS if v[f]]
+        items.append({**item, "action": "NEW", "payload": {"employee_id": eid, **payload}, "changes": changes})
 
-    order = {"REJECT": 0, "UPDATE": 1, "NEW": 2, "UNCHANGED": 3}
+    order = {"REJECT": 0, "NEW": 1, "EXISTS": 2}
     items.sort(key=lambda i: (order[i["action"]], i["row_no"]))
-    counts = {a: sum(1 for i in items if i["action"] == a) for a in order}
-    sensitive = sum(1 for i in items if i["action"] == "UPDATE" and any(c[3] for c in i["changes"]))
-    return {"items": items, "counts": counts, "sensitive": sensitive}
+    return {"items": items, "counts": {a: sum(1 for i in items if i["action"] == a) for a in order}}
 
 
 def apply_plan(plan: dict, db, updated_by: str) -> dict:
     now = datetime.now(timezone.utc).isoformat()
-    done = {"NEW": 0, "UPDATE": 0}
+    done = {"NEW": 0}
     for item in plan["items"]:
-        if item["action"] not in done:
-            continue
-        stamp = {"source": SOURCE, "updated_by": updated_by, "updated_at": now}
         if item["action"] == "NEW":
-            db.from_("consultant_bank_overrides").insert({**item["payload"], **stamp}).execute()
-        else:
-            db.from_("consultant_bank_overrides").update({**item["payload"], **stamp}).eq(
-                "employee_id", item["employee_id"]).execute()
-        done[item["action"]] += 1
+            db.from_("consultant_bank_overrides").insert(
+                {**item["payload"], "source": SOURCE, "updated_by": updated_by, "updated_at": now}).execute()
+            done["NEW"] += 1
     return done
 
 
@@ -460,7 +452,7 @@ def build_template() -> bytes:
         ["Account Name", "Only when the account is under a different name, e.g. the consultant's company."],
         ["Favourite Beneficiary Code", "The code Maybank CMS gave after registering them, e.g. HS372."],
         [],
-        ["Blank cells never erase what's already on file — leave a cell blank to keep it."],
+        ["Anyone already in APEX is skipped as 'Already in database' — edit them on the Bank Overrides page."],
         ["Example: HEX-0123 | Nur Example Binti Contoh | NRIC | 990101101234 | Maybank | | 164123456789 | | HS372"],
         ["You can also upload the Maybank Beneficiary Code Tracker as it is."],
     ):
