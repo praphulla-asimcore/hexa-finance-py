@@ -1,14 +1,18 @@
+import json
 import re
 from datetime import date, datetime, timezone
 
 import psycopg
-from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
+from fastapi import APIRouter, File, Request, UploadFile
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from app.config import TEMPLATES_DIR, ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, get_entity_country
 from app.deps import get_current_user
 from app.services.db import get_db
 from app.services.bank_files import BANK_NAMES_BY_COUNTRY, NP_BANKS, bank_name_to_code, np_bank_lookup
+from app.services.bank_details_upload import (
+    FIELD_LABELS, UploadError, apply_plan, build_template, parse_upload, plan_changes,
+)
 from app.services.consultant_master_import import (
     fetch_missing_fav_code_rows, set_fav_code_for_consultant,
     upsert_consultant_master, _parse_date,
@@ -272,6 +276,79 @@ async def missing_fav_codes_set(apex_employee_id: str, request: Request):
     if fav_code:
         set_fav_code_for_consultant(apex_employee_id, fav_code, user.get("name") or user.get("email", ""))
     return RedirectResponse("/admin/missing-fav-codes", status_code=303)
+
+
+# ─── Bulk upload of bank details / Favourite Beneficiary Codes ───────────────
+#     Preview first, write on confirm (app/services/bank_details_upload.py).
+
+_UPLOAD_MAX_BYTES = 5 * 1024 * 1024
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _upload_page(request: Request, user: dict, **ctx):
+    return templates.TemplateResponse(request, "admin/bank_details_upload.html", {
+        "user": user, "section": "admin", "field_labels": FIELD_LABELS, **ctx,
+    })
+
+
+@router.get("/admin/bank-details-upload")
+async def bank_details_upload(request: Request):
+    user = get_current_user(request)
+    if user.get("role") not in _BANK_OVERRIDE_EDIT_ROLES:
+        return RedirectResponse("/", status_code=302)
+    return _upload_page(request, user)
+
+
+@router.get("/admin/bank-details-upload/template")
+async def bank_details_upload_template(request: Request):
+    user = get_current_user(request)
+    if user.get("role") not in _BANK_OVERRIDE_EDIT_ROLES:
+        return RedirectResponse("/", status_code=302)
+    return Response(build_template(), media_type=_XLSX_MIME,
+                    headers={"Content-Disposition": 'attachment; filename="APEX Bank Details Upload.xlsx"'})
+
+
+@router.post("/admin/bank-details-upload/preview")
+async def bank_details_upload_preview(request: Request, file: UploadFile = File(...)):
+    user = get_current_user(request)
+    if user.get("role") not in _BANK_OVERRIDE_EDIT_ROLES:
+        return RedirectResponse("/", status_code=302)
+    db = get_db()
+    content = await file.read()
+    if len(content) > _UPLOAD_MAX_BYTES:
+        return _upload_page(request, user, error="File is larger than 5 MB.")
+    try:
+        fmt, rows = parse_upload(file.filename or "", content)
+    except UploadError as exc:
+        return _upload_page(request, user, error=str(exc))
+    if not rows:
+        return _upload_page(request, user, error="The file has a header row but no data rows.")
+    plan = plan_changes(fmt, rows, db)
+    return _upload_page(request, user, plan=plan, fmt=fmt, filename=file.filename,
+                        rows_json=json.dumps({"fmt": fmt, "rows": rows}))
+
+
+@router.post("/admin/bank-details-upload/apply")
+async def bank_details_upload_apply(request: Request):
+    user = get_current_user(request)
+    if user.get("role") not in _BANK_OVERRIDE_EDIT_ROLES:
+        return RedirectResponse("/", status_code=302)
+    db = get_db()
+    form = await request.form()
+    try:
+        data = json.loads(form.get("rows_json") or "")
+        fmt, rows = data["fmt"], data["rows"]
+    except (ValueError, KeyError, TypeError):
+        return _upload_page(request, user, error="Upload expired — please upload the file again.")
+    # Re-plan against the live DB: never trust the preview the browser sends back,
+    # and pick up anything another user changed in between.
+    plan = plan_changes(fmt, rows, db)
+    if plan["sensitive"] and form.get("confirm_sensitive") != "yes":
+        return _upload_page(request, user, plan=plan, fmt=fmt, filename=form.get("filename"),
+                            rows_json=json.dumps(data),
+                            error="Tick the box to confirm the account-number changes before applying.")
+    done = apply_plan(plan, db, user.get("name") or user.get("email", ""))
+    return _upload_page(request, user, result=done)
 
 
 # ─── Manual consultant_master entry (add someone the Talenox export doesn't

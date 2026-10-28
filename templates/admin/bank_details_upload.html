@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="cp-page">
+  <div class="cp-head">
+    <div>
+      <h1 class="cp-title">Upload Bank Details</h1>
+      <div class="cp-sub">
+        Add or update consultants' bank details and Favourite Beneficiary Codes in bulk. Upload the
+        APEX template, or the Maybank Beneficiary Code Tracker as it is. You'll see exactly what will
+        change before anything is saved.
+      </div>
+    </div>
+    <a href="/admin/bank-overrides" class="btn btn-secondary btn-sm">Bank Overrides →</a>
+  </div>
+
+  {% if error %}<div class="error-msg bdu-msg">{{ error }}</div>{% endif %}
+
+  {% if result %}
+  <div class="bdu-done">
+    Saved: <strong>{{ result.NEW }}</strong> new, <strong>{{ result.UPDATE }}</strong> updated.
+    <a href="/admin/bank-overrides">View Bank Overrides →</a>
+  </div>
+  {% endif %}
+
+  {% if not plan %}
+  <div class="bdu-card">
+    <form method="post" action="/admin/bank-details-upload/preview" enctype="multipart/form-data" class="bdu-upload">
+      <input class="input" type="file" name="file" accept=".xlsx,.xlsm,.csv" required>
+      <button type="submit" class="btn btn-primary btn-sm">Preview</button>
+    </form>
+    <div class="bdu-help">
+      <a href="/admin/bank-details-upload/template">Download the APEX template (.xlsx)</a>
+      — one row per consultant: HEX Employee ID, name, ID, bank, account number, favourite code.
+      Blank cells never erase what's already on file.
+    </div>
+  </div>
+  {% else %}
+
+  <div class="bdu-summary">
+    <div class="bdu-file">{{ filename }} · {{ 'Maybank Beneficiary Code Tracker' if fmt == 'tracker' else 'APEX template' }}</div>
+    <span class="bdu-chip bdu-new">{{ plan.counts.NEW }} new</span>
+    <span class="bdu-chip bdu-upd">{{ plan.counts.UPDATE }} update</span>
+    <span class="bdu-chip bdu-same">{{ plan.counts.UNCHANGED }} unchanged</span>
+    <span class="bdu-chip bdu-rej">{{ plan.counts.REJECT }} rejected</span>
+  </div>
+
+  {% set to_write = plan.counts.NEW + plan.counts.UPDATE %}
+  <form method="post" action="/admin/bank-details-upload/apply" class="bdu-confirm">
+    <input type="hidden" name="rows_json" value="{{ rows_json }}">
+    <input type="hidden" name="filename" value="{{ filename }}">
+    {% if plan.sensitive %}
+    <label class="warn-msg bdu-check">
+      <input type="checkbox" name="confirm_sensitive" value="yes">
+      I've checked the <strong>{{ plan.sensitive }}</strong> account-number change(s) marked in red below —
+      these redirect where the consultant is paid.
+    </label>
+    {% endif %}
+    <div class="bdu-actions">
+      <button type="submit" class="btn btn-primary btn-sm" {% if not to_write %}disabled{% endif %}>
+        Save {{ to_write }} change(s)
+      </button>
+      <a href="/admin/bank-details-upload" class="btn btn-secondary btn-sm">Cancel</a>
+      {% if plan.counts.REJECT %}<span class="bdu-note">Rejected rows are skipped — fix them in the file and upload again.</span>{% endif %}
+    </div>
+  </form>
+
+  <table class="admin-table bdu-table">
+    <thead><tr><th>Row</th><th>Result</th><th>HEX ID</th><th>Name</th><th>Details</th></tr></thead>
+    <tbody>
+      {% for i in plan['items'] %}
+      <tr class="bdu-row-{{ i.action|lower }}">
+        <td>{{ i.row_no }}</td>
+        <td><span class="bdu-chip bdu-{{ {'NEW':'new','UPDATE':'upd','UNCHANGED':'same','REJECT':'rej'}[i.action] }}">{{ i.action|title }}</span></td>
+        <td><strong>{{ i.employee_id or '—' }}</strong></td>
+        <td>{{ i.name }}{% if i.fav %} <span class="bdu-fav">{{ i.fav }}</span>{% endif %}</td>
+        <td>
+          {% if i.action == 'REJECT' %}<span class="bdu-reason">{{ i.reason }}</span>{% endif %}
+          {% for label, old, new, sensitive in i.changes %}
+          <div class="bdu-change {% if sensitive %}bdu-sensitive{% endif %}">
+            <span class="bdu-label">{{ label }}</span>
+            {% if old %}<s>{{ old }}</s> → {% endif %}<strong>{{ new }}</strong>
+          </div>
+          {% endfor %}
+          {% for w in i.warnings %}<div class="bdu-warn">⚠ {{ w }}</div>{% endfor %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+
+<style>
+.cp-page { padding: 24px 28px; max-width: 1200px; }
+.cp-head { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:18px; }
+.cp-title { font-size:20px; font-weight:800; color:var(--text-primary); margin:0; }
+.cp-sub { font-size:12px; color:var(--text-muted); margin-top:4px; max-width:640px; }
+.bdu-msg { margin-bottom:14px; }
+.bdu-done { background:var(--success-bg); border:1px solid var(--success-border); color:#065f46;
+  border-radius:var(--radius-sm); padding:10px 14px; font-size:13px; margin-bottom:14px; }
+.bdu-done a { margin-left:8px; }
+.bdu-card { border:1px solid var(--border); border-radius:var(--radius-sm); padding:18px; max-width:720px; }
+.bdu-upload { display:flex; gap:10px; align-items:center; }
+.bdu-upload .input { max-width:420px; }
+.bdu-help { font-size:12px; color:var(--text-muted); margin-top:12px; }
+.bdu-summary { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:12px; }
+.bdu-file { font-size:13px; font-weight:600; color:var(--text-primary); margin-right:8px; }
+.bdu-chip { display:inline-block; font-size:11px; font-weight:700; border-radius:999px; padding:2px 9px; border:1px solid; }
+.bdu-new { background:var(--success-bg); color:var(--success); border-color:var(--success-border); }
+.bdu-upd { background:var(--warning-bg); color:#92400e; border-color:var(--warning-border); }
+.bdu-same { color:var(--text-muted); border-color:var(--border); }
+.bdu-rej { background:var(--danger-bg); color:var(--danger); border-color:var(--danger-border); }
+.bdu-confirm { margin-bottom:16px; }
+.bdu-check { display:flex; gap:8px; align-items:center; margin-bottom:10px; cursor:pointer; }
+.bdu-actions { display:flex; gap:10px; align-items:center; }
+.bdu-note { font-size:12px; color:var(--text-muted); }
+.bdu-table td { vertical-align:top; font-size:12px; }
+.bdu-row-unchanged td { color:var(--text-muted); }
+.bdu-fav { font-size:11px; color:var(--text-muted); margin-left:4px; }
+.bdu-reason { color:var(--danger); }
+.bdu-change { line-height:1.6; }
+.bdu-label { display:inline-block; min-width:90px; color:var(--text-muted); }
+.bdu-sensitive { color:var(--danger); font-weight:600; }
+.bdu-warn { color:#92400e; }
+</style>
+{% endblock %}

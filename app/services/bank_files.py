@@ -48,7 +48,7 @@ MY_BANK_CODES = {
     "hsbc": "HBMBMYKL", "hsbc bank": "HBMBMYKL",
     "ocbc": "OCBCMYKL",
     "uob": "UOVBMYKL", "united overseas bank": "UOVBMYKL",
-    "standard chartered": "SCBLMYKL",
+    "standard chartered": "SCBLMYKX",  # as registered in Maybank CMS (Beneficiary Code Tracker)
     "affin": "PHBMMYKL", "affin bank": "PHBMMYKL",
     "alliance bank": "MFBBMYKL",
     "bank rakyat": "BKRMMYKL",
@@ -194,6 +194,31 @@ def bank_name_to_code(name: str, country: str = "MY") -> str:
         return hit[0] if hit else ""
     codes = BANK_CODES.get((country or "MY").upper(), MY_BANK_CODES)
     return codes.get(name.strip().lower(), "")
+
+
+_SWIFT_RE = re.compile(r"^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$")
+
+
+def bank_code_to_name(code: str) -> str:
+    """Display name for a Malaysian SWIFT code, in the same form the bank-name
+    dropdown stores (``n.title()`` of MY_BANK_CODES), or "" if unknown."""
+    names = [n for n, c in MY_BANK_CODES.items() if c == (code or "").strip().upper()]
+    return min(names, key=len).title() if names else ""
+
+
+def resolve_bank_code(rec: dict) -> str:
+    """Bank code for a merged consultant record: the stored ``bankCode`` when
+    it's a real SWIFT code, else derived from ``bankName``.
+
+    The stored code comes first because consultant_bank_overrides rows loaded
+    from the Maybank Beneficiary Code Tracker carry the exact code the
+    beneficiary is registered under and may have no bank name — and because
+    build_consultant_list merges field by field, a bank name from a lower
+    source (an old Talenox bank) could otherwise be paired with the override's
+    account number. HexaFlow's bank_code is a short label (MBB, CIMB), not a
+    SWIFT code, so it falls through to the name."""
+    code = (rec.get("bankCode") or "").strip().upper()
+    return code if _SWIFT_RE.match(code) else bank_name_to_code(rec.get("bankName") or "")
 
 
 def _payment_mode(bank_code: str) -> str:
@@ -1006,7 +1031,7 @@ async def generate_and_store_bank_files(kase: dict, db, triggered_by: str) -> di
                     })
                     continue
 
-            bank_code = bank_name_to_code(matched["bankName"] if matched else "")
+            bank_code = resolve_bank_code(matched) if matched else ""
 
             # Favourite Beneficiary/Biller Code: the CSI value wins, else the
             # consultant-DB (Airtable) value. The bank only accepts a code that is
