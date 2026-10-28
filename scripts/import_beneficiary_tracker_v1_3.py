@@ -34,7 +34,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env.local"), overrid
 import openpyxl
 
 from app.services.bank_files import _names_agree
-from app.services.consultant_master_import import _norm_name, parse_workbook
+from app.services.consultant_master_import import _norm_name, build_name_index, parse_workbook
 
 SHEET = "Beneficiary Code Tracker_Final"
 SOURCE = "BENEFICIARY_TRACKER_V1_3"
@@ -43,7 +43,10 @@ _HEX_ID_RE = re.compile(r"^HEX-\d+$", re.IGNORECASE)
 # Per explicit user confirmation: these IC/accounts appear under two ids in
 # Talenox. Chia Kit Yau -> HEX-0230 (v1 import), Farah Amira Binti Amir ->
 # HEX-0227 (2026-10-28).
-PINNED = {"HS256": "HEX-0230", "HS288": "HEX-0227"}
+# HS346: CSI-HSSB-202610-EOM-001 names him "Lohithakshan Nair A/L J
+# Saravanakumaran" (extra initial J vs the tracker), so the exact-name
+# fallback below misses him; he's the only word-subset match either way.
+PINNED = {"HS256": "HEX-0230", "HS288": "HEX-0227", "HS346": "HEX-0246"}
 
 SKIP = {
     "HS252": "Talenox record behind this IC/account is 'Test Employee 01', not Mohd Ikhram Merican",
@@ -104,7 +107,11 @@ def build_identity_sources(talenox_path: str, db) -> list[dict]:
     return out
 
 
-def resolve(tracker: list[dict], sources: list[dict]) -> tuple[list[dict], list[tuple]]:
+def resolve(tracker: list[dict], sources: list[dict], name_index: dict | None = None) -> tuple[list[dict], list[tuple]]:
+    """name_index (normalised CSI name -> {HEX ids}, from payroll_cases) is the
+    fallback for new joiners not yet in the Talenox export: a UNIQUE exact
+    full-name match, the same rule bank_files.match_consultant applies."""
+    name_index = name_index or {}
     by_ic, by_acct = defaultdict(set), defaultdict(set)
     name_of = {}
     for s in sources:
@@ -127,10 +134,13 @@ def resolve(tracker: list[dict], sources: list[dict]) -> tuple[list[dict], list[
             hits |= by_ic.get(i, set())
         if t["account"]:
             hits |= by_acct.get(t["account"], set())
+        if not hits:
+            for n in {_norm_name(t["bank_name_1"]), _norm_name(t["csi_name"])} - {""}:
+                hits |= name_index.get(n, set())
         if t["code"] in PINNED:
             hits = {PINNED[t["code"]]}
         if not hits:
-            rejected.append((t, "no IC/passport/account match to any HEX id"))
+            rejected.append((t, "no IC/passport/account/CSI-name match to any HEX id"))
             continue
         if len(hits) > 1:
             rejected.append((t, f"ambiguous: {sorted(hits)}"))
@@ -172,7 +182,8 @@ def main() -> None:
         print("ERROR: DATABASE_URL not set")
         sys.exit(1)
 
-    rows, rejected = resolve(parse_tracker(tracker_path), build_identity_sources(talenox_path, db))
+    rows, rejected = resolve(parse_tracker(tracker_path), build_identity_sources(talenox_path, db),
+                             build_name_index(db) if db else None)
     existing = {}
     if db:
         existing = {r["employee_id"]: r for r in
