@@ -132,6 +132,9 @@ _NP_BANK_ALIASES = {
     "laxmi bank": "2201",
     "mega bank": "0501",
     "nepal investment bank": "0501",
+    # As written in db/Nepal_Employee_Master.csv.
+    "nimb": "0501",
+    "laxmi sunrise": "2201",
 }
 
 

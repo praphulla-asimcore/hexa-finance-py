@@ -4,14 +4,10 @@
 <div class="cp-page">
   <div class="cp-head">
     <div>
-      <h1 class="cp-title">Upload Bank Details</h1>
-      <div class="cp-sub">
-        Add or update consultants' bank details and Favourite Beneficiary Codes in bulk. Upload the
-        APEX template, or the Maybank Beneficiary Code Tracker as it is. You'll see exactly what will
-        change before anything is saved.
-      </div>
+      <h1 class="cp-title">{{ page.title }}</h1>
+      <div class="cp-sub">{{ page.intro }} You'll see exactly what will change before anything is saved.</div>
     </div>
-    <a href="/admin/bank-overrides" class="btn btn-secondary btn-sm">Bank Overrides →</a>
+    <a href="{{ page.back_url }}" class="btn btn-secondary btn-sm">{{ page.back_label }} →</a>
   </div>
 
   {% if error %}<div class="error-msg bdu-msg">{{ error }}</div>{% endif %}
@@ -19,26 +15,25 @@
   {% if result %}
   <div class="bdu-done">
     Saved: <strong>{{ result.NEW }}</strong> new, <strong>{{ result.UPDATE }}</strong> updated.
-    <a href="/admin/bank-overrides">View Bank Overrides →</a>
+    <a href="{{ page.back_url }}">View {{ page.back_label }} →</a>
   </div>
   {% endif %}
 
   {% if not plan %}
   <div class="bdu-card">
-    <form method="post" action="/admin/bank-details-upload/preview" enctype="multipart/form-data" class="bdu-upload">
+    <form method="post" action="{{ page.base }}/preview" enctype="multipart/form-data" class="bdu-upload">
       <input class="input" type="file" name="file" accept=".xlsx,.xlsm,.csv" required>
       <button type="submit" class="btn btn-primary btn-sm">Preview</button>
     </form>
     <div class="bdu-help">
-      <a href="/admin/bank-details-upload/template">Download the APEX template (.xlsx)</a>
-      — one row per consultant: HEX Employee ID, name, ID, bank, account number, favourite code.
-      Blank cells never erase what's already on file.
+      <a href="{{ page.base }}/template">Download the {{ page.template_name }} (.xlsx)</a>
+      — {{ page.template_help }} Blank cells never erase what's already on file.
     </div>
   </div>
   {% else %}
 
   <div class="bdu-summary">
-    <div class="bdu-file">{{ filename }} · {{ 'Maybank Beneficiary Code Tracker' if fmt == 'tracker' else 'APEX template' }}</div>
+    <div class="bdu-file">{{ filename }} · {{ 'Maybank Beneficiary Code Tracker' if fmt == 'tracker' else page.template_name }}</div>
     <span class="bdu-chip bdu-new">{{ plan.counts.NEW }} new</span>
     <span class="bdu-chip bdu-upd">{{ plan.counts.UPDATE }} update</span>
     <span class="bdu-chip bdu-same">{{ plan.counts.UNCHANGED }} unchanged</span>
@@ -46,7 +41,7 @@
   </div>
 
   {% set to_write = plan.counts.NEW + plan.counts.UPDATE %}
-  <form method="post" action="/admin/bank-details-upload/apply" class="bdu-confirm">
+  <form method="post" action="{{ page.base }}/apply" class="bdu-confirm">
     <input type="hidden" name="rows_json" value="{{ rows_json }}">
     <input type="hidden" name="filename" value="{{ filename }}">
     {% if plan.sensitive %}
@@ -60,13 +55,13 @@
       <button type="submit" class="btn btn-primary btn-sm" {% if not to_write %}disabled{% endif %}>
         Save {{ to_write }} change(s)
       </button>
-      <a href="/admin/bank-details-upload" class="btn btn-secondary btn-sm">Cancel</a>
+      <a href="{{ page.base }}" class="btn btn-secondary btn-sm">Cancel</a>
       {% if plan.counts.REJECT %}<span class="bdu-note">Rejected rows are skipped — fix them in the file and upload again.</span>{% endif %}
     </div>
   </form>
 
   <table class="admin-table bdu-table">
-    <thead><tr><th>Row</th><th>Result</th><th>HEX ID</th><th>Name</th><th>Details</th></tr></thead>
+    <thead><tr><th>Row</th><th>Result</th><th>{{ page.id_header }}</th><th>Name</th><th>Details</th></tr></thead>
     <tbody>
       {% for i in plan['items'] %}
       <tr class="bdu-row-{{ i.action|lower }}">

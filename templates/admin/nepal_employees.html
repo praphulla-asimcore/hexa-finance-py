@@ -72,7 +72,10 @@
         and apex_employee_id are commonly blank until backfilled from RigoHR / onboarded into APEX.
       </div>
     </div>
-    <button class="btn btn-primary" onclick="cpToggle('add-form')">+ Add Employee</button>
+    <div style="display:flex;gap:8px">
+      <a href="/admin/nepal-employees/upload" class="btn btn-secondary">Upload File</a>
+      <button class="btn btn-primary" onclick="cpToggle('add-form')">+ Add Employee</button>
+    </div>
   </div>
 
   <form method="get" action="/admin/nepal-employees" style="margin-bottom:14px;display:flex;gap:8px">

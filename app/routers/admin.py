@@ -10,9 +10,7 @@ from app.config import TEMPLATES_DIR, ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_R
 from app.deps import get_current_user
 from app.services.db import get_db
 from app.services.bank_files import BANK_NAMES_BY_COUNTRY, NP_BANKS, bank_name_to_code, np_bank_lookup
-from app.services.bank_details_upload import (
-    FIELD_LABELS, UploadError, apply_plan, build_template, parse_upload, plan_changes,
-)
+from app.services import bank_details_upload, nepal_employee_upload
 from app.services.consultant_master_import import (
     fetch_missing_fav_code_rows, set_fav_code_for_consultant,
     upsert_consultant_master, _parse_date,
@@ -278,60 +276,76 @@ async def missing_fav_codes_set(apex_employee_id: str, request: Request):
     return RedirectResponse("/admin/missing-fav-codes", status_code=303)
 
 
-# ─── Bulk upload of bank details / Favourite Beneficiary Codes ───────────────
-#     Preview first, write on confirm (app/services/bank_details_upload.py).
+# ─── Bulk uploads: Malaysian consultant bank details / Favourite Beneficiary
+#     Codes (app/services/bank_details_upload.py) and Nepal employees
+#     (app/services/nepal_employee_upload.py). Preview first, write on confirm;
+#     both share one page template and these handlers. ─────────────────────────
 
 _UPLOAD_MAX_BYTES = 5 * 1024 * 1024
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
+_MY_UPLOAD = {
+    "page": {
+        "title": "Upload Bank Details", "base": "/admin/bank-details-upload",
+        "intro": "Add or update Malaysian consultants' bank details and Favourite Beneficiary Codes in bulk. "
+                 "Upload the APEX template, or the Maybank Beneficiary Code Tracker as it is.",
+        "back_url": "/admin/bank-overrides", "back_label": "Bank Overrides",
+        "template_name": "APEX template", "id_header": "HEX ID",
+        "template_help": "one row per consultant: HEX Employee ID, name, ID, bank, account number, favourite code.",
+    },
+    "template": bank_details_upload.build_template,
+    "template_file": "APEX Bank Details Upload.xlsx",
+    "parse": bank_details_upload.parse_upload,                  # -> (fmt, rows)
+    "plan": lambda fmt, rows, db: bank_details_upload.plan_changes(fmt, rows, db),
+    "apply": bank_details_upload.apply_plan,
+}
+_NP_UPLOAD = {
+    "page": {
+        "title": "Upload Nepal Employees", "base": "/admin/nepal-employees/upload",
+        "intro": "Add or update HNPL employees and their bank details in bulk. Upload the Nepal template, "
+                 "or a file with the same columns as the Nepal Employee Master.",
+        "back_url": "/admin/nepal-employees", "back_label": "Nepal Employees",
+        "template_name": "Nepal template", "id_header": "Ledger / HEX ID",
+        "template_help": "one row per employee: name, ledger code, PAN, IPS bank, account number, SSF, CIT.",
+    },
+    "template": nepal_employee_upload.build_template,
+    "template_file": "APEX Nepal Employees Upload.xlsx",
+    "parse": lambda name, content: ("template", nepal_employee_upload.parse_upload(name, content)),
+    "plan": lambda fmt, rows, db: nepal_employee_upload.plan_changes(rows, db),
+    "apply": lambda plan, db, _by: nepal_employee_upload.apply_plan(plan, db),
+}
 
-def _upload_page(request: Request, user: dict, **ctx):
+
+def _upload_page(request: Request, user: dict, cfg: dict, **ctx):
     return templates.TemplateResponse(request, "admin/bank_details_upload.html", {
-        "user": user, "section": "admin", "field_labels": FIELD_LABELS, **ctx,
+        "user": user, "section": "admin", "page": cfg["page"], **ctx,
     })
 
 
-@router.get("/admin/bank-details-upload")
-async def bank_details_upload(request: Request):
+def _upload_user(request: Request):
     user = get_current_user(request)
-    if user.get("role") not in _BANK_OVERRIDE_EDIT_ROLES:
+    return user if user.get("role") in _BANK_OVERRIDE_EDIT_ROLES else None
+
+
+async def _upload_preview(request: Request, cfg: dict, file: UploadFile):
+    if not (user := _upload_user(request)):
         return RedirectResponse("/", status_code=302)
-    return _upload_page(request, user)
-
-
-@router.get("/admin/bank-details-upload/template")
-async def bank_details_upload_template(request: Request):
-    user = get_current_user(request)
-    if user.get("role") not in _BANK_OVERRIDE_EDIT_ROLES:
-        return RedirectResponse("/", status_code=302)
-    return Response(build_template(), media_type=_XLSX_MIME,
-                    headers={"Content-Disposition": 'attachment; filename="APEX Bank Details Upload.xlsx"'})
-
-
-@router.post("/admin/bank-details-upload/preview")
-async def bank_details_upload_preview(request: Request, file: UploadFile = File(...)):
-    user = get_current_user(request)
-    if user.get("role") not in _BANK_OVERRIDE_EDIT_ROLES:
-        return RedirectResponse("/", status_code=302)
-    db = get_db()
     content = await file.read()
     if len(content) > _UPLOAD_MAX_BYTES:
-        return _upload_page(request, user, error="File is larger than 5 MB.")
+        return _upload_page(request, user, cfg, error="File is larger than 5 MB.")
     try:
-        fmt, rows = parse_upload(file.filename or "", content)
-    except UploadError as exc:
-        return _upload_page(request, user, error=str(exc))
+        fmt, rows = cfg["parse"](file.filename or "", content)
+    except bank_details_upload.UploadError as exc:
+        return _upload_page(request, user, cfg, error=str(exc))
     if not rows:
-        return _upload_page(request, user, error="The file has a header row but no data rows.")
-    plan = plan_changes(fmt, rows, db)
-    return _upload_page(request, user, plan=plan, fmt=fmt, filename=file.filename,
+        return _upload_page(request, user, cfg, error="The file has a header row but no data rows.")
+    plan = cfg["plan"](fmt, rows, get_db())
+    return _upload_page(request, user, cfg, plan=plan, fmt=fmt, filename=file.filename,
                         rows_json=json.dumps({"fmt": fmt, "rows": rows}))
 
 
-@router.post("/admin/bank-details-upload/apply")
-async def bank_details_upload_apply(request: Request):
-    user = get_current_user(request)
-    if user.get("role") not in _BANK_OVERRIDE_EDIT_ROLES:
+async def _upload_apply(request: Request, cfg: dict):
+    if not (user := _upload_user(request)):
         return RedirectResponse("/", status_code=302)
     db = get_db()
     form = await request.form()
@@ -339,16 +353,67 @@ async def bank_details_upload_apply(request: Request):
         data = json.loads(form.get("rows_json") or "")
         fmt, rows = data["fmt"], data["rows"]
     except (ValueError, KeyError, TypeError):
-        return _upload_page(request, user, error="Upload expired — please upload the file again.")
+        return _upload_page(request, user, cfg, error="Upload expired — please upload the file again.")
     # Re-plan against the live DB: never trust the preview the browser sends back,
     # and pick up anything another user changed in between.
-    plan = plan_changes(fmt, rows, db)
+    plan = cfg["plan"](fmt, rows, db)
     if plan["sensitive"] and form.get("confirm_sensitive") != "yes":
-        return _upload_page(request, user, plan=plan, fmt=fmt, filename=form.get("filename"),
+        return _upload_page(request, user, cfg, plan=plan, fmt=fmt, filename=form.get("filename"),
                             rows_json=json.dumps(data),
                             error="Tick the box to confirm the account-number changes before applying.")
-    done = apply_plan(plan, db, user.get("name") or user.get("email", ""))
-    return _upload_page(request, user, result=done)
+    done = cfg["apply"](plan, db, user.get("name") or user.get("email", ""))
+    return _upload_page(request, user, cfg, result=done)
+
+
+def _upload_template(request: Request, cfg: dict):
+    if not _upload_user(request):
+        return RedirectResponse("/", status_code=302)
+    return Response(cfg["template"](), media_type=_XLSX_MIME,
+                    headers={"Content-Disposition": f'attachment; filename="{cfg["template_file"]}"'})
+
+
+@router.get("/admin/bank-details-upload")
+async def bank_details_upload_page(request: Request):
+    if not (user := _upload_user(request)):
+        return RedirectResponse("/", status_code=302)
+    return _upload_page(request, user, _MY_UPLOAD)
+
+
+@router.get("/admin/bank-details-upload/template")
+async def bank_details_upload_template(request: Request):
+    return _upload_template(request, _MY_UPLOAD)
+
+
+@router.post("/admin/bank-details-upload/preview")
+async def bank_details_upload_preview(request: Request, file: UploadFile = File(...)):
+    return await _upload_preview(request, _MY_UPLOAD, file)
+
+
+@router.post("/admin/bank-details-upload/apply")
+async def bank_details_upload_apply(request: Request):
+    return await _upload_apply(request, _MY_UPLOAD)
+
+
+@router.get("/admin/nepal-employees/upload")
+async def nepal_employees_upload_page(request: Request):
+    if not (user := _upload_user(request)):
+        return RedirectResponse("/", status_code=302)
+    return _upload_page(request, user, _NP_UPLOAD)
+
+
+@router.get("/admin/nepal-employees/upload/template")
+async def nepal_employees_upload_template(request: Request):
+    return _upload_template(request, _NP_UPLOAD)
+
+
+@router.post("/admin/nepal-employees/upload/preview")
+async def nepal_employees_upload_preview(request: Request, file: UploadFile = File(...)):
+    return await _upload_preview(request, _NP_UPLOAD, file)
+
+
+@router.post("/admin/nepal-employees/upload/apply")
+async def nepal_employees_upload_apply(request: Request):
+    return await _upload_apply(request, _NP_UPLOAD)
 
 
 # ─── Manual consultant_master entry (add someone the Talenox export doesn't
