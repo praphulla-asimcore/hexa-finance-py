@@ -143,13 +143,14 @@ def email_check_approval(to: str, name: str, role: str, kase: dict, approve_url:
         flag_section = '<div style="background:#f0fdf4;border-left:4px solid #22c55e;padding:10px 14px;margin-bottom:20px;font-size:13px;color:#166534">✓ No exceptions — all checks passed.</div>'
 
     is_final = role.lower().startswith("final")
-    reviewer_line = (
-        f'{_row("Reviewed by", kase.get("check_reviewer_name") or "—")}'
-        if is_final else ""
-    )
+    reviewed_by = kase.get("check_reviewer_name")   # none for entities with no reviewer step (HNPL)
+    reviewer_line = f'{_row("Reviewed by", reviewed_by)}' if is_final and reviewed_by else ""
     intro = (
-        f'<b>{kase.get("check_reviewer_name") or "The reviewer"}</b> has reviewed and approved the payroll check for <b>{kase["reference"]}</b>.<br/>'
+        f'<b>{reviewed_by}</b> has reviewed and approved the payroll check for <b>{kase["reference"]}</b>.<br/>'
         f'Your final sign-off is required to generate the bank payment file and post accruals to Zoho Books.'
+        if is_final and reviewed_by else
+        f'A payroll check file for <b>{kase.get("entity_name") or kase.get("entity","")}</b> ({kase.get("period","")}) is pending your final approval.<br/>'
+        f'Your sign-off is required to generate the bank payment file and post accruals to Zoho Books.'
         if is_final else
         f'A payroll check file for <b>{kase.get("entity_name") or kase.get("entity","")}</b> ({kase.get("period","")}) is pending your review.<br/>'
         f'Please review the summary below and approve or reject.'

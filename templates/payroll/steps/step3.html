@@ -137,8 +137,10 @@
   {# ── Approver chain ── #}
   <div class="pf-approver-chain">
     {% set rev_status = 'approved' if kase.status in ['check_reviewer_approved','check_approved','bank_file_generated','bank_uploaded','payment_approval_sent','payment_approved','payment_rejected','zoho_posted'] else ('pending' if kase.status == 'check_approval_sent' else 'waiting') %}
+    {% if approvers.reviewer %}
     {{ approver_box(approvers.reviewer.name, 'First Reviewer', rev_status, kase.check_reviewer_approved_at) }}
     <div class="pf-chain-arrow">→</div>
+    {% endif %}
     {% set fin_status = 'approved' if is_approved else ('rejected' if is_rejected else ('pending' if kase.status == 'check_reviewer_approved' else 'waiting')) %}
     {{ approver_box(approvers.final.name, 'Final Approver', fin_status, kase.check_approved_at) }}
   </div>
@@ -146,7 +148,7 @@
   {# ── Send approval button ── #}
   {% if can_send %}
   <div class="pf-action-zone">
-    <p class="pf-action-desc">Send the check file to the reviewer for approval. The accrual journal is then posted to Zoho Books automatically in the background — you'll see its status update here without waiting.</p>
+    <p class="pf-action-desc">Send the check file to {{ approvers.reviewer.name if approvers.reviewer else approvers.final.name }} for approval. The accrual journal is then posted to Zoho Books automatically in the background — you'll see its status update here without waiting.</p>
     <form hx-post="/cases/{{ kase.id }}/send-check-approval"
           hx-target="#case-detail-inner" hx-swap="innerHTML">
       <button type="submit" class="btn btn-primary">
@@ -202,7 +204,7 @@
   <div class="pf-cert-box">
     <div class="pf-cert-title">Approval Certificate Issued</div>
     <div class="pf-stamp-box"><span class="pf-stamp-label">Approved by</span><span class="pf-stamp-value">{{ cert.approvedBy }}</span></div>
-    <div class="pf-stamp-box"><span class="pf-stamp-label">Reviewed by</span><span class="pf-stamp-value">{{ cert.reviewedBy }}</span></div>
+    {% if cert.reviewedBy %}<div class="pf-stamp-box"><span class="pf-stamp-label">Reviewed by</span><span class="pf-stamp-value">{{ cert.reviewedBy }}</span></div>{% endif %}
     <div class="pf-stamp-box"><span class="pf-stamp-label">Date-Time</span><span class="pf-stamp-value">{{ fmt_date(cert.timestamp) }}</span></div>
     <div class="pf-stamp-box"><span class="pf-stamp-label">Ref</span><span class="pf-stamp-value" style="font-family:monospace">{{ kase.reference }}</span></div>
   </div>

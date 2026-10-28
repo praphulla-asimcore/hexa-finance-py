@@ -140,8 +140,9 @@ APPROVERS: dict = {
 PAYROLL_REVIEWER: dict = {"name": "Asim", "email": "asim.ovc977@gmail.com"}
 
 # Per-entity reviewer override, takes precedence over both APPROVERS["reviewer"]
-# and PAYROLL_REVIEWER above. Final approver and director stay global (APPROVERS)
-# for every entity, confirmed 2026-08-03 — only the reviewer varies by entity so far.
+# and PAYROLL_REVIEWER above. None means the entity has NO reviewer step: the
+# check goes straight to the final approver. Final approver and director stay
+# global (APPROVERS) for every entity — only the reviewer varies by entity so far.
 REVIEWER_BY_ENTITY: dict = {
-    "HNPL": {"name": "Ujjwal Adhikari", "email": "ujjwal@hexamatics.com"},
+    "HNPL": None,   # 2026-10-28: Ujjwal removed; Praphulla (final) then Director only
 }

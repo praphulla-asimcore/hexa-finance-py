@@ -191,8 +191,9 @@ async def fire_aria_webhook(db, case_id: str) -> None:
             pass
 
 
-def _resolve_reviewer(kase: dict) -> dict:
-    """Entity-specific reviewer (e.g. HNPL -> Ujjwal) wins; otherwise Payroll
+def _resolve_reviewer(kase: dict) -> dict | None:
+    """Entity-specific reviewer wins — None when the entity has no reviewer
+    step at all (HNPL: straight to the final approver); otherwise Payroll
     keeps Asim as the reviewer (temporary override), CSI uses Ikhram. Single
     source of truth for both the actual approval-token/email logic
     (send_check_approval) and the Step 3 display (approvers context in
@@ -200,10 +201,10 @@ def _resolve_reviewer(kase: dict) -> dict:
     showing the global APPROVERS["reviewer"] even for entities with an
     override), so route both through here instead of duplicating the
     selection logic."""
-    reviewer = REVIEWER_BY_ENTITY.get(kase.get("entity", ""))
-    if reviewer is None:
-        reviewer = PAYROLL_REVIEWER if kase.get("type") == "PAYROLL" else APPROVERS["reviewer"]
-    return reviewer
+    entity = kase.get("entity", "")
+    if entity in REVIEWER_BY_ENTITY:
+        return REVIEWER_BY_ENTITY[entity]
+    return PAYROLL_REVIEWER if kase.get("type") == "PAYROLL" else APPROVERS["reviewer"]
 
 
 def _get_arranger_emails(db, country: str = "") -> list:
@@ -2311,8 +2312,8 @@ def _case_detail_ctx(kase: dict, logs: list, selected_step: int | None = None, d
         "logs": logs,
         "selected_step": selected_step,
         "orgs": ORGS,
-        # Reviewer resolved per-entity (e.g. HNPL -> Ujjwal); final/director stay
-        # global per APPROVERS, confirmed unchanged for every entity so far.
+        # Reviewer resolved per-entity (None = no reviewer step, e.g. HNPL);
+        # final/director stay global per APPROVERS for every entity.
         "approvers": {**APPROVERS, "reviewer": _resolve_reviewer(kase)},
         "bank_gate": _bank_gate(kase),
         "consultant_docs": consultant_docs,
@@ -3867,6 +3868,11 @@ async def send_check_approval(case_id: str, request: Request):
         return await _refresh_detail(case_id, db, request, user, _get_active_step(kase.get("status","")))
 
     reviewer = _resolve_reviewer(kase)
+    # No reviewer step for this entity: the first (and only) check sign-off is
+    # the final approver's, so the case starts at "Pending Final Approver".
+    role, role_label, sent_status = (("reviewer", "First Reviewer", "check_approval_sent") if reviewer
+                                     else ("final", "Final Approver", "check_reviewer_approved"))
+    reviewer = reviewer or APPROVERS["final"]
 
     # Wrap the token insert like send_payment_approval does: if this throws, the
     # whole request would 500 and htmx — which never swaps on a non-2xx — would
@@ -3878,10 +3884,10 @@ async def send_check_approval(case_id: str, request: Request):
             "case_id": case_id, "step": 3,
             "approver_email": reviewer["email"],
             "approver_name": reviewer["name"],
-            "approver_role": "reviewer", "token": token, "status": "pending",
+            "approver_role": role, "token": token, "status": "pending",
         }).execute()
     except Exception as e:
-        logger.exception("Failed to create reviewer approval token for case %s", case_id)
+        logger.exception("Failed to create %s approval token for case %s", role, case_id)
         await _audit_log(db, case_id, "CHECK_APPROVAL_ERROR", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"error": str(e)})
         return await _refresh_detail(case_id, db, request, user, 3)
 
@@ -3889,7 +3895,7 @@ async def send_check_approval(case_id: str, request: Request):
     email_ok = True
     try:
         email_check_approval(
-            reviewer["email"], reviewer["name"], "First Reviewer",
+            reviewer["email"], reviewer["name"], role_label,
             kase, f"{base_url}?action=approve", f"{base_url}?action=reject"
         )
     except Exception as e:
@@ -3898,13 +3904,13 @@ async def send_check_approval(case_id: str, request: Request):
         # was NOT actually notified (instead of claiming the email went out).
         email_ok = False
         logger.exception("Failed to send check-approval email for case %s to %s", case_id, reviewer["email"])
-        await _audit_log(db, case_id, "CHECK_APPROVAL_EMAIL_FAILED", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"to": reviewer["email"], "role": "reviewer", "error": str(e)})
+        await _audit_log(db, case_id, "CHECK_APPROVAL_EMAIL_FAILED", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"to": reviewer["email"], "role": role, "error": str(e)})
     if email_ok:
-        await _audit_log(db, case_id, "CHECK_APPROVAL_EMAIL_SENT", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"to": reviewer["email"], "role": "reviewer"})
+        await _audit_log(db, case_id, "CHECK_APPROVAL_EMAIL_SENT", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"to": reviewer["email"], "role": role})
 
     now = _now()
     db.from_("payroll_cases").update({
-        "status": "check_approval_sent", "check_approval_sent_at": now,
+        "status": sent_status, "check_approval_sent_at": now,
     }).eq("id", case_id).execute()
 
     await _audit_log(db, case_id, "CHECK_APPROVAL_SENT", user.get("name") or user.get("email"), user.get("id"), _get_ip(request), {"sentTo": reviewer["email"]})
@@ -4123,7 +4129,9 @@ async def email_approve(token: str, action: str = "approve"):
         "ctcTotal": (kase.get("check_data") or {}).get("ctcTotal"),
         "flagCount": (kase.get("check_data") or {}).get("flagCount"),
         "timestamp": now,
-        "stamp": f"Approved by: {tok['approver_name']} | Reviewed by: {kase.get('check_reviewer_name')} | Date-Time: {now}",
+        "stamp": (f"Approved by: {tok['approver_name']} | "
+                  + (f"Reviewed by: {kase['check_reviewer_name']} | " if kase.get("check_reviewer_name") else "")
+                  + f"Date-Time: {now}"),
     }
 
     try:

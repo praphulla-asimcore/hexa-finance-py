@@ -329,3 +329,26 @@ def test_hnpl_internal_payroll_bank_file_remarks():
     ws = openpyxl.load_workbook(io.BytesIO(base64.b64decode(
         db.updates[-1]["check_data"]["bankTxt"]["data"]))).worksheets[0]
     assert ws.title == "Aug" and ws.cell(2, 8).value == "HNPL_Aug'26"
+
+
+# ── Check approval chain: HNPL has no reviewer step ──────────────────────────
+def test_hnpl_has_no_reviewer_other_entities_keep_theirs():
+    from app.config import APPROVERS, PAYROLL_REVIEWER
+    assert pc._resolve_reviewer({"entity": "HNPL", "type": "CSI"}) is None
+    assert pc._resolve_reviewer({"entity": "HNPL", "type": "PAYROLL"}) is None
+    assert pc._resolve_reviewer({"entity": "HSSB", "type": "CSI"}) == APPROVERS["reviewer"]
+    assert pc._resolve_reviewer({"entity": "HSSB", "type": "PAYROLL"}) == PAYROLL_REVIEWER
+
+
+def test_final_approver_email_without_a_reviewer(monkeypatch):
+    from app.services import email
+    sent = {}
+    monkeypatch.setattr(email, "_send", lambda to, subject, html: sent.update(to=to, html=html))
+    kase = {"reference": "CSI-HNPL-202610-001", "entity": "HNPL", "period": "202610", "check_data": {}}
+    email.email_check_approval("praphulla@hexamatics.com", "Praphulla Subedi", "Final Approver",
+                               kase, "https://a", "https://r")
+    assert "pending your final approval" in sent["html"]
+    assert "has reviewed and approved" not in sent["html"] and "Reviewed by" not in sent["html"]
+    email.email_check_approval("praphulla@hexamatics.com", "Praphulla Subedi", "Final Approver",
+                               {**kase, "check_reviewer_name": "Ikhram Merican"}, "https://a", "https://r")
+    assert "Ikhram Merican</b> has reviewed and approved" in sent["html"]
