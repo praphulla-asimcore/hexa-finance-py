@@ -110,8 +110,10 @@ def test_cit_and_pf_credit_their_payables():
 
 
 def test_unmapped_or_unbalanced_rows_are_refused():
-    _l, problem = npa.np_journal_lines({**SBC, "forexTranslation": 500, "netSalary": 35100}, internal=False)
-    assert problem and "Forex" in problem
+    _l, problem = npa.np_journal_lines({**SBC, "forexDeduction": 500, "netSalary": 35100}, internal=False)
+    assert problem and "Forex" in problem and "deduction" in problem
+    _l, problem = npa.np_journal_lines({**SBC, "forexIncome": 500, "grossSalary": 48500}, internal=False)
+    assert problem and "Forex" in problem and "income" in problem
     _l, problem = npa.np_journal_lines({**SBC, "netSalary": 30000}, internal=False)
     assert problem and "differ" in problem
 
@@ -255,6 +257,120 @@ def test_internal_pay_calculation_parses_without_ein():
     assert emp["employeeId"] == "Hari Example" and emp["advanceDeduction"] == 5000
     lines, problem = npa.np_journal_lines(emp, internal=True)
     assert problem is None and _totals(lines) == (100000, 100000)
+
+
+# Header row of "HNPL_Final Template Pay Calculation October 2026.xlsx", as-is.
+FINAL_HEAD = [
+    "Employee", "EID", "EIN", "Branch", "Department", "Designation", "TDS Refund Prior Fiscal Year",
+    "Contingent Performance Allowance", "Annual Leave Encashment", "Sick Leave Encashment", "Basic Salary",
+    "Laptop Allowance", "SSF Contribution", "Mobile Allowance", "Overtime Pay", "House Allowance",
+    "Fuel Allowance", "Income PF", "Travel Allowance", "Education Allowance", "Dearness Allowance",
+    "Allowance", "Forex Translation", "Allowance Variable", "Performance Bonus", "Salary Adjustment",
+    "Leave Encashment", "Gross Income", "Absences", "Forex Translation", "Salary Deduction", "Unpaid Leave",
+    "Advance Pay deduction", "SST Arrears Prior Fiscal Year", "TDS Arrears Prior Fiscal Year",
+    "Deduction PF", "CIT", "SSF Deduction", "SST", "TDS", "Total Deduction", "Net Salary"]
+
+
+def _col(name, nth=1):
+    return [i for i, h in enumerate(FINAL_HEAD) if h == name][nth - 1]
+
+
+def test_final_template_parses_and_balances_with_prior_year_tax():
+    row = [None] * len(FINAL_HEAD)
+    for name, v in [("Employee", "Hari Example"), ("EID", 1), ("EIN", 1001), ("Branch", "Hexamatics"),
+                    ("Designation", "Analyst"), ("TDS Refund Prior Fiscal Year", 2000), ("Basic Salary", 70000),
+                    ("Laptop Allowance", 5000), ("SSF Contribution", 14000), ("Mobile Allowance", 1000),
+                    ("House Allowance", 3000), ("Fuel Allowance", 2000), ("Dearness Allowance", 3000),
+                    ("Gross Income", 100000), ("Absences", 1000), ("Advance Pay deduction", 5000),
+                    ("SST Arrears Prior Fiscal Year", 500), ("TDS Arrears Prior Fiscal Year", 1500),
+                    ("SSF Deduction", 23100), ("TDS", 3000), ("Total Deduction", 34100),
+                    ("Net Salary", 65900)]:
+        row[_col(name)] = v
+    ents = parse_excel_buffer(_xlsx([("Sheet1", [FINAL_HEAD, row, [None] * len(FINAL_HEAD)]),
+                                     ("Sheet2", [])]), "NP")
+    assert len(ents) == 1 and not ents[0]["missingColumns"]
+    emp = ents[0]["employees"][0]
+    assert emp["employeeId"] == "1001" and emp["name"] == "Hari Example"
+    assert (emp["tdsRefund"], emp["sstArrears"], emp["tdsArrears"]) == (2000, 500, 1500)
+    assert emp["forexIncome"] == 0 and emp["forexDeduction"] == 0
+
+    lines, problem = npa.np_journal_lines(emp, internal=True)
+    assert problem is None and _totals(lines) == (99000, 99000)   # gross − absences
+    by_label = {l: (k, dc, a) for k, dc, a, l in lines}
+    assert by_label["Salary"] == ("staff_expense", "debit", 83000)  # − SSF − refund − absences
+    assert by_label["TDS Refund Prior Fiscal Year"] == ("tds", "debit", 2000)
+    assert by_label["SST Arrears Prior Fiscal Year"] == ("staff_receivable", "credit", 500)
+    assert by_label["TDS Arrears Prior Fiscal Year"] == ("staff_receivable", "credit", 1500)
+
+
+@pytest.mark.parametrize("nth,field", [(1, "forexIncome"), (2, "forexDeduction")])
+def test_final_template_reads_forex_translation_by_side(nth, field):
+    row = [None] * len(FINAL_HEAD)
+    for name, v in [("Employee", "Hari Example"), ("EIN", 1001), ("Gross Income", 1000), ("Net Salary", 1000)]:
+        row[_col(name)] = v
+    row[_col("Forex Translation", nth)] = 250
+    emp = parse_excel_buffer(_xlsx([("Sheet1", [FINAL_HEAD, row])]), "NP")[0]["employees"][0]
+    assert emp[field] == 250
+    assert emp["forexIncome" if field == "forexDeduction" else "forexDeduction"] == 0
+
+
+def _person(name, ein, branch, gross=1000, net=1000):
+    row = [None] * len(FINAL_HEAD)
+    for col, v in [("Employee", name), ("EIN", ein), ("Branch", branch), ("Basic Salary", gross),
+                   ("Gross Income", gross), ("Total Deduction", gross - net), ("SSF Deduction", gross - net),
+                   ("Net Salary", net)]:
+        row[_col(col)] = v
+    return row
+
+
+COMBINED = [FINAL_HEAD,
+            _person("Sita Example", "901", "SBC and Co."),
+            _person("Hari Example", "", "Internal Employee", 2000, 1800),   # no EIN → keyed by name
+            _person("Ram Example", "902", "GuardWare"),
+            _person("Gita Example", "903", "GuardWare"),
+            _person("Zero Example", "904", "SBC and Co.", 0, 0),
+            _person("Total", None, None, 5000, 4800)]
+
+
+def test_final_template_one_file_splits_into_csi_and_payroll_cases():
+    from app.services.parser import np_entities_for_case
+    ents = parse_excel_buffer(_xlsx([("Sheet1", COMBINED)]), "NP")
+    assert [(e["sheetName"], len(e["employees"])) for e in ents] == [
+        ("SBC and Co.", 1), ("Internal Employee", 1), ("GuardWare", 2)]   # Total + zero-pay rows skipped
+    csi = np_entities_for_case(ents, "CSI")
+    assert [e["sheetName"] for e in csi] == ["SBC and Co.", "GuardWare"]
+    payroll = np_entities_for_case(ents, "PAYROLL")
+    assert [e["sheetName"] for e in payroll] == ["Internal Employee"]
+    assert payroll[0]["employees"][0]["employeeId"] == "Hari Example"
+    # an older single-purpose file (no "Internal Employee" rows) is kept whole
+    legacy = [e for e in ents if e["sheetName"] != "Internal Employee"]
+    assert np_entities_for_case(legacy, "PAYROLL") == legacy
+
+
+def test_final_template_read_past_stale_dimension():
+    """HNPL's real file stores <dimension ref="A1:AB1">; read-only openpyxl
+    would otherwise see the header row only."""
+    import re
+    import zipfile
+    src, out = zipfile.ZipFile(io.BytesIO(_xlsx([("Sheet1", COMBINED)]))), io.BytesIO()
+    with zipfile.ZipFile(out, "w") as z:
+        for item in src.infolist():
+            data = src.read(item.filename)
+            if item.filename.startswith("xl/worksheets/sheet"):
+                data = re.sub(rb'<dimension ref="[^"]*"/>', b'<dimension ref="A1:AB1"/>', data)
+            z.writestr(item, data)
+    ents = parse_excel_buffer(out.getvalue(), "NP")
+    assert sum(len(e["employees"]) for e in ents) == 4
+
+
+def test_check_flags_hnpl_row_that_cannot_accrue():
+    bad = _person("Bad Example", "905", "GuardWare", 1000, 900)
+    bad[_col("Total Deduction")] = 500          # listed deductions are only 100
+    bad[_col("Net Salary")] = 500               # = Gross − Total Deduction, as in the real file
+    ents = parse_excel_buffer(_xlsx([("Sheet1", [FINAL_HEAD, bad, COMBINED[1]])]), "NP")
+    flags = pc._build_check_data(ents, None, currency="NPR", country="NP")["flags"]
+    assert [(f["code"], f["employee"]) for f in flags] == [("CANNOT_ACCRUE", "Bad Example")]
+    assert "differ by 400.00" in flags[0]["reason"]
 
 
 def test_gw_sheet_uses_net_after_tax_adjustment():

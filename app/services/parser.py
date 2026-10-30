@@ -59,7 +59,20 @@ def _get_str(row, col_map, *keys) -> str:
 
 
 def _build_col_map(header_row) -> dict:
-    return {str(cell).strip(): idx for idx, cell in enumerate(header_row) if cell is not None}
+    """name → column index. A repeated name keeps mapping to its last column
+    (as before), and its columns are also keyed "name#1", "name#2"… in order
+    (HNPL's final template has "Forex Translation" on both sides of Gross)."""
+    col_map, seen = {}, {}
+    for idx, cell in enumerate(header_row):
+        if cell is None:
+            continue
+        name = str(cell).strip()
+        col_map[name] = idx
+        seen.setdefault(name, []).append(idx)
+    for name, idxs in seen.items():
+        if len(idxs) > 1:
+            col_map.update({f"{name}#{n}": idx for n, idx in enumerate(idxs, 1)})
+    return col_map
 
 
 def _parse_employee_my(row, col_map) -> dict | None:
@@ -131,25 +144,37 @@ def _parse_employee_id(row, col_map) -> dict | None:
     )
 
 
+def _np_sides(row, col_map, name) -> tuple[float, float]:
+    """(earnings, deductions) for a column HNPL can carry on either side of
+    Gross Income — columns left of Gross Income are earnings."""
+    gross_idx = col_map.get("Gross Income", -1)
+    idxs = {i for k, i in col_map.items()
+            if k == name or (k.startswith(name + "#") and k[len(name) + 1:].isdigit())}
+    earn = sum(_to_num(row[i]) for i in idxs if i < gross_idx and i < len(row))
+    dedn = sum(_to_num(row[i]) for i in idxs if i > gross_idx and i < len(row))
+    return earn, dedn
+
+
 def _parse_employee_np(row, col_map) -> dict | None:
     """Parse one CSI employee row against Nepal's payroll register format
     (mapped from Nepal_CSI_Sample.xlsx, 2026-08-03 — SBC/Time Energy/GW
     client sheets, one row per employee, no "Entity" column so each sheet is
     one client, same as Malaysia's older single-sheet-per-entity format).
+    Also reads the internal "HNPL_Final Template Pay Calculation" (finance,
+    2026-10-30): Employee/EID/EIN/Branch/Department/Designation, earnings up
+    to Gross Income, deductions up to Total Deduction, then Net Salary.
 
     EIN (Employee Identification Number) is the canonical identifier,
     confirmed over EID (a per-file internal row number) — only EIN is stable
     enough to eventually match nepal_employee_master.employee_ledger_code.
-    The internal pay calculation export (HNPL "<Month> Pay Calculation")
-    has no EIN column at all, so there the employee name is the identifier.
+    The older internal pay calculation export (HNPL "<Month> Pay Calculation")
+    has no EIN column at all, and the final template leaves it blank for some
+    people, so the employee name is the identifier for them.
     """
-    if "EIN" in col_map:
-        ein_idx = col_map["EIN"]
-        ein_val = row[ein_idx] if ein_idx < len(row) else None
-    else:
-        ein_val = _get_str(row, col_map, "Employee")
-    if ein_val is None or str(ein_val).strip() == "":
+    name = _get_str(row, col_map, "Employee")
+    if not name or name.lower().startswith("total"):
         return None
+    ein_val = _get_str(row, col_map, "EIN") or name
 
     gross = _get(row, col_map, "Gross Income")
     if gross == 0:
@@ -165,11 +190,12 @@ def _parse_employee_np(row, col_map) -> dict | None:
 
     ssf_contribution = _get(row, col_map, "SSF Contribution")  # employer-side, per file
     ssf_deduction    = _get(row, col_map, "SSF Deduction")     # employee-side, deducted from gross
+    forex_income, forex_deduction = _np_sides(row, col_map, "Forex Translation")
 
     return {
-        "employeeId":  str(ein_val).strip(),
+        "employeeId":  ein_val,
         "eid":         _get_str(row, col_map, "EID"),
-        "name":        _get_str(row, col_map, "Employee"),
+        "name":        name,
         "costCentre":  _get_str(row, col_map, "Branch"),
         "designation": _get_str(row, col_map, "Designation"),
         "nationality": "Nepali",
@@ -199,7 +225,14 @@ def _parse_employee_np(row, col_map) -> dict | None:
         "unpaidLeave":        _get(row, col_map, "Unpaid Leave"),
         "absences":           _get(row, col_map, "Absences"),
         "salaryDeduction":    _get(row, col_map, "Salary Deduction"),
-        "forexTranslation":   _get(row, col_map, "Forex Translation"),
+        "forexIncome":        forex_income,
+        "forexDeduction":     forex_deduction,
+        # Prior-fiscal-year tax settled through this month's pay (final
+        # template): a refund is paid out inside Gross Income, arrears are
+        # deducted alongside this month's SST/TDS.
+        "tdsRefund":          _get(row, col_map, "TDS Refund Prior Fiscal Year"),
+        "sstArrears":         _get(row, col_map, "SST Arrears Prior Fiscal Year"),
+        "tdsArrears":         _get(row, col_map, "TDS Arrears Prior Fiscal Year"),
         # No confirmed Nepal margin/billing model yet -- this file has no
         # CTC Client/Total Billing/Mgmt Fee columns like Malaysia's CSI does.
         # ctcHexa is structurally required downstream (totalCTC summation),
@@ -272,9 +305,13 @@ def _process_sheets(sheets: list[tuple[str, list]], country: str = "MY") -> list
 
         col_map = _build_col_map(rows[header_idx])
 
-        # New template format: has an "Entity" column → group rows by entity value
-        has_entity_col = "Entity" in col_map
-        entity_col_idx = col_map.get("Entity")
+        # New template format: has an "Entity" column → group rows by entity value.
+        # Nepal groups by "Branch": HNPL's final template puts every client and
+        # the internal staff on one sheet.
+        group_col = "Entity" if "Entity" in col_map else (
+            "Branch" if (country or "").upper() == "NP" and "Branch" in col_map else None)
+        has_entity_col = group_col is not None
+        entity_col_idx = col_map.get(group_col)
 
         # Old format required cols; new format has different names
         required = REQUIRED_COLUMNS.get((country or "MY").upper(), REQUIRED_COLUMNS["MY"])
@@ -323,14 +360,33 @@ def _process_sheets(sheets: list[tuple[str, list]], country: str = "MY") -> list
     return entities
 
 
+NP_INTERNAL_BRANCH = "internal employee"
+
+
+def np_entities_for_case(entities: list[dict], case_type: str) -> list[dict]:
+    """HNPL's final template holds the client consultants and the internal
+    staff (Branch "Internal Employee") together, and the same file is uploaded
+    twice: as a CSI case (client rows) and a PAYROLL case (internal rows).
+    A file with no internal rows is an older single-purpose file — kept whole."""
+    def internal(ent):
+        return (ent.get("sheetName") or "").strip().lower() == NP_INTERNAL_BRANCH
+    if not any(internal(e) for e in entities):
+        return entities
+    payroll = (case_type or "").upper() == "PAYROLL"
+    return [e for e in entities if internal(e) == payroll]
+
+
 def parse_excel_buffer(data: bytes, country: str = "MY") -> list[dict]:
     # Try openpyxl first (handles .xlsx / .xlsm)
     try:
         wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-        sheets = [
-            (name, list(wb[name].iter_rows(values_only=True)))
-            for name in wb.sheetnames
-        ]
+        sheets = []
+        for name in wb.sheetnames:
+            ws = wb[name]
+            # Read the real extent: some exports (HNPL's final template) store
+            # a stale <dimension> that would cut the sheet to its first row.
+            ws.reset_dimensions()
+            sheets.append((name, list(ws.iter_rows(values_only=True))))
         wb.close()
         return _json_safe(_process_sheets(sheets, country))
     except Exception as e:

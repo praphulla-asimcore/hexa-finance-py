@@ -186,6 +186,7 @@
         <span class="pf-flag-code">{{ f.code }}</span>
         <span>{{ f.employee or f.entity or '' }}</span>
         {% if f.diff %}<span class="pf-flag-diff">Δ {{ fmt_rm(f.diff) }}</span>{% endif %}
+        {% if f.code == 'CANNOT_ACCRUE' %}<span style="color:#6b7280">{{ f.reason }}</span>{% endif %}
       </div>
       {% endfor %}
     </div>

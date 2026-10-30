@@ -16,7 +16,7 @@ from app.config import TEMPLATES_DIR, APP_URL, APPROVERS, PAYROLL_REVIEWER, REVI
 from app.services.currency import fmt_currency, currency_prefix
 from app.deps import get_current_user
 from app.services.db import get_db
-from app.services.parser import parse_excel_buffer, parse_payroll_excel_buffer
+from app.services.parser import parse_excel_buffer, parse_payroll_excel_buffer, np_entities_for_case
 from app.services.statutory import get_statutory_module
 from app.services.zoho import (
     post_journal_entry, create_expense, attach_journal_document,
@@ -745,6 +745,15 @@ def _build_check_data(entities: list[dict], airtable_list: list | None = None,
                 if val < 0:
                     flags.append({"code": "NEGATIVE_VALUE", "employee": name,
                                   "entity": entity, "field": field, "diff": _round2(val)})
+
+            # ── HNPL: the row must book as a balanced accrual ─────────────────
+            # Caught here rather than after payment, when the accrual would
+            # refuse the whole case (e.g. Total Deduction ≠ the deductions listed).
+            if country == "NP":
+                _lines, problem = np_journal_lines(emp, internal=False)
+                if problem:
+                    flags.append({"code": "CANNOT_ACCRUE", "employee": name,
+                                  "entity": entity, "reason": problem})
 
             # ── Zero gross ────────────────────────────────────────────────────
             if g == 0:
@@ -2537,6 +2546,8 @@ async def _upload_case_inner(
             parsed_entities = parse_payroll_excel_buffer(content)
         else:
             parsed_entities = parse_excel_buffer(content, get_entity_country(entity_code))
+            if get_entity_country(entity_code) == "NP":
+                parsed_entities = np_entities_for_case(parsed_entities, type_up)
     except Exception as e:
         return _upload_err(f"Parse error: {str(e)}")
 
@@ -3782,6 +3793,8 @@ async def reupload_case(
             parsed_entities = parse_payroll_excel_buffer(content)
         else:
             parsed_entities = parse_excel_buffer(content, get_entity_country(kase.get("entity", "")))
+            if get_entity_country(kase.get("entity", "")) == "NP":
+                parsed_entities = np_entities_for_case(parsed_entities, kase.get("type") or "CSI")
     except Exception as e:
         return HTMLResponse(f'<div class="error-msg">Parse error: {str(e)}</div>')
 

@@ -7,15 +7,26 @@ share one shape; only the expense account differs:
     DR Consultant Salaries and Benefits | Staff Salaries & Wages (internal)
          Gross Income − SSF Contribution − Travel − Education Allowance
          (− unpaid leave / absences / salary deduction, which reduce the cost)
+         (− TDS Refund Prior Fiscal Year, which isn't salary cost)
     DR   same account: Travel Allowance, Education Allowance (GW), SSF Contribution
+    DR TDS Payable- Staff            TDS Refund Prior Fiscal Year (final template;
+                                     not in the finance sheet — the refund
+                                     reduces the TDS owed)
     CR Salary and Wages Payable      Net Salary (GW: Net Payable After tax adjustment)
     CR SSF Contribution Payable      SSF Deduction
     CR SST Payable                   SST
     CR TDS Payable- Staff            TDS + tax adjustment deduction
                                      (finance's own GW entry books it there)
+    CR Staff Receivable              SST / TDS Arrears Prior Fiscal Year — already
+                                     paid by HNPL and carried as a staff
+                                     receivable, recovered through salary
+                                     (finance, 2026-10-30)
     CR Employee Advance              Advance Pay deduction (internal)
     CR CIT Payable / Provident Fund Payable   CIT / Deduction PF (not in the
                                      finance sheet; HNPL's own payable accounts)
+
+Forex Translation (earning or deduction) has no account yet, so a row with
+one is refused.
 
 Payment: DR Salary and Wages Payable / CR Cash at Bank - SCB (net salary).
 No revenue accrual — HNPL invoices in the same month.
@@ -38,6 +49,7 @@ NP_ACCOUNT_NAMES: dict = {
     "advance":       ("Employee Advance", "Deposits and Advances"),
     "bank":          ("Cash at Bank - SCB",),
     "cit":           ("CIT Payable",),
+    "staff_receivable": ("Staff Receivable",),
     "pf":            ("Provident Fund Payable",),
 }
 
@@ -52,6 +64,7 @@ NP_ACCOUNT_IDS: dict = {
     "advance":       "3424587000000035001",  # Employee Advance
     "bank":          "3424587000000148001",  # Cash at Bank - SCB
     "cit":           "3424587000001310432",  # CIT Payable (under Salary and Wages Payable)
+    "staff_receivable": "3424587000001705201",  # Staff Receivable
     "pf":            "3424587000000586364",  # Provident Fund Payable
 }
 
@@ -93,24 +106,29 @@ def np_journal_lines(emp: dict, internal: bool) -> tuple[list, str | None]:
     ([], problem) when the row can't be booked as specified — a deduction
     with no account in the HNPL entries, or a row that doesn't balance."""
     name = emp.get("name") or emp.get("employeeId") or "?"
-    forex = _r2(emp.get("forexTranslation"))
-    if forex:
-        return [], (f"{name}: Forex Translation {forex:,.2f} — "
-                    "no account for it in the HNPL accounting entries")
+    for side in ("Income", "Deduction"):
+        forex = _r2(emp.get(f"forex{side}"))
+        if forex:
+            return [], (f"{name}: Forex Translation ({side.lower()}) {forex:,.2f} — "
+                        "no account for it in the HNPL accounting entries")
 
     ssf_c   = _r2(emp.get("ssfContribution"))
     travel  = _r2(emp.get("travelAllowance"))
     edu     = _r2(emp.get("educationAllowance"))
+    refund  = _r2(emp.get("tdsRefund"))
     reduce  = _r2(_r2(emp.get("unpaidLeave")) + _r2(emp.get("absences")) + _r2(emp.get("salaryDeduction")))
-    salary  = _r2(_r2(emp.get("grossSalary")) - ssf_c - travel - edu - reduce)
+    salary  = _r2(_r2(emp.get("grossSalary")) - ssf_c - travel - edu - refund - reduce)
     expense = "staff_expense" if internal else "csi_expense"
 
     dr = [(expense, salary, "Salary"), (expense, travel, "Travel Allowance"),
-          (expense, edu, "Education Allowance"), (expense, ssf_c, "SSF Contribution")]
+          (expense, edu, "Education Allowance"), (expense, ssf_c, "SSF Contribution"),
+          ("tds", refund, "TDS Refund Prior Fiscal Year")]
     cr = [("payable", _r2(emp.get("netSalary")), "Net Salary"),
           ("ssf", _r2(emp.get("ssfDeduction")), "SSF Deduction"),
           ("sst", _r2(emp.get("sst")), "SST"),
           ("tds", _r2(_r2(emp.get("tds")) + _r2(emp.get("taxAdjustment"))), "TDS"),
+          ("staff_receivable", _r2(emp.get("sstArrears")), "SST Arrears Prior Fiscal Year"),
+          ("staff_receivable", _r2(emp.get("tdsArrears")), "TDS Arrears Prior Fiscal Year"),
           ("advance", _r2(emp.get("advanceDeduction")), "Advance Pay deduction"),
           ("cit", _r2(emp.get("cit")), "CIT"),
           ("pf", _r2(emp.get("deductionPF")), "Deduction PF")]
