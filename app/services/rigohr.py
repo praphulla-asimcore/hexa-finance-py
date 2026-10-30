@@ -153,6 +153,14 @@ def describe_rows(rows: list[dict]) -> dict:
     }
 
 
+def aggregate_rows(rows: list[dict]) -> list[dict]:
+    """The non-employee voucher rows (Company/Branch/Department totals)."""
+    return [{"grouped_by": _field(r, "GroupedBy") or "", "group": _field(r, "Name") or _field(r, "GroupCode") or "",
+             "account": _field(r, "AccountName") or "", "amount": float(_field(r, "Amount") or 0)}
+            for r in rows if isinstance(r, dict)
+            and not str(_field(r, "GroupedBy") or "").strip().lower().startswith("employee")]
+
+
 def group_by_employee(rows: list[dict]) -> dict[str, dict]:
     """Reshape the flat voucher list into {GroupCode: {name, ledger_code, accounts}}.
 
@@ -175,7 +183,9 @@ def group_by_employee(rows: list[dict]) -> dict[str, dict]:
     for row in rows:
         if not isinstance(row, dict):
             continue
-        if str(_field(row, "GroupedBy") or "").strip().lower() != "employee":
+        # HNPL's tenant labels per-person rows "Employee Net Pay", not the
+        # documented "Employee" (live pull, 2026-10-30).
+        if not str(_field(row, "GroupedBy") or "").strip().lower().startswith("employee"):
             continue
         code = str(_field(row, "GroupCode") or "").strip()
         if not code:

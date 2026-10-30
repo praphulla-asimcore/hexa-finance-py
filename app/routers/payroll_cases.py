@@ -2457,7 +2457,7 @@ async def nepal_rigohr_preview(request: Request):
     employee_status = str(form.get("employeeStatus", "")).strip() or None
 
     from app.services.rigohr import (
-        fetch_salary_vouchers, group_by_employee, describe_rows,
+        fetch_salary_vouchers, group_by_employee, describe_rows, aggregate_rows,
         RigoHRAuthError, RigoHRBadRequestError, RigoHRFetchError,
     )
     try:
@@ -2482,6 +2482,7 @@ async def nepal_rigohr_preview(request: Request):
     return templates.TemplateResponse(request, "payroll/nepal_rigohr_preview.html", {
         "request": request, "employees": employees, "account_names": account_names,
         "year": year, "month": month, "raw_row_count": len(rows), "shape": shape,
+        "aggregates": aggregate_rows(rows),
         # Only when nothing was recognised as an employee row — to see why.
         "raw_sample": json.dumps(rows[:3], indent=2, default=str) if rows and not employees else "",
     })
