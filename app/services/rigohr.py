@@ -134,6 +134,25 @@ async def fetch_salary_vouchers(
     return []  # unreachable (loop always returns or raises), keeps type-checkers happy
 
 
+def _field(row: dict, name: str):
+    """RigoHR's docs show PascalCase keys ("GroupedBy"); the live API's casing
+    isn't confirmed, so match a key case-insensitively."""
+    if name in row:
+        return row[name]
+    low = name.lower()
+    return next((v for k, v in row.items() if str(k).lower() == low), None)
+
+
+def describe_rows(rows: list[dict]) -> dict:
+    """Shape of a pull — field names and how many rows per GroupedBy level.
+    No names or amounts, so it is safe to log."""
+    from collections import Counter
+    return {
+        "fields": sorted({str(k) for r in rows if isinstance(r, dict) for k in r}),
+        "grouped_by": dict(Counter(str(_field(r, "GroupedBy")) for r in rows if isinstance(r, dict))),
+    }
+
+
 def group_by_employee(rows: list[dict]) -> dict[str, dict]:
     """Reshape the flat voucher list into {GroupCode: {name, ledger_code, accounts}}.
 
@@ -154,16 +173,18 @@ def group_by_employee(rows: list[dict]) -> dict[str, dict]:
     done here -- pending the full account-list sample."""
     by_employee: dict[str, dict] = {}
     for row in rows:
-        if row.get("GroupedBy") != "Employee":
+        if not isinstance(row, dict):
             continue
-        code = str(row.get("GroupCode") or "").strip()
+        if str(_field(row, "GroupedBy") or "").strip().lower() != "employee":
+            continue
+        code = str(_field(row, "GroupCode") or "").strip()
         if not code:
             continue
         emp = by_employee.setdefault(code, {
-            "name": row.get("Name") or "",
-            "ledger_code": str(row.get("EmployeeLedgerCode") or "").strip(),
+            "name": _field(row, "Name") or "",
+            "ledger_code": str(_field(row, "EmployeeLedgerCode") or "").strip(),
             "accounts": {},
         })
-        account = row.get("AccountName") or ""
-        emp["accounts"][account] = emp["accounts"].get(account, 0.0) + float(row.get("Amount") or 0)
+        account = _field(row, "AccountName") or ""
+        emp["accounts"][account] = emp["accounts"].get(account, 0.0) + float(_field(row, "Amount") or 0)
     return by_employee

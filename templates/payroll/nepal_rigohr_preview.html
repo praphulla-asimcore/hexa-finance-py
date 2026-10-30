@@ -45,3 +45,16 @@
 {% else %}
 <div class="pf-info-banner">No employee-level rows found for this period.</div>
 {% endif %}
+
+{% if raw_row_count %}
+<div style="margin-top:14px;font-size:12px;color:var(--text-muted)">
+  <div><strong>Fields returned:</strong> {{ shape.fields|join(', ') or '—' }}</div>
+  <div><strong>Rows per GroupedBy:</strong>
+    {% for k, v in shape.grouped_by.items() %}{{ k }}: {{ v }}{% if not loop.last %} · {% endif %}{% endfor %}</div>
+  {% if raw_sample %}
+  <details style="margin-top:8px"><summary>First 3 raw rows (to see why none were read as employees)</summary>
+    <pre style="white-space:pre-wrap;font-size:11px;max-height:320px;overflow:auto">{{ raw_sample }}</pre>
+  </details>
+  {% endif %}
+</div>
+{% endif %}
